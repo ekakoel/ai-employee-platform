@@ -44,6 +44,15 @@ pytest -q
 4. `POST /api/v1/companies/{company_id}/knowledge`
 5. `POST /api/v1/companies/{company_id}/tasks`
 
+## Phase 0.3 yang sudah diimplementasikan
+
+- Agent Subscription sebagai entitas terpisah dari Agent Catalog dan Agent Instance.
+- Company dapat melihat subscription Agent yang dimilikinya.
+- Subscription dapat dibatalkan oleh user berpermission `agent.hire`.
+- Cancelled subscription otomatis menonaktifkan Agent Instance terkait.
+- Agent inactive/cancelled tidak dapat menerima Task baru.
+- Audit log untuk hiring dan cancellation.
+
 ## Next
 
 - Authentication + user/company roles

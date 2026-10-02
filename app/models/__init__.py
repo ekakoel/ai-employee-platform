@@ -1,3 +1,18 @@
-from app.models.entities import AgentCatalog, AgentInstance, Company, KnowledgeItem, Task
+from app.models.entities import (
+    AgentCatalog,
+    AgentSubscription,
+    AgentInstance,
+    AuditLog,
+    Company,
+    KnowledgeItem,
+    Permission,
+    Role,
+    RolePermission,
+    Task,
+    User,
+)
 
-__all__ = ["Company", "AgentCatalog", "AgentInstance", "KnowledgeItem", "Task"]
+__all__ = [
+    "AgentCatalog", "AgentSubscription", "AgentInstance", "AuditLog", "Company", "KnowledgeItem",
+    "Permission", "Role", "RolePermission", "Task", "User",
+]

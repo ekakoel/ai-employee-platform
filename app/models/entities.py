@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -12,6 +12,10 @@ def new_id() -> str:
     return str(uuid4())
 
 
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 class AgentStatus(str, Enum):
     ACTIVE = "active"
     INACTIVE = "inactive"
@@ -19,9 +23,22 @@ class AgentStatus(str, Enum):
 
 class TaskStatus(str, Enum):
     PENDING = "pending"
+    PLANNING = "planning"
     RUNNING = "running"
+    WAITING_APPROVAL = "waiting_approval"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class UserStatus(str, Enum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+
+
+class SubscriptionStatus(str, Enum):
+    ACTIVE = "active"
+    SUSPENDED = "suspended"
     CANCELLED = "cancelled"
 
 
@@ -30,11 +47,56 @@ class Company(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
+    users: Mapped[list["User"]] = relationship(back_populates="company", cascade="all, delete-orphan")
     agent_instances: Mapped[list["AgentInstance"]] = relationship(back_populates="company")
     knowledge_items: Mapped[list["KnowledgeItem"]] = relationship(back_populates="company")
     tasks: Mapped[list["Task"]] = relationship(back_populates="company")
+    audit_logs: Mapped[list["AuditLog"]] = relationship(back_populates="company")
+    subscriptions: Mapped[list["AgentSubscription"]] = relationship(back_populates="company", cascade="all, delete-orphan")
+
+
+class Role(Base):
+    __tablename__ = "roles"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    permissions: Mapped[list["Permission"]] = relationship(secondary="role_permissions", back_populates="roles")
+
+
+class Permission(Base):
+    __tablename__ = "permissions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    key: Mapped[str] = mapped_column(String(150), unique=True, nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    roles: Mapped[list[Role]] = relationship(secondary="role_permissions", back_populates="permissions")
+
+
+class RolePermission(Base):
+    __tablename__ = "role_permissions"
+    __table_args__ = (UniqueConstraint("role_id", "permission_id", name="uq_role_permission"),)
+
+    role_id: Mapped[str] = mapped_column(ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True)
+    permission_id: Mapped[str] = mapped_column(ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True)
+
+
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = (UniqueConstraint("company_id", "email", name="uq_company_user_email"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    role_id: Mapped[str] = mapped_column(ForeignKey("roles.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default=UserStatus.ACTIVE.value, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+    company: Mapped[Company] = relationship(back_populates="users")
+    role: Mapped[Role] = relationship()
 
 
 class AgentCatalog(Base):
@@ -50,6 +112,22 @@ class AgentCatalog(Base):
     status: Mapped[str] = mapped_column(String(20), default=AgentStatus.ACTIVE.value, nullable=False)
 
     instances: Mapped[list["AgentInstance"]] = relationship(back_populates="catalog")
+    subscriptions: Mapped[list["AgentSubscription"]] = relationship(back_populates="catalog")
+
+
+class AgentSubscription(Base):
+    __tablename__ = "agent_subscriptions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    catalog_agent_id: Mapped[str] = mapped_column(ForeignKey("agent_catalog.id"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), default=SubscriptionStatus.ACTIVE.value, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    company: Mapped[Company] = relationship(back_populates="subscriptions")
+    catalog: Mapped[AgentCatalog] = relationship(back_populates="subscriptions")
+    agent_instances: Mapped[list["AgentInstance"]] = relationship(back_populates="subscription")
 
 
 class AgentInstance(Base):
@@ -58,13 +136,15 @@ class AgentInstance(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     catalog_agent_id: Mapped[str] = mapped_column(ForeignKey("agent_catalog.id"), nullable=False, index=True)
+    subscription_id: Mapped[str] = mapped_column(ForeignKey("agent_subscriptions.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default=AgentStatus.ACTIVE.value, nullable=False)
     configuration: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     company: Mapped[Company] = relationship(back_populates="agent_instances")
     catalog: Mapped[AgentCatalog] = relationship(back_populates="instances")
+    subscription: Mapped["AgentSubscription"] = relationship(back_populates="agent_instances")
     tasks: Mapped[list["Task"]] = relationship(back_populates="agent_instance")
 
 
@@ -78,8 +158,8 @@ class KnowledgeItem(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     category: Mapped[str] = mapped_column(String(100), default="general", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
     company: Mapped[Company] = relationship(back_populates="knowledge_items")
 
@@ -94,7 +174,25 @@ class Task(Base):
     instruction: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(30), default=TaskStatus.PENDING.value, nullable=False)
     result: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     company: Mapped[Company] = relationship(back_populates="tasks")
     agent_instance: Mapped[AgentInstance] = relationship(back_populates="tasks")
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    agent_instance_id: Mapped[str | None] = mapped_column(ForeignKey("agent_instances.id"), nullable=True, index=True)
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(150), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    resource_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    details: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+    company: Mapped[Company] = relationship(back_populates="audit_logs")
