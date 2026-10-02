@@ -35,6 +35,11 @@ class UserStatus(str, Enum):
     ACTIVE = "active"
     INACTIVE = "inactive"
 
+class DocumentStatus(str, Enum):
+    UPLOADED = "uploaded"
+    PROCESSING = "processing"
+    READY = "ready"
+    FAILED = "failed"
 
 class SubscriptionStatus(str, Enum):
     ACTIVE = "active"
@@ -163,7 +168,78 @@ class KnowledgeItem(Base):
 
     company: Mapped[Company] = relationship(back_populates="knowledge_items")
 
+class KnowledgeDocument(Base):
+    __tablename__ = "knowledge_documents"
 
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=new_id,
+    )
+
+    company_id: Mapped[str] = mapped_column(
+        ForeignKey("companies.id"),
+        nullable=False,
+        index=True,
+    )
+
+    agent_instance_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_instances.id"),
+        nullable=True,
+        index=True,
+    )
+
+    original_filename: Mapped[str] = mapped_column(
+        String(500),
+        nullable=False,
+    )
+
+    stored_filename: Mapped[str] = mapped_column(
+        String(500),
+        nullable=False,
+    )
+
+    content_type: Mapped[str] = mapped_column(
+        String(200),
+        nullable=False,
+    )
+
+    file_size: Mapped[int] = mapped_column(
+        nullable=False,
+    )
+
+    status: Mapped[DocumentStatus] = mapped_column(
+        default=DocumentStatus.UPLOADED,
+        nullable=False,
+    )
+
+    extracted_text: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    error_message: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        nullable=False,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+        nullable=False,
+    )
+
+    company: Mapped[Company] = relationship()
+
+    agent_instance: Mapped[AgentInstance | None] = relationship()
+    
 class Task(Base):
     __tablename__ = "tasks"
 

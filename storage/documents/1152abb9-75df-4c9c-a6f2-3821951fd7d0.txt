@@ -1,0 +1,11 @@
+Hotel Example
+Contract valid from 1 January 2026 until 31 December 2026.
+
+Room Category:
+Deluxe
+
+Meal Plan:
+Breakfast Included
+
+Cancellation:
+Free cancellation up to 7 days before arrival.

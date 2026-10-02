@@ -143,3 +143,45 @@ def test_cancelled_agent_cannot_receive_new_task():
         headers=headers,
     )
     assert response.status_code == 409
+
+def test_company_cannot_access_another_company_knowledge():
+    company_a, owner_a = make_company_and_owner("Knowledge Company A")
+    company_b, owner_b = make_company_and_owner("Knowledge Company B")
+
+    headers_a = {"X-User-ID": owner_a["id"]}
+    headers_b = {"X-User-ID": owner_b["id"]}
+
+    knowledge_a = client.post(
+        f"/api/v1/companies/{company_a['id']}/knowledge",
+        json={
+            "title": "Company A Policy",
+            "content": "This knowledge belongs to Company A.",
+            "category": "general",
+        },
+        headers=headers_a,
+    )
+    assert knowledge_a.status_code == 201
+
+    knowledge_b = client.post(
+        f"/api/v1/companies/{company_b['id']}/knowledge",
+        json={
+            "title": "Company B Policy",
+            "content": "This knowledge belongs to Company B.",
+            "category": "general",
+        },
+        headers=headers_b,
+    )
+    assert knowledge_b.status_code == 201
+
+    response = client.get(
+        f"/api/v1/companies/{company_a['id']}/knowledge",
+        headers=headers_a,
+    )
+
+    assert response.status_code == 200
+
+    knowledge_items = response.json()
+
+    assert len(knowledge_items) == 1
+    assert knowledge_items[0]["title"] == "Company A Policy"
+    assert knowledge_items[0]["company_id"] == company_a["id"]

@@ -95,6 +95,19 @@ class KnowledgeRead(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+class KnowledgeDocumentRead(BaseModel):
+    id: str
+    company_id: str
+    agent_instance_id: str | None
+    original_filename: str
+    stored_filename: str
+    content_type: str
+    file_size: int
+    status: str
+    extracted_text: str | None
+    error_message: str | None
+    created_at: datetime
+    updated_at: datetime
 
 class TaskCreate(BaseModel):
     agent_instance_id: str
