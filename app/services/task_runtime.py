@@ -3,7 +3,11 @@ from sqlalchemy.orm import Session
 
 from app.agents.context import load_agent_context
 from app.models.entities import Task, TaskStatus
-from app.runtime.executor import AgentExecutor, RuntimeExecutionError
+from app.runtime.executor import (
+    AgentExecutor,
+    RuntimeApprovalRequiredError,
+    RuntimeExecutionError,
+)
 from app.services.audit import record_audit
 
 
@@ -90,6 +94,9 @@ class TaskRuntimeService:
                 context=context,
             )
 
+            # -----------------------------------------------------
+            # COMPLETED
+            # -----------------------------------------------------
             task.result = result
             task.status = TaskStatus.COMPLETED.value
 
@@ -109,7 +116,58 @@ class TaskRuntimeService:
 
             return task
 
+        except RuntimeApprovalRequiredError as exc:
+            # -----------------------------------------------------
+            # WAITING FOR HUMAN APPROVAL
+            # -----------------------------------------------------
+            #
+            # The ApprovalService has already persisted the
+            # approval request. We now persist the task state.
+            #
+            db.rollback()
+
+            task = db.scalar(
+                select(Task).where(
+                    Task.id == task_id,
+                    Task.company_id == company_id,
+                )
+            )
+
+            if task is None:
+                raise
+
+            task.status = TaskStatus.WAITING_APPROVAL.value
+
+            task.result = (
+                "Task is waiting for human approval.\n"
+                f"Approval ID: {exc.approval_id}\n"
+                f"Reason: {exc}"
+            )
+
+            record_audit(
+                db,
+                company_id=company_id,
+                agent_instance_id=task.agent_instance_id,
+                task_id=task.id,
+                action="task.waiting_approval",
+                resource_type="task",
+                resource_id=task.id,
+                status="waiting_approval",
+                details={
+                    "approval_id": exc.approval_id,
+                    "reason": str(exc),
+                },
+            )
+
+            db.commit()
+            db.refresh(task)
+
+            return task
+
         except RuntimeExecutionError as exc:
+            # -----------------------------------------------------
+            # FAILED
+            # -----------------------------------------------------
             db.rollback()
 
             task = db.scalar(

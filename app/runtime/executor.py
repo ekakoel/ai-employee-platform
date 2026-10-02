@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.context import AgentContext
 from app.runtime.tool_executor import (
+    ApprovalRequiredError,
     ToolExecutionError,
     ToolExecutor,
 )
@@ -9,6 +10,21 @@ from app.runtime.tool_executor import (
 
 class RuntimeExecutionError(Exception):
     """Raised when deterministic runtime execution fails."""
+
+
+class RuntimeApprovalRequiredError(RuntimeExecutionError):
+    """
+    Raised when a task cannot continue until a human approves
+    a tool execution.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        approval_id: str,
+    ):
+        super().__init__(message)
+        self.approval_id = approval_id
 
 
 class AgentExecutor:
@@ -72,6 +88,12 @@ class AgentExecutor:
                         result=result,
                     )
                 )
+
+            except ApprovalRequiredError as exc:
+                raise RuntimeApprovalRequiredError(
+                    str(exc),
+                    approval_id=exc.approval_id,
+                ) from exc
 
             except ToolExecutionError as exc:
                 raise RuntimeExecutionError(

@@ -10,6 +10,8 @@ DEFAULT_PERMISSIONS = {
     "knowledge.write": "Create, update, and delete company knowledge",
     "task.create": "Create AI Employee tasks",
     "task.read": "Read AI Employee tasks",
+    "approval.read": "View approval requests",
+    "approval.manage": "Approve or reject approval requests",
     "audit.read": "Read company audit logs",
     "team.manage": "Manage company users",
 }
@@ -23,24 +25,39 @@ ROLE_PERMISSIONS = {
 
 def get_or_create_role(db: Session, role_name: str) -> Role:
     role = db.scalar(select(Role).where(Role.name == role_name))
-    if role:
-        return role
+
     permission_keys = ROLE_PERMISSIONS.get(role_name)
     if permission_keys is None:
         raise ValueError(f"Unknown role: {role_name}")
-    role = Role(name=role_name, description=f"Built-in {role_name} company role")
-    db.add(role)
-    db.flush()
+
+    if role is None:
+        role = Role(
+            name=role_name,
+            description=f"Built-in {role_name} company role",
+        )
+        db.add(role)
+        db.flush()
+
     permissions = []
+
     for key in permission_keys:
-        permission = db.scalar(select(Permission).where(Permission.key == key))
+        permission = db.scalar(
+            select(Permission).where(Permission.key == key)
+        )
+
         if not permission:
-            permission = Permission(key=key, description=DEFAULT_PERMISSIONS[key])
+            permission = Permission(
+                key=key,
+                description=DEFAULT_PERMISSIONS[key],
+            )
             db.add(permission)
             db.flush()
+
         permissions.append(permission)
+
     role.permissions = permissions
     db.flush()
+
     return role
 
 

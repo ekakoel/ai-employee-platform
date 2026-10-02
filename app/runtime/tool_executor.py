@@ -4,6 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.entities import AgentInstance
+from app.security.policy_engine import PolicyEngine
+from app.services.approval import ApprovalService
 from app.services.audit import record_audit
 from app.tools.base import ToolContext
 from app.tools.contract import SearchContractTool
@@ -14,15 +16,36 @@ class ToolExecutionError(Exception):
     """Raised when a tool execution is rejected or fails."""
 
 
+class ApprovalRequiredError(ToolExecutionError):
+    """Raised when a tool execution requires human approval."""
+
+    def __init__(
+        self,
+        message: str,
+        approval_id: str,
+    ):
+        super().__init__(message)
+        self.approval_id = approval_id
+
+
 class ToolExecutor:
     def __init__(self, db: Session):
         self.db = db
 
+        # ---------------------------------------------------------
+        # Tool registry
+        # ---------------------------------------------------------
         self.registry = ToolRegistry()
 
         self.registry.register(
             SearchContractTool(db)
         )
+
+        # ---------------------------------------------------------
+        # Security / approval services
+        # ---------------------------------------------------------
+        self.policy_engine = PolicyEngine(db)
+        self.approval_service = ApprovalService(db)
 
     def execute(
         self,
@@ -113,7 +136,87 @@ class ToolExecutor:
             )
 
         # ---------------------------------------------------------
-        # 5. Execute tool
+        # 5. Policy evaluation
+        # ---------------------------------------------------------
+        decision = self.policy_engine.evaluate(
+            company_id=company_id,
+            agent_instance_id=agent_instance_id,
+            tool_name=tool_name,
+            arguments=arguments,
+        )
+
+        # ---------------------------------------------------------
+        # 5A. Policy DENY
+        # ---------------------------------------------------------
+        if decision.denied:
+            self._audit_denied(
+                company_id=company_id,
+                agent_instance_id=agent_instance_id,
+                task_id=task_id,
+                tool_name=tool_name,
+                reason="policy_denied",
+                extra={
+                    "policy_id": decision.policy_id,
+                    "policy_reason": decision.reason,
+                },
+            )
+
+            self.db.commit()
+
+            raise ToolExecutionError(
+                f"Tool '{tool_name}' denied by policy: "
+                f"{decision.reason}"
+            )
+
+        # ---------------------------------------------------------
+        # 5B. Policy requires HUMAN APPROVAL
+        # ---------------------------------------------------------
+        if decision.requires_approval:
+
+            if task_id is None:
+                self._audit_denied(
+                    company_id=company_id,
+                    agent_instance_id=agent_instance_id,
+                    task_id=None,
+                    tool_name=tool_name,
+                    reason="approval_requires_task",
+                    extra={
+                        "policy_id": decision.policy_id,
+                    },
+                )
+
+                self.db.commit()
+
+                raise ToolExecutionError(
+                    "Approval-required tool execution must belong "
+                    "to a task."
+                )
+
+            # Create approval request.
+            #
+            # IMPORTANT:
+            # Approval model currently does not contain policy_id,
+            # therefore we intentionally do not pass policy_id here.
+            approval = self.approval_service.create_request(
+                company_id=company_id,
+                task_id=task_id,
+                agent_instance_id=agent_instance_id,
+                action=tool_name,
+                reason=decision.reason,
+                payload=arguments,
+            )
+
+            # Do NOT treat approval requirement as a normal failure.
+            # AgentExecutor / TaskRuntimeService will handle this
+            # exception and move the task to waiting_approval.
+            raise ApprovalRequiredError(
+                f"Tool '{tool_name}' requires approval. "
+                f"Approval ID: {approval.id}",
+                approval_id=approval.id,
+            )
+
+        # ---------------------------------------------------------
+        # 6. Execute tool
         # ---------------------------------------------------------
         context = ToolContext(
             company_id=company_id,
@@ -179,7 +282,17 @@ class ToolExecutor:
         task_id: str | None,
         tool_name: str,
         reason: str,
+        extra: dict[str, Any] | None = None,
     ) -> None:
+
+        details = {
+            "tool": tool_name,
+            "reason": reason,
+        }
+
+        if extra:
+            details.update(extra)
+
         record_audit(
             self.db,
             company_id=company_id,
@@ -189,8 +302,5 @@ class ToolExecutor:
             resource_type="tool",
             resource_id=tool_name,
             status="denied",
-            details={
-                "tool": tool_name,
-                "reason": reason,
-            },
+            details=details,
         )

@@ -10,9 +10,24 @@ from app.models.entities import (
     RolePermission,
     Task,
     User,
+    Approval,
+    ApprovalStatus,
+    Policy,
 )
 
 __all__ = [
-    "AgentCatalog", "AgentSubscription", "AgentInstance", "AuditLog", "Company", "KnowledgeItem",
-    "Permission", "Role", "RolePermission", "Task", "User",
+    "AgentCatalog",
+    "AgentSubscription",
+    "AgentInstance",
+    "AuditLog",
+    "Approval",
+    "ApprovalStatus",
+    "Company",
+    "KnowledgeItem",
+    "Permission",
+    "Policy",
+    "Role",
+    "RolePermission",
+    "Task",
+    "User",
 ]

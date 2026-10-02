@@ -140,3 +140,27 @@ class AuditLogRead(BaseModel):
     status: str
     details: dict
     created_at: datetime
+
+
+class ApprovalRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    company_id: str
+    task_id: str
+    agent_instance_id: str
+    action: str
+    reason: str
+    payload: dict
+    status: str
+    reviewed_by: str | None
+    reviewed_at: datetime | None
+    review_comment: str | None
+    created_at: datetime
+
+
+class ApprovalReviewRequest(BaseModel):
+    comment: str | None = Field(
+        default=None,
+        max_length=2000,
+    )
