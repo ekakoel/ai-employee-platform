@@ -2,7 +2,13 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from app.services.task_runtime import TaskRuntimeService
+from app.runtime.tool_executor import (
+    ToolExecutionError,
+    ToolExecutor,
+)
 
 from app.core.database import get_db
 from app.knowledge.service import save_document
@@ -148,12 +154,33 @@ def create_company(
     payload: CompanyCreate,
     db: Session = Depends(get_db),
 ):
+    existing_company = db.scalar(
+        select(Company).where(
+            Company.name == payload.name
+        )
+    )
+
+    if existing_company:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Company '{payload.name}' already exists.",
+        )
+
     company = Company(
         name=payload.name,
     )
 
     db.add(company)
-    db.flush()
+
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Company '{payload.name}' already exists.",
+        ) from exc
 
     # Company creator is intentionally separated from
     # user authentication for this local MVP.
@@ -162,6 +189,48 @@ def create_company(
 
     return company
 
+
+@router.post(
+    "/companies/{company_id}/agents/{agent_instance_id}/tools/{tool_name}/execute",
+)
+def execute_agent_tool(
+    company_id: str,
+    agent_instance_id: str,
+    tool_name: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(
+        db,
+        company_id,
+        x_user_id,
+    )
+
+    require_permission(
+        user,
+        "task.create",
+    )
+
+    arguments = payload.get("arguments", {})
+    task_id = payload.get("task_id")
+
+    executor = ToolExecutor(db)
+
+    try:
+        return executor.execute(
+            company_id=company_id,
+            agent_instance_id=agent_instance_id,
+            tool_name=tool_name,
+            arguments=arguments,
+            task_id=task_id,
+        )
+
+    except ToolExecutionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
 
 @router.post(
     "/companies/{company_id}/users",
@@ -787,6 +856,41 @@ def list_tasks(
         ).all()
     )
 
+
+@router.post(
+    "/companies/{company_id}/tasks/{task_id}/execute",
+    response_model=TaskRead,
+)
+def execute_task(
+    company_id: str,
+    task_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(
+        db,
+        company_id,
+        x_user_id,
+    )
+
+    require_permission(
+        user,
+        "task.create",
+    )
+
+    runtime = TaskRuntimeService()
+
+    try:
+        return runtime.execute(
+            db,
+            company_id=company_id,
+            task_id=task_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
 @router.get(
     "/companies/{company_id}/audit-logs",
