@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models import Approval, ApprovalStatus
@@ -62,15 +63,56 @@ class ApprovalService:
         user_id: str,
         comment: str | None = None,
     ) -> Approval:
-        approval = self._get_pending(
-            approval_id=approval_id,
-            company_id=company_id,
+        reviewed_at = datetime.now(timezone.utc)
+
+        result = self.db.execute(
+            update(Approval)
+            .where(
+                Approval.id == approval_id,
+                Approval.company_id == company_id,
+                Approval.status == ApprovalStatus.PENDING.value,
+            )
+            .values(
+                status=ApprovalStatus.APPROVED.value,
+                reviewed_by=user_id,
+                reviewed_at=reviewed_at,
+                review_comment=comment,
+            )
         )
 
-        approval.status = ApprovalStatus.APPROVED.value
-        approval.reviewed_by = user_id
-        approval.reviewed_at = datetime.now(timezone.utc)
-        approval.review_comment = comment
+        if result.rowcount != 1:
+            self.db.rollback()
+
+            approval = self.db.scalar(
+                select(Approval).where(
+                    Approval.id == approval_id,
+                    Approval.company_id == company_id,
+                )
+            )
+
+            if approval is None:
+                raise ValueError(
+                    "Approval not found."
+                )
+
+            raise ValueError(
+                f"Approval cannot be reviewed from status "
+                f"'{approval.status}'."
+            )
+
+        approval = self.db.scalar(
+            select(Approval).where(
+                Approval.id == approval_id,
+                Approval.company_id == company_id,
+            )
+        )
+
+        if approval is None:
+            self.db.rollback()
+
+            raise ValueError(
+                "Approval not found after approval transition."
+            )
 
         record_audit(
             self.db,
@@ -101,15 +143,56 @@ class ApprovalService:
         user_id: str,
         comment: str | None = None,
     ) -> Approval:
-        approval = self._get_pending(
-            approval_id=approval_id,
-            company_id=company_id,
+        reviewed_at = datetime.now(timezone.utc)
+
+        result = self.db.execute(
+            update(Approval)
+            .where(
+                Approval.id == approval_id,
+                Approval.company_id == company_id,
+                Approval.status == ApprovalStatus.PENDING.value,
+            )
+            .values(
+                status=ApprovalStatus.REJECTED.value,
+                reviewed_by=user_id,
+                reviewed_at=reviewed_at,
+                review_comment=comment,
+            )
         )
 
-        approval.status = ApprovalStatus.REJECTED.value
-        approval.reviewed_by = user_id
-        approval.reviewed_at = datetime.now(timezone.utc)
-        approval.review_comment = comment
+        if result.rowcount != 1:
+            self.db.rollback()
+
+            approval = self.db.scalar(
+                select(Approval).where(
+                    Approval.id == approval_id,
+                    Approval.company_id == company_id,
+                )
+            )
+
+            if approval is None:
+                raise ValueError(
+                    "Approval not found."
+                )
+
+            raise ValueError(
+                f"Approval cannot be reviewed from status "
+                f"'{approval.status}'."
+            )
+
+        approval = self.db.scalar(
+            select(Approval).where(
+                Approval.id == approval_id,
+                Approval.company_id == company_id,
+            )
+        )
+
+        if approval is None:
+            self.db.rollback()
+
+            raise ValueError(
+                "Approval not found after rejection transition."
+            )
 
         record_audit(
             self.db,
@@ -129,30 +212,5 @@ class ApprovalService:
 
         self.db.commit()
         self.db.refresh(approval)
-
-        return approval
-
-    def _get_pending(
-        self,
-        *,
-        approval_id: str,
-        company_id: str,
-    ) -> Approval:
-        approval = (
-            self.db.query(Approval)
-            .filter(
-                Approval.id == approval_id,
-                Approval.company_id == company_id,
-            )
-            .first()
-        )
-
-        if approval is None:
-            raise ValueError("Approval not found.")
-
-        if approval.status != ApprovalStatus.PENDING.value:
-            raise ValueError(
-                f"Approval cannot be reviewed from status '{approval.status}'."
-            )
 
         return approval

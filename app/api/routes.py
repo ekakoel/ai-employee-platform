@@ -4,11 +4,6 @@ from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile,
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from app.services.task_runtime import TaskRuntimeService
-from app.runtime.tool_executor import (
-    ToolExecutionError,
-    ToolExecutor,
-)
 
 from app.core.database import get_db
 from app.knowledge.service import save_document
@@ -16,6 +11,7 @@ from app.models import (
     AgentCatalog,
     AgentInstance,
     AgentSubscription,
+    Approval,
     AuditLog,
     Company,
     KnowledgeItem,
@@ -23,10 +19,13 @@ from app.models import (
     User,
 )
 from app.models.entities import TaskStatus
+from app.runtime.tool_executor import ToolExecutionError, ToolExecutor
 from app.schemas.domain import (
     AgentCatalogRead,
     AgentInstanceRead,
     AgentSubscriptionRead,
+    ApprovalRead,
+    ApprovalReviewRequest,
     AuditLogRead,
     CompanyCreate,
     CompanyRead,
@@ -40,9 +39,10 @@ from app.schemas.domain import (
     UserCreate,
     UserRead,
 )
+from app.services.approval import ApprovalService
 from app.services.audit import record_audit
 from app.services.seed import get_or_create_role
-
+from app.services.task_runtime import TaskRuntimeService
 
 router = APIRouter(prefix="/api/v1")
 
@@ -231,6 +231,7 @@ def execute_agent_tool(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
+
 
 @router.post(
     "/companies/{company_id}/users",
@@ -891,6 +892,145 @@ def execute_task(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
+
+
+@router.get(
+    "/companies/{company_id}/approvals",
+    response_model=list[ApprovalRead],
+)
+def list_company_approvals(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(
+        db,
+        company_id,
+        x_user_id,
+    )
+
+    require_permission(
+        user,
+        "approval.read",
+    )
+
+    return list(
+        db.scalars(
+            select(Approval)
+            .where(
+                Approval.company_id == company_id
+            )
+            .order_by(
+                Approval.created_at.desc()
+            )
+        ).all()
+    )
+
+
+@router.post(
+    "/companies/{company_id}/approvals/{approval_id}/approve",
+    response_model=ApprovalRead,
+)
+def approve_company_approval(
+    company_id: str,
+    approval_id: str,
+    payload: ApprovalReviewRequest,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(
+        db,
+        company_id,
+        x_user_id,
+    )
+
+    require_permission(
+        user,
+        "approval.manage",
+    )
+
+    service = ApprovalService(db)
+
+    try:
+        approval = service.approve(
+            approval_id=approval_id,
+            company_id=company_id,
+            user_id=user.id,
+            comment=payload.comment,
+        )
+
+        runtime = TaskRuntimeService()
+
+        runtime.resume_after_approval(
+            db,
+            company_id=company_id,
+            task_id=approval.task_id,
+            approval_id=approval.id,
+        )
+
+        db.refresh(approval)
+
+        return approval
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+
+@router.post(
+    "/companies/{company_id}/approvals/{approval_id}/reject",
+    response_model=ApprovalRead,
+)
+def reject_company_approval(
+    company_id: str,
+    approval_id: str,
+    payload: ApprovalReviewRequest,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(
+        db,
+        company_id,
+        x_user_id,
+    )
+
+    require_permission(
+        user,
+        "approval.manage",
+    )
+
+    service = ApprovalService(db)
+
+    try:
+        approval = service.reject(
+            approval_id=approval_id,
+            company_id=company_id,
+            user_id=user.id,
+            comment=payload.comment,
+        )
+
+        runtime = TaskRuntimeService()
+
+        runtime.reject_after_approval(
+            db,
+            company_id=company_id,
+            task_id=approval.task_id,
+            approval_id=approval.id,
+            reason=payload.comment,
+        )
+
+        db.refresh(approval)
+
+        return approval
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
 
 @router.get(
     "/companies/{company_id}/audit-logs",

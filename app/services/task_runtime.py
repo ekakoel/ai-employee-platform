@@ -1,19 +1,34 @@
-from sqlalchemy import select
+
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.agents.context import load_agent_context
-from app.models.entities import Task, TaskStatus
+from app.models.entities import (
+    AgentInstance,
+    Approval,
+    ApprovalStatus,
+    Task,
+    TaskStatus,
+)
 from app.runtime.executor import (
     AgentExecutor,
     RuntimeApprovalRequiredError,
     RuntimeExecutionError,
 )
 from app.services.audit import record_audit
+from app.llm.base import LLMProvider
+from app.runtime.factory import create_llm_provider
+from app.runtime.agent_runtime import AgentRuntimeResult
 
 
 class TaskRuntimeService:
-    def __init__(self, executor: AgentExecutor | None = None):
+    def __init__(
+        self,
+        executor: AgentExecutor | None = None,
+        provider: LLMProvider | None = None,
+    ):
         self.executor = executor or AgentExecutor()
+        self.provider = provider or create_llm_provider()
 
     def execute(
         self,
@@ -22,6 +37,63 @@ class TaskRuntimeService:
         company_id: str,
         task_id: str,
     ) -> Task:
+        # ---------------------------------------------------------
+        # ATOMIC TASK CLAIM
+        # ---------------------------------------------------------
+        #
+        # Only one concurrent executor can change PENDING -> PLANNING.
+        #
+        # This prevents:
+        #
+        # Request A: SELECT PENDING
+        # Request B: SELECT PENDING
+        # Request A: create approval
+        # Request B: create approval
+        #
+        # The UPDATE is atomic at the database level.
+        # SQLite serializes concurrent writes.
+        #
+        claim_result = db.execute(
+            update(Task)
+            .where(
+                Task.id == task_id,
+                Task.company_id == company_id,
+                Task.status == TaskStatus.PENDING.value,
+            )
+            .values(
+                status=TaskStatus.PLANNING.value,
+            )
+        )
+
+        if claim_result.rowcount != 1:
+            db.rollback()
+
+            task = db.scalar(
+                select(Task).where(
+                    Task.id == task_id,
+                    Task.company_id == company_id,
+                )
+            )
+
+            if task is None:
+                raise ValueError(
+                    "Task not found for this company."
+                )
+
+            raise ValueError(
+                f"Task cannot be executed from status '{task.status}'."
+            )
+
+        # ---------------------------------------------------------
+        # LOAD CLAIMED TASK
+        # ---------------------------------------------------------
+        #
+        # The claim must be committed before continuing because
+        # the rest of the execution may involve another service
+        # committing its own transaction, such as ApprovalService.
+        #
+        db.commit()
+
         task = db.scalar(
             select(Task).where(
                 Task.id == task_id,
@@ -30,18 +102,13 @@ class TaskRuntimeService:
         )
 
         if task is None:
-            raise ValueError("Task not found for this company.")
-
-        if task.status != TaskStatus.PENDING.value:
             raise ValueError(
-                f"Task cannot be executed from status '{task.status}'."
+                "Task not found for this company."
             )
 
         # ---------------------------------------------------------
-        # PLANNING
+        # PLANNING AUDIT
         # ---------------------------------------------------------
-        task.status = TaskStatus.PLANNING.value
-
         record_audit(
             db,
             company_id=company_id,
@@ -53,15 +120,52 @@ class TaskRuntimeService:
             status="success",
         )
 
-        db.flush()
+        db.commit()
+
+        # ---------------------------------------------------------
+        # LOAD AGENT
+        # ---------------------------------------------------------
+        agent = db.scalar(
+            select(AgentInstance).where(
+                AgentInstance.id == task.agent_instance_id,
+                AgentInstance.company_id == company_id,
+            )
+        )
+
+        if agent is None:
+            task.status = TaskStatus.FAILED.value
+            task.result = (
+                "Agent instance not found for this company."
+            )
+
+            record_audit(
+                db,
+                company_id=company_id,
+                agent_instance_id=task.agent_instance_id,
+                task_id=task.id,
+                action="task.failed",
+                resource_type="task",
+                resource_id=task.id,
+                status="failed",
+                details={
+                    "error": "Agent instance not found for this company.",
+                },
+            )
+
+            db.commit()
+            db.refresh(task)
+
+            raise ValueError(
+                "Agent instance not found for this company."
+            )
 
         # ---------------------------------------------------------
         # LOAD AGENT CONTEXT
         # ---------------------------------------------------------
         context = load_agent_context(
             db,
-            company_id=company_id,
-            agent_instance_id=task.agent_instance_id,
+            agent,
+            task,
         )
 
         # ---------------------------------------------------------
@@ -79,13 +183,16 @@ class TaskRuntimeService:
             resource_id=task.id,
             status="success",
             details={
-                "agent_name": context.name,
+                "agent_name": context.agent_name,
                 "knowledge_count": len(context.knowledge),
             },
         )
 
-        db.flush()
+        db.commit()
 
+        # ---------------------------------------------------------
+        # EXECUTION
+        # ---------------------------------------------------------
         try:
             result = self.executor.execute(
                 db,
@@ -94,9 +201,6 @@ class TaskRuntimeService:
                 context=context,
             )
 
-            # -----------------------------------------------------
-            # COMPLETED
-            # -----------------------------------------------------
             task.result = result
             task.status = TaskStatus.COMPLETED.value
 
@@ -117,13 +221,6 @@ class TaskRuntimeService:
             return task
 
         except RuntimeApprovalRequiredError as exc:
-            # -----------------------------------------------------
-            # WAITING FOR HUMAN APPROVAL
-            # -----------------------------------------------------
-            #
-            # The ApprovalService has already persisted the
-            # approval request. We now persist the task state.
-            #
             db.rollback()
 
             task = db.scalar(
@@ -165,9 +262,6 @@ class TaskRuntimeService:
             return task
 
         except RuntimeExecutionError as exc:
-            # -----------------------------------------------------
-            # FAILED
-            # -----------------------------------------------------
             db.rollback()
 
             task = db.scalar(
@@ -193,6 +287,382 @@ class TaskRuntimeService:
                 resource_id=task.id,
                 status="failed",
                 details={
+                    "error": str(exc),
+                },
+            )
+
+            db.commit()
+            db.refresh(task)
+
+            return task
+
+
+    def reject_after_approval(
+        self,
+        db: Session,
+        *,
+        company_id: str,
+        task_id: str,
+        approval_id: str,
+        reason: str | None = None,
+    ) -> Task:
+        """
+        Stop a task after its approval request has been rejected.
+
+        The task must currently be WAITING_APPROVAL and the approval
+        must belong to the same company, task, and agent.
+
+        This keeps task lifecycle transitions inside TaskRuntimeService
+        instead of allowing API routes to mutate Task.status directly.
+        """
+
+        task = db.scalar(
+            select(Task).where(
+                Task.id == task_id,
+                Task.company_id == company_id,
+            )
+        )
+
+        if task is None:
+            raise ValueError(
+                "Task not found for this company."
+            )
+
+        if task.status != TaskStatus.WAITING_APPROVAL.value:
+            raise ValueError(
+                f"Task cannot be rejected from status '{task.status}'."
+            )
+
+        approval = db.scalar(
+            select(Approval).where(
+                Approval.id == approval_id,
+                Approval.company_id == company_id,
+                Approval.task_id == task_id,
+            )
+        )
+
+        if approval is None:
+            raise ValueError(
+                "Approval not found for this company and task."
+            )
+
+        if approval.status != ApprovalStatus.REJECTED.value:
+            raise ValueError(
+                f"Task cannot be stopped because approval status is "
+                f"'{approval.status}'."
+            )
+
+        if approval.agent_instance_id != task.agent_instance_id:
+            raise ValueError(
+                "Approval agent does not match the task agent."
+            )
+
+        task.status = TaskStatus.FAILED.value
+        task.result = (
+            "Task stopped because the approval was rejected."
+        )
+
+        if reason:
+            task.result += f"\nReason: {reason}"
+
+        record_audit(
+            db,
+            company_id=company_id,
+            agent_instance_id=task.agent_instance_id,
+            task_id=task.id,
+            action="task.rejected_after_approval",
+            resource_type="task",
+            resource_id=task.id,
+            status="failed",
+            details={
+                "approval_id": approval.id,
+                "reason": reason,
+            },
+        )
+
+        db.commit()
+        db.refresh(task)
+
+        return task
+    def execute_with_llm(
+        self,
+        db: Session,
+        *,
+        company_id: str,
+        task_id: str,
+        temperature: float = 0.0,
+        max_tool_iterations: int = 5,
+    ) -> AgentRuntimeResult:
+        """
+        Execute a task using the configured LLM runtime.
+
+        This method intentionally remains separate from execute()
+        while the LLM execution path is being introduced.
+
+        Task lifecycle and approval handling remain owned by
+        TaskRuntimeService.
+        """
+
+        if self.provider is None:
+            raise ValueError(
+                "LLM provider is not configured."
+            )
+
+        task = db.scalar(
+            select(Task).where(
+                Task.id == task_id,
+                Task.company_id == company_id,
+            )
+        )
+
+        if task is None:
+            raise ValueError(
+                "Task not found for this company."
+            )
+
+        agent = db.scalar(
+            select(AgentInstance).where(
+                AgentInstance.id == task.agent_instance_id,
+                AgentInstance.company_id == company_id,
+            )
+        )
+
+        if agent is None:
+            raise ValueError(
+                "Agent instance not found for this company."
+            )
+
+        context = load_agent_context(
+            db,
+            agent,
+            task,
+        )
+
+        return self.executor.execute_with_llm(
+            db,
+            context=context,
+            provider=self.provider,
+            temperature=temperature,
+            max_tool_iterations=max_tool_iterations,
+        )
+    def resume_after_approval(
+        self,
+        db: Session,
+        *,
+        company_id: str,
+        task_id: str,
+        approval_id: str,
+    ) -> Task:
+        """
+        Resume a task after a human approval.
+
+        The task must be WAITING_APPROVAL and the approval must
+        belong to the same company and task.
+
+        The approval must also belong to the same agent instance
+        as the task.
+
+        The exact approved tool action is executed through
+        AgentExecutor.execute_approved(). The LLM/planner is not
+        called again.
+        """
+
+        task = db.scalar(
+            select(Task).where(
+                Task.id == task_id,
+                Task.company_id == company_id,
+            )
+        )
+
+        if task is None:
+            raise ValueError(
+                "Task not found for this company."
+            )
+
+        if task.status != TaskStatus.WAITING_APPROVAL.value:
+            raise ValueError(
+                f"Task cannot resume from status '{task.status}'."
+            )
+
+        approval = db.scalar(
+            select(Approval).where(
+                Approval.id == approval_id,
+                Approval.company_id == company_id,
+                Approval.task_id == task_id,
+            )
+        )
+
+        if approval is None:
+            raise ValueError(
+                "Approval not found for this company and task."
+            )
+
+        if approval.status != ApprovalStatus.APPROVED.value:
+            raise ValueError(
+                f"Task cannot resume because approval status is "
+                f"'{approval.status}'."
+            )
+
+        if approval.agent_instance_id != task.agent_instance_id:
+            raise ValueError(
+                "Approval agent does not match the task agent."
+            )
+
+        # ---------------------------------------------------------
+        # ATOMIC RESUME CLAIM
+        # ---------------------------------------------------------
+        claim_result = db.execute(
+            update(Task)
+            .where(
+                Task.id == task_id,
+                Task.company_id == company_id,
+                Task.status == TaskStatus.WAITING_APPROVAL.value,
+            )
+            .values(
+                status=TaskStatus.RUNNING.value,
+                result=None,
+            )
+        )
+
+        if claim_result.rowcount != 1:
+            db.rollback()
+
+            current_task = db.scalar(
+                select(Task).where(
+                    Task.id == task_id,
+                    Task.company_id == company_id,
+                )
+            )
+
+            if current_task is None:
+                raise ValueError(
+                    "Task not found for this company."
+                )
+
+            raise ValueError(
+                f"Task cannot resume from status "
+                f"'{current_task.status}'."
+            )
+
+        db.commit()
+
+        task = db.scalar(
+            select(Task).where(
+                Task.id == task_id,
+                Task.company_id == company_id,
+            )
+        )
+
+        if task is None:
+            raise ValueError(
+                "Task not found after resume claim."
+            )
+
+        # ---------------------------------------------------------
+        # LOAD AGENT
+        # ---------------------------------------------------------
+        agent = db.scalar(
+            select(AgentInstance).where(
+                AgentInstance.id == task.agent_instance_id,
+                AgentInstance.company_id == company_id,
+            )
+        )
+
+        if agent is None:
+            raise ValueError(
+                "Agent instance not found for this company."
+            )
+
+        # ---------------------------------------------------------
+        # LOAD AGENT CONTEXT
+        # ---------------------------------------------------------
+        context = load_agent_context(
+            db,
+            agent,
+            task,
+        )
+
+        # ---------------------------------------------------------
+        # RESUME AUDIT
+        # ---------------------------------------------------------
+        record_audit(
+            db,
+            company_id=company_id,
+            agent_instance_id=task.agent_instance_id,
+            task_id=task.id,
+            action="task.resumed",
+            resource_type="task",
+            resource_id=task.id,
+            status="success",
+            details={
+                "approval_id": approval.id,
+                "tool": approval.action,
+            },
+        )
+
+        db.commit()
+
+        # ---------------------------------------------------------
+        # APPROVED EXECUTION
+        # ---------------------------------------------------------
+        try:
+            result = self.executor.execute_approved(
+                db,
+                task_id=task.id,
+                approval_id=approval.id,
+                context=context,
+            )
+
+            task.result = result
+            task.status = TaskStatus.COMPLETED.value
+
+            record_audit(
+                db,
+                company_id=company_id,
+                agent_instance_id=task.agent_instance_id,
+                task_id=task.id,
+                action="task.completed_after_approval",
+                resource_type="task",
+                resource_id=task.id,
+                status="success",
+                details={
+                    "approval_id": approval.id,
+                    "tool": approval.action,
+                },
+            )
+
+            db.commit()
+            db.refresh(task)
+
+            return task
+
+        except RuntimeExecutionError as exc:
+            db.rollback()
+
+            task = db.scalar(
+                select(Task).where(
+                    Task.id == task_id,
+                    Task.company_id == company_id,
+                )
+            )
+
+            if task is None:
+                raise
+
+            task.status = TaskStatus.FAILED.value
+            task.result = str(exc)
+
+            record_audit(
+                db,
+                company_id=company_id,
+                agent_instance_id=task.agent_instance_id,
+                task_id=task.id,
+                action="task.failed_after_approval",
+                resource_type="task",
+                resource_id=task.id,
+                status="failed",
+                details={
+                    "approval_id": approval_id,
                     "error": str(exc),
                 },
             )

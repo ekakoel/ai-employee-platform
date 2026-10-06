@@ -1,22 +1,43 @@
+from __future__ import annotations
+
 from typing import Any
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.models.entities import KnowledgeItem
-from app.tools.base import BaseTool, ToolContext
+from app.tools.base import AgentTool, ToolContext
 
 
-class SearchContractTool(BaseTool):
-    name = "search_contract"
-
-    description = (
-        "Search contract-related knowledge belonging to the current "
-        "company and agent."
-    )
-
+class SearchContractTool(AgentTool):
     def __init__(self, db: Session):
         self.db = db
+
+    @property
+    def name(self) -> str:
+        return "search_contract"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Search contract-related knowledge belonging to the current "
+            "company and agent."
+        )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Contract name, supplier, or keyword to search."
+                    ),
+                },
+            },
+            "required": ["query"],
+        }
 
     def execute(
         self,
@@ -37,7 +58,8 @@ class SearchContractTool(BaseTool):
                 select(KnowledgeItem)
                 .where(
                     KnowledgeItem.company_id == context.company_id,
-                    KnowledgeItem.agent_instance_id == context.agent_instance_id,
+                    KnowledgeItem.agent_instance_id
+                    == context.agent_instance_id,
                     KnowledgeItem.is_active.is_(True),
                     or_(
                         KnowledgeItem.title.ilike(search_pattern),
