@@ -3,6 +3,7 @@ from unittest.mock import Mock, patch
 from app.llm.base import LLMProvider, LLMResponse
 from app.runtime.agent_runtime import AgentRuntimeResult
 from app.services.task_runtime import TaskRuntimeService
+from app.models.entities import TaskStatus
 
 
 class FakeLLMProvider(LLMProvider):
@@ -34,12 +35,12 @@ def test_task_runtime_execute_with_llm_delegates_to_executor():
 
     executor = Mock()
 
-    expected_result = Mock(spec=AgentRuntimeResult)
-    executor.execute_with_llm.return_value = expected_result
-
     task = Mock()
+    task.id = "task-1"
     task.company_id = "company-1"
     task.agent_instance_id = "agent-1"
+    task.status = "pending"
+    task.result = None
 
     agent = Mock()
     agent.id = "agent-1"
@@ -49,11 +50,18 @@ def test_task_runtime_execute_with_llm_delegates_to_executor():
     db.scalar.side_effect = [
         task,
         agent,
+        task,
     ]
 
     context = Mock()
     context.company_id = "company-1"
     context.agent_instance_id = "agent-1"
+    context.agent_name = "Test Agent"
+    context.knowledge = []
+
+    executor.execute_with_llm.return_value = Mock(
+        spec=AgentRuntimeResult
+    )
 
     runtime = TaskRuntimeService(
         executor=executor,
@@ -70,7 +78,8 @@ def test_task_runtime_execute_with_llm_delegates_to_executor():
             task_id="task-1",
         )
 
-    assert result is expected_result
+    assert result is task
+    assert task.status == TaskStatus.COMPLETED.value
 
     executor.execute_with_llm.assert_called_once()
 
@@ -81,21 +90,26 @@ def test_task_runtime_execute_with_llm_delegates_to_executor():
     assert call.kwargs["temperature"] == 0.0
     assert call.kwargs["max_tool_iterations"] == 5
 
-def test_llm_approval_required_is_propagated_as_runtime_approval():
+def test_llm_approval_required_moves_task_to_waiting_approval():
     from app.runtime.executor import RuntimeApprovalRequiredError
 
     provider = FakeLLMProvider()
 
     executor = Mock()
 
-    executor.execute_with_llm.side_effect = RuntimeApprovalRequiredError(
-        "Human approval required.",
-        approval_id="approval-1",
+    executor.execute_with_llm.side_effect = (
+        RuntimeApprovalRequiredError(
+            "Human approval required.",
+            approval_id="approval-1",
+        )
     )
 
     task = Mock()
+    task.id = "task-1"
     task.company_id = "company-1"
     task.agent_instance_id = "agent-1"
+    task.status = "pending"
+    task.result = None
 
     agent = Mock()
     agent.id = "agent-1"
@@ -105,11 +119,14 @@ def test_llm_approval_required_is_propagated_as_runtime_approval():
     db.scalar.side_effect = [
         task,
         agent,
+        task,
     ]
 
     context = Mock()
     context.company_id = "company-1"
     context.agent_instance_id = "agent-1"
+    context.agent_name = "Test Agent"
+    context.knowledge = []
 
     runtime = TaskRuntimeService(
         executor=executor,
@@ -120,15 +137,15 @@ def test_llm_approval_required_is_propagated_as_runtime_approval():
         "app.services.task_runtime.load_agent_context",
         return_value=context,
     ):
-        try:
-            runtime.execute_with_llm(
-                db=db,
-                company_id="company-1",
-                task_id="task-1",
-            )
-        except RuntimeApprovalRequiredError as exc:
-            assert exc.approval_id == "approval-1"
-        else:
-            raise AssertionError(
-                "RuntimeApprovalRequiredError was not propagated."
-            )
+        result = runtime.execute_with_llm(
+            db=db,
+            company_id="company-1",
+            task_id="task-1",
+        )
+
+    assert result is task
+    assert task.status == TaskStatus.WAITING_APPROVAL.value
+    assert "approval-1" in task.result
+    assert "Human approval required." in task.result
+
+    executor.execute_with_llm.assert_called_once()

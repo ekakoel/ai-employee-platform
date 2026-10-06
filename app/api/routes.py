@@ -894,6 +894,42 @@ def execute_task(
         ) from exc
 
 
+@router.post(
+    "/companies/{company_id}/tasks/{task_id}/execute-llm",
+    response_model=TaskRead,
+)
+def execute_task_llm(
+    company_id: str,
+    task_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(
+        db,
+        company_id,
+        x_user_id,
+    )
+
+    require_permission(
+        user,
+        "task.create",
+    )
+
+    runtime = TaskRuntimeService()
+
+    try:
+        return runtime.execute_with_llm(
+            db,
+            company_id=company_id,
+            task_id=task_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
 @router.get(
     "/companies/{company_id}/approvals",
     response_model=list[ApprovalRead],

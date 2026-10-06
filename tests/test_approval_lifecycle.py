@@ -5,6 +5,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base, get_db
+from app.llm.base import LLMResponse
 from app.main import app
 from app.models.entities import (
     AgentCatalog,
@@ -934,3 +935,312 @@ def test_concurrent_resume_after_approval_executes_tool_once():
 
     assert task is not None
     assert task.status == TaskStatus.COMPLETED.value
+
+def test_llm_runtime_requires_approval_and_moves_task_to_waiting_approval():
+    from unittest.mock import Mock, patch
+
+    from app.runtime.executor import RuntimeApprovalRequiredError
+    from app.services.task_runtime import TaskRuntimeService
+
+    case = create_approval_case(
+        company_name="LLM Approval Runtime Company",
+        user_email="llm-runtime-manager@test.local",
+        agent_name="Contract AI LLM",
+        policy_name="LLM Contract Search Approval",
+    )
+
+    with TestingSessionLocal() as db:
+        provider = Mock()
+
+        executor = Mock()
+
+        executor.execute_with_llm.side_effect = (
+            RuntimeApprovalRequiredError(
+                "Tool 'search_contract' requires approval.",
+                approval_id="approval-llm-1",
+            )
+        )
+
+        runtime = TaskRuntimeService(
+            executor=executor,
+            provider=provider,
+        )
+
+        context = Mock()
+        context.company_id = case["company_id"]
+        context.agent_instance_id = case["agent_id"]
+        context.agent_name = "Contract AI LLM"
+        context.knowledge = []
+
+        with patch(
+            "app.services.task_runtime.load_agent_context",
+            return_value=context,
+        ):
+            result = runtime.execute_with_llm(
+                db,
+                company_id=case["company_id"],
+                task_id=case["task_id"],
+            )
+
+        assert result.id == case["task_id"]
+        assert result.status == TaskStatus.WAITING_APPROVAL.value
+        assert "approval-llm-1" in result.result
+        assert "Tool 'search_contract' requires approval." in result.result
+
+        executor.execute_with_llm.assert_called_once()
+
+    approval = get_approval(
+        company_id=case["company_id"],
+        task_id=case["task_id"],
+    )
+
+    assert approval is None
+
+def test_llm_runtime_creates_approval_and_moves_task_to_waiting_approval():
+    from unittest.mock import Mock
+
+    from app.services.task_runtime import TaskRuntimeService
+
+    case = create_approval_case(
+        company_name="Real LLM Approval Company",
+        user_email="real-llm-manager@test.local",
+        agent_name="Contract AI Real LLM",
+        policy_name="Real LLM Contract Approval",
+    )
+
+    provider = Mock()
+
+    provider.chat.return_value = LLMResponse(
+        content="",
+        model="test-model",
+        raw={
+            "message": {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "search_contract",
+                            "arguments": {
+                                "query": "contract",
+                            },
+                        }
+                    }
+                ],
+            }
+        },
+    )
+
+    runtime = TaskRuntimeService(
+        provider=provider,
+    )
+
+    with TestingSessionLocal() as db:
+        result = runtime.execute_with_llm(
+            db,
+            company_id=case["company_id"],
+            task_id=case["task_id"],
+        )
+
+        assert result.id == case["task_id"]
+        assert result.status == TaskStatus.WAITING_APPROVAL.value
+        assert result.result is not None
+        assert "Approval ID:" in result.result
+
+    # ---------------------------------------------------------
+    # APPROVAL MUST HAVE BEEN CREATED BY THE REAL
+    # ToolExecutor -> ApprovalService PATH
+    # ---------------------------------------------------------
+    approval = get_approval(
+        company_id=case["company_id"],
+        task_id=case["task_id"],
+    )
+
+    assert approval is not None
+    assert approval.status == ApprovalStatus.PENDING.value
+    assert approval.action == "search_contract"
+    assert approval.agent_instance_id == case["agent_id"]
+
+    # ---------------------------------------------------------
+    # TASK MUST REMAIN WAITING FOR APPROVAL
+    # ---------------------------------------------------------
+    task = get_task(
+        company_id=case["company_id"],
+        task_id=case["task_id"],
+    )
+
+    assert task is not None
+    assert task.status == TaskStatus.WAITING_APPROVAL.value
+
+    assert task.result is not None
+    assert str(approval.id) in task.result
+
+    # ---------------------------------------------------------
+    # LLM MUST ONLY HAVE BEEN CALLED ONCE.
+    # It requested the tool, which was stopped by approval.
+    # ---------------------------------------------------------
+    assert provider.chat.call_count == 1
+
+def test_llm_approval_resume_completes_task_without_calling_llm_again():
+    from unittest.mock import Mock
+
+    from app.llm.base import LLMResponse
+    from app.services.approval import ApprovalService
+    from app.services.task_runtime import TaskRuntimeService
+
+    case = create_approval_case(
+        company_name="LLM Resume Company",
+        user_email="llm-resume-manager@test.local",
+        agent_name="Contract AI Resume",
+        policy_name="LLM Resume Contract Approval",
+        knowledge_title="Villa ABC Contract",
+        knowledge_content="Villa ABC contract is available.",
+    )
+
+    provider = Mock()
+
+    provider.chat.return_value = LLMResponse(
+        content="",
+        model="test-model",
+        raw={
+            "message": {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "search_contract",
+                            "arguments": {
+                                "query": "contract",
+                            },
+                        }
+                    }
+                ],
+            }
+        },
+    )
+
+    runtime = TaskRuntimeService(
+        provider=provider,
+    )
+
+    # 1. LLM execution creates the approval and pauses the Task.
+    with TestingSessionLocal() as db:
+        result = runtime.execute_with_llm(
+            db,
+            company_id=case["company_id"],
+            task_id=case["task_id"],
+        )
+
+        assert result.status == TaskStatus.WAITING_APPROVAL.value
+
+    approval = get_approval(
+        company_id=case["company_id"],
+        task_id=case["task_id"],
+    )
+
+    assert approval is not None
+    assert approval.status == ApprovalStatus.PENDING.value
+    assert approval.action == "search_contract"
+
+    # 2. Human approves the exact pending approval.
+    with TestingSessionLocal() as db:
+        approval_service = ApprovalService(db)
+
+        approved = approval_service.approve(
+            company_id=case["company_id"],
+            approval_id=approval.id,
+            user_id=case["user_id"],
+        )
+
+        assert approved.status == ApprovalStatus.APPROVED.value
+
+    # 3. Resume the task.
+    #    This must execute the approved payload directly,
+    #    not call the LLM again.
+    with TestingSessionLocal() as db:
+        resumed = runtime.resume_after_approval(
+            db,
+            company_id=case["company_id"],
+            task_id=case["task_id"],
+            approval_id=approval.id,
+        )
+
+        assert resumed.id == case["task_id"]
+        assert resumed.status == TaskStatus.COMPLETED.value
+        assert resumed.result is not None
+
+    # The LLM was needed only for the initial planning/tool-call decision.
+    # Resume must bypass the LLM completely.
+    assert provider.chat.call_count == 1
+
+    task = get_task(
+        company_id=case["company_id"],
+        task_id=case["task_id"],
+    )
+
+    assert task is not None
+    assert task.status == TaskStatus.COMPLETED.value
+    assert task.result is not None
+
+def test_execute_task_llm_endpoint_delegates_to_llm_runtime(monkeypatch):
+    case = create_approval_case(
+        company_name="LLM Endpoint Company",
+        user_email="llm-endpoint-manager@test.local",
+        agent_name="LLM Endpoint Agent",
+        policy_name="LLM Endpoint Policy",
+    )
+
+    calls = []
+
+    def fake_execute_with_llm(
+        self,
+        db,
+        *,
+        company_id,
+        task_id,
+        temperature=0.0,
+        max_tool_iterations=5,
+    ):
+        calls.append(
+            {
+                "company_id": company_id,
+                "task_id": task_id,
+                "temperature": temperature,
+                "max_tool_iterations": max_tool_iterations,
+            }
+        )
+
+        task = db.get(Task, task_id)
+        task.status = TaskStatus.COMPLETED
+        task.result = "LLM endpoint execution completed"
+        return task
+
+    monkeypatch.setattr(
+        "app.api.routes.TaskRuntimeService.execute_with_llm",
+        fake_execute_with_llm,
+    )
+
+    response = client.post(
+        f"/api/v1/companies/{case['company_id']}/tasks/"
+        f"{case['task_id']}/execute-llm",
+        headers={
+            "X-User-ID": case["user_id"],
+        },
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["id"] == case["task_id"]
+    assert data["company_id"] == case["company_id"]
+    assert data["status"] == TaskStatus.COMPLETED.value
+    assert data["result"] == "LLM endpoint execution completed"
+
+    assert calls == [
+        {
+            "company_id": case["company_id"],
+            "task_id": case["task_id"],
+            "temperature": 0.0,
+            "max_tool_iterations": 5,
+        }
+    ]
