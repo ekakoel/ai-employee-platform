@@ -1244,3 +1244,71 @@ def test_execute_task_llm_endpoint_delegates_to_llm_runtime(monkeypatch):
             "max_tool_iterations": 5,
         }
     ]
+
+def test_execute_task_llm_endpoint_runs_real_llm_runtime():
+    from unittest.mock import Mock
+
+    from app.llm.base import LLMResponse
+
+    case = create_approval_case(
+        company_name="LLM Endpoint Runtime Company",
+        user_email="llm-endpoint-runtime-manager@test.local",
+        agent_name="LLM Endpoint Runtime Agent",
+        policy_name="LLM Endpoint Runtime Policy",
+        knowledge_title="Villa Endpoint Contract",
+        knowledge_content="Villa Endpoint contract is available.",
+    )
+
+    provider = Mock()
+
+    provider.chat.return_value = LLMResponse(
+        content="",
+        model="test-model",
+        raw={
+            "message": {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "search_contract",
+                            "arguments": {
+                                "query": "contract",
+                            },
+                        }
+                    }
+                ],
+            }
+        },
+    )
+
+    with patch(
+        "app.services.task_runtime.create_llm_provider",
+        return_value=provider,
+    ):
+        response = client.post(
+            f"/api/v1/companies/{case['company_id']}/tasks/"
+            f"{case['task_id']}/execute-llm",
+            headers={
+                "X-User-ID": case["user_id"],
+            },
+        )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["id"] == case["task_id"]
+    assert data["company_id"] == case["company_id"]
+    assert data["status"] == TaskStatus.WAITING_APPROVAL.value
+    assert data["result"] is not None
+
+    approval = get_approval(
+        company_id=case["company_id"],
+        task_id=case["task_id"],
+    )
+
+    assert approval is not None
+    assert approval.status == ApprovalStatus.PENDING.value
+    assert approval.action == "search_contract"
+
+    assert provider.chat.call_count == 1
