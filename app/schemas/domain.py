@@ -264,3 +264,30 @@ class AgentSkillRead(BaseModel):
     agent_instance_id: str
     skill_id: str
     created_at: datetime
+
+
+class PolicyCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=200)
+    description: str = ""
+    # configuration: {tool, effect, conditions, approval_level, priority}
+    configuration: dict = Field(default_factory=dict)
+    is_active: bool = True
+
+
+class PolicyUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=200)
+    description: str | None = None
+    configuration: dict | None = None
+    is_active: bool | None = None
+
+
+class PolicyRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    company_id: str
+    name: str
+    description: str
+    configuration: dict
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime

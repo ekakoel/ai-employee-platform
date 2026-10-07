@@ -17,6 +17,7 @@ from app.models import (
     AuditLog,
     Company,
     KnowledgeItem,
+    Policy,
     Skill,
     Task,
     User,
@@ -32,6 +33,9 @@ from app.schemas.domain import (
     AgentSkillRead,
     SkillCreate,
     SkillRead,
+    PolicyCreate,
+    PolicyRead,
+    PolicyUpdate,
     AgentCatalogRead,
     AgentInstanceRead,
     AgentInstanceUpdate,
@@ -1052,6 +1056,156 @@ def unassign_agent_skill(
         status="success",
     )
     db.delete(row)
+    db.commit()
+    return None
+
+
+
+
+@router.get(
+    "/companies/{company_id}/policies",
+    response_model=list[PolicyRead],
+)
+def list_company_policies(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    return list(
+        db.scalars(
+            select(Policy)
+            .where(Policy.company_id == company_id)
+            .order_by(Policy.name)
+        ).all()
+    )
+
+
+@router.post(
+    "/companies/{company_id}/policies",
+    response_model=PolicyRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_company_policy(
+    company_id: str,
+    payload: PolicyCreate,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.manage")
+
+    cfg = dict(payload.configuration or {})
+    if not cfg.get("tool") and not cfg.get("action"):
+        raise HTTPException(
+            status_code=400,
+            detail="configuration.tool (or action) is required",
+        )
+    if not cfg.get("effect"):
+        raise HTTPException(
+            status_code=400,
+            detail="configuration.effect is required (allow|require_approval|deny)",
+        )
+
+    policy = Policy(
+        company_id=company_id,
+        name=payload.name,
+        description=payload.description or "",
+        configuration=cfg,
+        is_active=payload.is_active,
+    )
+    db.add(policy)
+    db.flush()
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        action="policy.create",
+        resource_type="policy",
+        resource_id=policy.id,
+        status="success",
+        details={"name": policy.name, "tool": cfg.get("tool") or cfg.get("action")},
+    )
+    db.commit()
+    db.refresh(policy)
+    return policy
+
+
+@router.patch(
+    "/companies/{company_id}/policies/{policy_id}",
+    response_model=PolicyRead,
+)
+def update_company_policy(
+    company_id: str,
+    policy_id: str,
+    payload: PolicyUpdate,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.manage")
+
+    policy = db.scalar(
+        select(Policy).where(
+            Policy.id == policy_id,
+            Policy.company_id == company_id,
+        )
+    )
+    if not policy:
+        raise HTTPException(status_code=404, detail="Policy not found")
+
+    data = payload.model_dump(exclude_unset=True)
+    for key, value in data.items():
+        setattr(policy, key, value)
+
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        action="policy.update",
+        resource_type="policy",
+        resource_id=policy.id,
+        status="success",
+        details=data,
+    )
+    db.commit()
+    db.refresh(policy)
+    return policy
+
+
+@router.delete(
+    "/companies/{company_id}/policies/{policy_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_company_policy(
+    company_id: str,
+    policy_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.manage")
+
+    policy = db.scalar(
+        select(Policy).where(
+            Policy.id == policy_id,
+            Policy.company_id == company_id,
+        )
+    )
+    if not policy:
+        raise HTTPException(status_code=404, detail="Policy not found")
+
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        action="policy.delete",
+        resource_type="policy",
+        resource_id=policy.id,
+        status="success",
+    )
+    db.delete(policy)
     db.commit()
     return None
 
