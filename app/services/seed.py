@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import AgentCatalog, Permission, Role
+from app.models import AgentCatalog, Permission, Role, Skill
 
 DEFAULT_PERMISSIONS = {
     "agent.read": "View hired AI Employees",
@@ -244,4 +244,111 @@ def seed_catalog(db: Session) -> None:
         changelog="Initial Contract Manager AI template v1.0.0",
     )
 
+    seed_platform_skills(db)
+
     db.commit()
+
+
+def _upsert_skill(db: Session, **kwargs) -> Skill:
+    slug = kwargs["slug"]
+    company_id = kwargs.get("company_id")
+    q = select(Skill).where(Skill.slug == slug)
+    if company_id is None:
+        q = q.where(Skill.company_id.is_(None))
+    else:
+        q = q.where(Skill.company_id == company_id)
+    existing = db.scalar(q)
+    if existing:
+        for k, v in kwargs.items():
+            setattr(existing, k, v)
+        db.flush()
+        return existing
+    skill = Skill(**kwargs)
+    db.add(skill)
+    db.flush()
+    return skill
+
+
+def seed_platform_skills(db: Session) -> None:
+    """Platform-level skills referenced by Agent Catalog templates."""
+    platform = [
+        dict(
+            slug="availability_check",
+            name="Availability Check",
+            description="Check product or room availability.",
+            objective="Return accurate availability from company data.",
+            instructions="Use only allowed tools and company knowledge. Never invent availability.",
+            required_knowledge=["product_catalog"],
+            allowed_tools=["search_availability"],
+            workflow=["receive request", "query availability", "return result"],
+            evaluation_criteria=["accuracy", "no invented data"],
+        ),
+        dict(
+            slug="reservation_management",
+            name="Reservation Management",
+            description="Create and manage reservations.",
+            objective="Manage reservations within policy.",
+            instructions="Follow company reservation policy. Request approval for sensitive bookings.",
+            required_knowledge=["product_catalog", "cancellation_policy"],
+            allowed_tools=["create_reservation", "get_reservation", "search_availability"],
+            workflow=["validate request", "check availability", "create or update", "confirm"],
+            evaluation_criteria=["policy compliance", "data accuracy"],
+        ),
+        dict(
+            slug="booking_support",
+            name="Booking Support",
+            description="Support booking and customer follow-up.",
+            objective="Assist customers with booking status and follow-up.",
+            instructions="Use reservation tools and knowledge. Escalate unusual cases.",
+            required_knowledge=["cancellation_policy"],
+            allowed_tools=["get_reservation"],
+            workflow=["identify booking", "retrieve status", "respond"],
+            evaluation_criteria=["clarity", "escalation quality"],
+        ),
+        dict(
+            slug="quotation_preparation",
+            name="Quotation Preparation",
+            description="Prepare quotation drafts.",
+            objective="Draft accurate quotations from pricing rules.",
+            instructions="Never invent prices. Use company pricing knowledge.",
+            required_knowledge=["pricing_rules", "product_catalog"],
+            allowed_tools=["search_availability"],
+            workflow=["gather requirements", "calculate", "draft quotation"],
+            evaluation_criteria=["price accuracy", "completeness"],
+        ),
+        dict(
+            slug="contract_analysis",
+            name="Contract Analysis",
+            description="Analyze contract content.",
+            objective="Extract and summarize contract terms accurately.",
+            instructions="Never invent contract clauses. Use extraction tools.",
+            required_knowledge=["contract_templates", "legal_guidelines"],
+            allowed_tools=["read_document", "extract_contract", "search_contract"],
+            workflow=["locate contract", "extract terms", "summarize", "flag risks"],
+            evaluation_criteria=["extraction accuracy", "risk identification"],
+        ),
+        dict(
+            slug="contract_extraction",
+            name="Contract Extraction",
+            description="Extract structured fields from contracts.",
+            objective="Produce structured contract fields from documents.",
+            instructions="Use extract_contract tool. Report missing fields clearly.",
+            required_knowledge=["contract_templates"],
+            allowed_tools=["read_document", "extract_contract"],
+            workflow=["load document", "extract fields", "validate"],
+            evaluation_criteria=["field completeness", "accuracy"],
+        ),
+        dict(
+            slug="contract_validation",
+            name="Contract Validation",
+            description="Validate contract data consistency.",
+            objective="Validate extracted contract data against guidelines.",
+            instructions="Do not approve invalid data. Escalate conflicts.",
+            required_knowledge=["legal_guidelines"],
+            allowed_tools=["search_contract", "extract_contract"],
+            workflow=["load data", "validate rules", "report issues"],
+            evaluation_criteria=["rule coverage", "escalation quality"],
+        ),
+    ]
+    for item in platform:
+        _upsert_skill(db, company_id=None, version="1.0.0", is_active=True, **item)

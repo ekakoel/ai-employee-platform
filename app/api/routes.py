@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -9,6 +9,7 @@ from app.core.database import get_db
 from app.knowledge.service import save_document
 from app.models import (
     AgentAccess,
+    AgentSkill,
     AgentCatalog,
     AgentInstance,
     AgentSubscription,
@@ -16,6 +17,7 @@ from app.models import (
     AuditLog,
     Company,
     KnowledgeItem,
+    Skill,
     Task,
     User,
     User,
@@ -26,6 +28,10 @@ from app.schemas.domain import (
     AgentAccessCreate,
     AgentAccessRead,
     AgentAccessUpdate,
+    AgentSkillAssign,
+    AgentSkillRead,
+    SkillCreate,
+    SkillRead,
     AgentCatalogRead,
     AgentInstanceRead,
     AgentInstanceUpdate,
@@ -44,6 +50,12 @@ from app.schemas.domain import (
     TaskRead,
     UserCreate,
     UserRead,
+)
+from app.services.skills import (
+    assign_skill,
+    get_skill_for_company,
+    list_agent_skills,
+    list_available_skills,
 )
 from app.services.access import (
     grant_access,
@@ -431,6 +443,26 @@ def hire_agent(
         can_approve=True,
         is_supervisor=True,
     )
+
+    # Phase 4: auto-assign platform/company skills matching template skill keys
+    for skill_key in list(catalog.skills or []):
+        skill = db.scalar(
+            select(Skill).where(
+                Skill.slug == skill_key,
+                Skill.is_active.is_(True),
+                or_(
+                    Skill.company_id.is_(None),
+                    Skill.company_id == company_id,
+                ),
+            )
+        )
+        if skill:
+            assign_skill(
+                db,
+                company_id=company_id,
+                agent_instance_id=instance.id,
+                skill_id=skill.id,
+            )
 
     record_audit(
         db,
@@ -829,6 +861,197 @@ def revoke_agent_access(
         details={"target_user_id": access.user_id},
     )
     db.delete(access)
+    db.commit()
+    return None
+
+
+
+
+@router.get(
+    "/companies/{company_id}/skills",
+    response_model=list[SkillRead],
+)
+def list_company_skills(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    return list_available_skills(db, company_id)
+
+
+@router.post(
+    "/companies/{company_id}/skills",
+    response_model=SkillRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_company_skill(
+    company_id: str,
+    payload: SkillCreate,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.manage")
+
+    existing = db.scalar(
+        select(Skill).where(
+            Skill.company_id == company_id,
+            Skill.slug == payload.slug,
+        )
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="Skill slug already exists for company")
+
+    skill = Skill(
+        company_id=company_id,
+        **payload.model_dump(),
+        is_active=True,
+    )
+    db.add(skill)
+    db.flush()
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        action="skill.create",
+        resource_type="skill",
+        resource_id=skill.id,
+        status="success",
+        details={"slug": skill.slug},
+    )
+    db.commit()
+    db.refresh(skill)
+    return skill
+
+
+@router.get(
+    "/companies/{company_id}/agents/{agent_instance_id}/skills",
+    response_model=list[AgentSkillRead],
+)
+def list_agent_skill_assignments(
+    company_id: str,
+    agent_instance_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    get_owned_agent_or_404(db, company_id, agent_instance_id)
+    require_permission(user, "agent.read")
+    return list_agent_skills(
+        db, company_id=company_id, agent_instance_id=agent_instance_id
+    )
+
+
+@router.post(
+    "/companies/{company_id}/agents/{agent_instance_id}/skills",
+    response_model=AgentSkillRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def assign_agent_skill(
+    company_id: str,
+    agent_instance_id: str,
+    payload: AgentSkillAssign,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    agent = get_owned_agent_or_404(db, company_id, agent_instance_id)
+    require_agent_manage(
+        db, user, company_id=company_id, agent_instance_id=agent.id
+    )
+
+    skill = get_skill_for_company(
+        db, skill_id=payload.skill_id, company_id=company_id
+    )
+    if not skill:
+        raise HTTPException(status_code=404, detail="Skill not found or not available")
+
+    # Tool requirement enforcement: skill tools must be subset of agent allowed tools
+    # if agent already has an allow-list; otherwise reject unknown tools later at runtime.
+    agent_tools = set(agent.allowed_tools or [])
+    skill_tools = set(skill.allowed_tools or [])
+    if agent_tools and skill_tools and not skill_tools.issubset(agent_tools):
+        extra = sorted(skill_tools - agent_tools)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Skill requires tools not allowed on this agent: "
+                + ", ".join(extra)
+            ),
+        )
+
+    row = assign_skill(
+        db,
+        company_id=company_id,
+        agent_instance_id=agent.id,
+        skill_id=skill.id,
+    )
+    # keep JSON skills list in sync
+    current = list(agent.skills or [])
+    if skill.slug not in current:
+        current.append(skill.slug)
+        agent.skills = current
+
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        agent_instance_id=agent.id,
+        action="agent.skill.assign",
+        resource_type="agent_skill",
+        resource_id=row.id,
+        status="success",
+        details={"skill_id": skill.id, "slug": skill.slug},
+    )
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.delete(
+    "/companies/{company_id}/agents/{agent_instance_id}/skills/{assignment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def unassign_agent_skill(
+    company_id: str,
+    agent_instance_id: str,
+    assignment_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    agent = get_owned_agent_or_404(db, company_id, agent_instance_id)
+    require_agent_manage(
+        db, user, company_id=company_id, agent_instance_id=agent.id
+    )
+
+    row = db.scalar(
+        select(AgentSkill).where(
+            AgentSkill.id == assignment_id,
+            AgentSkill.company_id == company_id,
+            AgentSkill.agent_instance_id == agent_instance_id,
+        )
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Skill assignment not found")
+
+    skill = db.get(Skill, row.skill_id)
+    if skill and agent.skills:
+        agent.skills = [s for s in agent.skills if s != skill.slug]
+
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        agent_instance_id=agent.id,
+        action="agent.skill.unassign",
+        resource_type="agent_skill",
+        resource_id=row.id,
+        status="success",
+    )
+    db.delete(row)
     db.commit()
     return None
 

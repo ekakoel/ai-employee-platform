@@ -1,0 +1,898 @@
+diff --git a/app/agents/context.py b/app/agents/context.py
+index 5a5cad4..88615d9 100644
+--- a/app/agents/context.py
++++ b/app/agents/context.py
+@@ -35,6 +35,7 @@ class AgentContext:
+     knowledge: list[dict[str, Any]] = field(default_factory=list)
+ 
+     configuration: dict[str, Any] = field(default_factory=dict)
++    assigned_skills: list[dict[str, Any]] = field(default_factory=list)
+ 
+     def to_dict(self) -> dict[str, Any]:
+         return {
+@@ -56,6 +57,7 @@ class AgentContext:
+             },
+             "knowledge": list(self.knowledge),
+             "configuration": dict(self.configuration),
++            "skills_detail": list(self.assigned_skills),
+         }
+ 
+ 
+@@ -107,6 +109,44 @@ def load_agent_context(
+     skills = instance_skills if instance_skills else catalog_skills
+     allowed_tools = instance_tools if instance_tools else catalog_tools
+ 
++    # Phase 4: formal Skill assignments enrich instructions and tools
++    from app.services.skills import load_assigned_skills, skill_tool_union
++
++    formal_skills = load_assigned_skills(
++        db,
++        company_id=agent.company_id,
++        agent_instance_id=agent.id,
++    )
++    skill_tools = skill_tool_union(formal_skills)
++    # Tool requirement: agent may use tools in its allow-list;
++    # skill tools that are also on the agent allow-list are emphasized.
++    # Skills cannot grant tools outside agent allowed_tools (security).
++    allowed_set = set(allowed_tools)
++    if skill_tools and allowed_set:
++        # keep agent allow-list; skill tools only valid if already allowed
++        allowed_tools = list(allowed_set)
++    elif skill_tools and not allowed_set:
++        allowed_tools = list(skill_tools)
++
++    skill_slugs = [s.slug for s in formal_skills]
++    if skill_slugs:
++        # merge formal skill slugs into skills list for runtime visibility
++        merged = list(dict.fromkeys(list(skills) + skill_slugs))
++        skills = merged
++
++    assigned_skills = [
++        {
++            "id": s.id,
++            "slug": s.slug,
++            "name": s.name,
++            "objective": s.objective,
++            "instructions": s.instructions,
++            "allowed_tools": list(s.allowed_tools or []),
++            "version": s.version,
++        }
++        for s in formal_skills
++    ]
++
+     configuration = dict(agent.configuration or {})
+     if agent.instructions:
+         configuration.setdefault("instructions", agent.instructions)
+@@ -140,4 +180,5 @@ def load_agent_context(
+             for item in knowledge_items
+         ],
+         configuration=configuration,
++        assigned_skills=assigned_skills,
+     )
+diff --git a/app/api/routes.py b/app/api/routes.py
+index e44f8d9..55dae7d 100644
+--- a/app/api/routes.py
++++ b/app/api/routes.py
+@@ -1,7 +1,7 @@
+ from datetime import datetime, timezone
+ 
+ from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status
+-from sqlalchemy import select
++from sqlalchemy import or_, select
+ from sqlalchemy.exc import IntegrityError
+ from sqlalchemy.orm import Session
+ 
+@@ -9,6 +9,7 @@ from app.core.database import get_db
+ from app.knowledge.service import save_document
+ from app.models import (
+     AgentAccess,
++    AgentSkill,
+     AgentCatalog,
+     AgentInstance,
+     AgentSubscription,
+@@ -16,6 +17,7 @@ from app.models import (
+     AuditLog,
+     Company,
+     KnowledgeItem,
++    Skill,
+     Task,
+     User,
+     User,
+@@ -26,6 +28,10 @@ from app.schemas.domain import (
+     AgentAccessCreate,
+     AgentAccessRead,
+     AgentAccessUpdate,
++    AgentSkillAssign,
++    AgentSkillRead,
++    SkillCreate,
++    SkillRead,
+     AgentCatalogRead,
+     AgentInstanceRead,
+     AgentInstanceUpdate,
+@@ -45,6 +51,12 @@ from app.schemas.domain import (
+     UserCreate,
+     UserRead,
+ )
++from app.services.skills import (
++    assign_skill,
++    get_skill_for_company,
++    list_agent_skills,
++    list_available_skills,
++)
+ from app.services.access import (
+     grant_access,
+     require_agent_approve,
+@@ -432,6 +444,26 @@ def hire_agent(
+         is_supervisor=True,
+     )
+ 
++    # Phase 4: auto-assign platform/company skills matching template skill keys
++    for skill_key in list(catalog.skills or []):
++        skill = db.scalar(
++            select(Skill).where(
++                Skill.slug == skill_key,
++                Skill.is_active.is_(True),
++                or_(
++                    Skill.company_id.is_(None),
++                    Skill.company_id == company_id,
++                ),
++            )
++        )
++        if skill:
++            assign_skill(
++                db,
++                company_id=company_id,
++                agent_instance_id=instance.id,
++                skill_id=skill.id,
++            )
++
+     record_audit(
+         db,
+         company_id=company_id,
+@@ -833,6 +865,197 @@ def revoke_agent_access(
+     return None
+ 
+ 
++
++
++@router.get(
++    "/companies/{company_id}/skills",
++    response_model=list[SkillRead],
++)
++def list_company_skills(
++    company_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "agent.read")
++    return list_available_skills(db, company_id)
++
++
++@router.post(
++    "/companies/{company_id}/skills",
++    response_model=SkillRead,
++    status_code=status.HTTP_201_CREATED,
++)
++def create_company_skill(
++    company_id: str,
++    payload: SkillCreate,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "agent.manage")
++
++    existing = db.scalar(
++        select(Skill).where(
++            Skill.company_id == company_id,
++            Skill.slug == payload.slug,
++        )
++    )
++    if existing:
++        raise HTTPException(status_code=409, detail="Skill slug already exists for company")
++
++    skill = Skill(
++        company_id=company_id,
++        **payload.model_dump(),
++        is_active=True,
++    )
++    db.add(skill)
++    db.flush()
++    record_audit(
++        db,
++        company_id=company_id,
++        user_id=user.id,
++        action="skill.create",
++        resource_type="skill",
++        resource_id=skill.id,
++        status="success",
++        details={"slug": skill.slug},
++    )
++    db.commit()
++    db.refresh(skill)
++    return skill
++
++
++@router.get(
++    "/companies/{company_id}/agents/{agent_instance_id}/skills",
++    response_model=list[AgentSkillRead],
++)
++def list_agent_skill_assignments(
++    company_id: str,
++    agent_instance_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    user = require_company_user(db, company_id, x_user_id)
++    get_owned_agent_or_404(db, company_id, agent_instance_id)
++    require_permission(user, "agent.read")
++    return list_agent_skills(
++        db, company_id=company_id, agent_instance_id=agent_instance_id
++    )
++
++
++@router.post(
++    "/companies/{company_id}/agents/{agent_instance_id}/skills",
++    response_model=AgentSkillRead,
++    status_code=status.HTTP_201_CREATED,
++)
++def assign_agent_skill(
++    company_id: str,
++    agent_instance_id: str,
++    payload: AgentSkillAssign,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    user = require_company_user(db, company_id, x_user_id)
++    agent = get_owned_agent_or_404(db, company_id, agent_instance_id)
++    require_agent_manage(
++        db, user, company_id=company_id, agent_instance_id=agent.id
++    )
++
++    skill = get_skill_for_company(
++        db, skill_id=payload.skill_id, company_id=company_id
++    )
++    if not skill:
++        raise HTTPException(status_code=404, detail="Skill not found or not available")
++
++    # Tool requirement enforcement: skill tools must be subset of agent allowed tools
++    # if agent already has an allow-list; otherwise reject unknown tools later at runtime.
++    agent_tools = set(agent.allowed_tools or [])
++    skill_tools = set(skill.allowed_tools or [])
++    if agent_tools and skill_tools and not skill_tools.issubset(agent_tools):
++        extra = sorted(skill_tools - agent_tools)
++        raise HTTPException(
++            status_code=400,
++            detail=(
++                "Skill requires tools not allowed on this agent: "
++                + ", ".join(extra)
++            ),
++        )
++
++    row = assign_skill(
++        db,
++        company_id=company_id,
++        agent_instance_id=agent.id,
++        skill_id=skill.id,
++    )
++    # keep JSON skills list in sync
++    current = list(agent.skills or [])
++    if skill.slug not in current:
++        current.append(skill.slug)
++        agent.skills = current
++
++    record_audit(
++        db,
++        company_id=company_id,
++        user_id=user.id,
++        agent_instance_id=agent.id,
++        action="agent.skill.assign",
++        resource_type="agent_skill",
++        resource_id=row.id,
++        status="success",
++        details={"skill_id": skill.id, "slug": skill.slug},
++    )
++    db.commit()
++    db.refresh(row)
++    return row
++
++
++@router.delete(
++    "/companies/{company_id}/agents/{agent_instance_id}/skills/{assignment_id}",
++    status_code=status.HTTP_204_NO_CONTENT,
++)
++def unassign_agent_skill(
++    company_id: str,
++    agent_instance_id: str,
++    assignment_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    user = require_company_user(db, company_id, x_user_id)
++    agent = get_owned_agent_or_404(db, company_id, agent_instance_id)
++    require_agent_manage(
++        db, user, company_id=company_id, agent_instance_id=agent.id
++    )
++
++    row = db.scalar(
++        select(AgentSkill).where(
++            AgentSkill.id == assignment_id,
++            AgentSkill.company_id == company_id,
++            AgentSkill.agent_instance_id == agent_instance_id,
++        )
++    )
++    if not row:
++        raise HTTPException(status_code=404, detail="Skill assignment not found")
++
++    skill = db.get(Skill, row.skill_id)
++    if skill and agent.skills:
++        agent.skills = [s for s in agent.skills if s != skill.slug]
++
++    record_audit(
++        db,
++        company_id=company_id,
++        user_id=user.id,
++        agent_instance_id=agent.id,
++        action="agent.skill.unassign",
++        resource_type="agent_skill",
++        resource_id=row.id,
++        status="success",
++    )
++    db.delete(row)
++    db.commit()
++    return None
++
++
+ @router.post(
+     "/companies/{company_id}/knowledge",
+     response_model=KnowledgeRead,
+diff --git a/app/models/__init__.py b/app/models/__init__.py
+index e37dbe6..75d8ee0 100644
+--- a/app/models/__init__.py
++++ b/app/models/__init__.py
+@@ -1,5 +1,7 @@
+ from app.models.entities import (
+     AgentAccess,
++    AgentSkill,
++    Skill,
+     AgentCatalog,
+     AgentSubscription,
+     AgentInstance,
+@@ -18,6 +20,8 @@ from app.models.entities import (
+ 
+ __all__ = [
+     "AgentAccess",
++    "AgentSkill",
++    "Skill",
+     "AgentCatalog",
+     "AgentSubscription",
+     "AgentInstance",
+diff --git a/app/models/entities.py b/app/models/entities.py
+index 7cdd21a..6465b18 100644
+--- a/app/models/entities.py
++++ b/app/models/entities.py
+@@ -236,6 +236,75 @@ class AgentAccess(Base):
+     company: Mapped["Company"] = relationship()
+ 
+ 
++
++class Skill(Base):
++    """Reusable professional capability (platform or company-scoped)."""
++
++    __tablename__ = "skills"
++
++    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
++    company_id: Mapped[str | None] = mapped_column(
++        ForeignKey("companies.id", ondelete="CASCADE"),
++        nullable=True,
++        index=True,
++    )
++    slug: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
++    name: Mapped[str] = mapped_column(String(200), nullable=False)
++    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
++    objective: Mapped[str] = mapped_column(Text, default="", nullable=False)
++    instructions: Mapped[str] = mapped_column(Text, default="", nullable=False)
++    required_knowledge: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
++    allowed_tools: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
++    workflow: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
++    evaluation_criteria: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
++    version: Mapped[str] = mapped_column(String(32), default="1.0.0", nullable=False)
++    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), default=utcnow, nullable=False
++    )
++
++    assignments: Mapped[list["AgentSkill"]] = relationship(
++        back_populates="skill",
++        cascade="all, delete-orphan",
++    )
++
++
++class AgentSkill(Base):
++    """Assignment of a Skill to an Agent Instance."""
++
++    __tablename__ = "agent_skills"
++    __table_args__ = (
++        UniqueConstraint(
++            "agent_instance_id",
++            "skill_id",
++            name="uq_agent_skill",
++        ),
++    )
++
++    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
++    company_id: Mapped[str] = mapped_column(
++        ForeignKey("companies.id", ondelete="CASCADE"),
++        nullable=False,
++        index=True,
++    )
++    agent_instance_id: Mapped[str] = mapped_column(
++        ForeignKey("agent_instances.id", ondelete="CASCADE"),
++        nullable=False,
++        index=True,
++    )
++    skill_id: Mapped[str] = mapped_column(
++        ForeignKey("skills.id", ondelete="CASCADE"),
++        nullable=False,
++        index=True,
++    )
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), default=utcnow, nullable=False
++    )
++
++    skill: Mapped["Skill"] = relationship(back_populates="assignments")
++    agent_instance: Mapped["AgentInstance"] = relationship()
++
++
+ class KnowledgeItem(Base):
+     __tablename__ = "knowledge_items"
+ 
+diff --git a/app/schemas/domain.py b/app/schemas/domain.py
+index acb2fe4..723878c 100644
+--- a/app/schemas/domain.py
++++ b/app/schemas/domain.py
+@@ -220,4 +220,47 @@ class ApprovalReviewRequest(BaseModel):
+     comment: str | None = Field(
+         default=None,
+         max_length=2000,
+-    )
+\ No newline at end of file
++    )
++
++class SkillCreate(BaseModel):
++    slug: str = Field(min_length=2, max_length=100)
++    name: str = Field(min_length=2, max_length=200)
++    description: str = ""
++    objective: str = ""
++    instructions: str = ""
++    required_knowledge: list = []
++    allowed_tools: list = []
++    workflow: list = []
++    evaluation_criteria: list = []
++    version: str = "1.0.0"
++
++
++class SkillRead(BaseModel):
++    model_config = ConfigDict(from_attributes=True)
++    id: str
++    company_id: str | None
++    slug: str
++    name: str
++    description: str
++    objective: str
++    instructions: str
++    required_knowledge: list
++    allowed_tools: list
++    workflow: list
++    evaluation_criteria: list
++    version: str
++    is_active: bool
++    created_at: datetime
++
++
++class AgentSkillAssign(BaseModel):
++    skill_id: str
++
++
++class AgentSkillRead(BaseModel):
++    model_config = ConfigDict(from_attributes=True)
++    id: str
++    company_id: str
++    agent_instance_id: str
++    skill_id: str
++    created_at: datetime
+diff --git a/app/services/seed.py b/app/services/seed.py
+index 9f1d779..5238c8d 100644
+--- a/app/services/seed.py
++++ b/app/services/seed.py
+@@ -3,7 +3,7 @@ from datetime import datetime, timezone
+ from sqlalchemy import select
+ from sqlalchemy.orm import Session
+ 
+-from app.models import AgentCatalog, Permission, Role
++from app.models import AgentCatalog, Permission, Role, Skill
+ 
+ DEFAULT_PERMISSIONS = {
+     "agent.read": "View hired AI Employees",
+@@ -244,4 +244,111 @@ def seed_catalog(db: Session) -> None:
+         changelog="Initial Contract Manager AI template v1.0.0",
+     )
+ 
++    seed_platform_skills(db)
++
+     db.commit()
++
++
++def _upsert_skill(db: Session, **kwargs) -> Skill:
++    slug = kwargs["slug"]
++    company_id = kwargs.get("company_id")
++    q = select(Skill).where(Skill.slug == slug)
++    if company_id is None:
++        q = q.where(Skill.company_id.is_(None))
++    else:
++        q = q.where(Skill.company_id == company_id)
++    existing = db.scalar(q)
++    if existing:
++        for k, v in kwargs.items():
++            setattr(existing, k, v)
++        db.flush()
++        return existing
++    skill = Skill(**kwargs)
++    db.add(skill)
++    db.flush()
++    return skill
++
++
++def seed_platform_skills(db: Session) -> None:
++    """Platform-level skills referenced by Agent Catalog templates."""
++    platform = [
++        dict(
++            slug="availability_check",
++            name="Availability Check",
++            description="Check product or room availability.",
++            objective="Return accurate availability from company data.",
++            instructions="Use only allowed tools and company knowledge. Never invent availability.",
++            required_knowledge=["product_catalog"],
++            allowed_tools=["search_availability"],
++            workflow=["receive request", "query availability", "return result"],
++            evaluation_criteria=["accuracy", "no invented data"],
++        ),
++        dict(
++            slug="reservation_management",
++            name="Reservation Management",
++            description="Create and manage reservations.",
++            objective="Manage reservations within policy.",
++            instructions="Follow company reservation policy. Request approval for sensitive bookings.",
++            required_knowledge=["product_catalog", "cancellation_policy"],
++            allowed_tools=["create_reservation", "get_reservation", "search_availability"],
++            workflow=["validate request", "check availability", "create or update", "confirm"],
++            evaluation_criteria=["policy compliance", "data accuracy"],
++        ),
++        dict(
++            slug="booking_support",
++            name="Booking Support",
++            description="Support booking and customer follow-up.",
++            objective="Assist customers with booking status and follow-up.",
++            instructions="Use reservation tools and knowledge. Escalate unusual cases.",
++            required_knowledge=["cancellation_policy"],
++            allowed_tools=["get_reservation"],
++            workflow=["identify booking", "retrieve status", "respond"],
++            evaluation_criteria=["clarity", "escalation quality"],
++        ),
++        dict(
++            slug="quotation_preparation",
++            name="Quotation Preparation",
++            description="Prepare quotation drafts.",
++            objective="Draft accurate quotations from pricing rules.",
++            instructions="Never invent prices. Use company pricing knowledge.",
++            required_knowledge=["pricing_rules", "product_catalog"],
++            allowed_tools=["search_availability"],
++            workflow=["gather requirements", "calculate", "draft quotation"],
++            evaluation_criteria=["price accuracy", "completeness"],
++        ),
++        dict(
++            slug="contract_analysis",
++            name="Contract Analysis",
++            description="Analyze contract content.",
++            objective="Extract and summarize contract terms accurately.",
++            instructions="Never invent contract clauses. Use extraction tools.",
++            required_knowledge=["contract_templates", "legal_guidelines"],
++            allowed_tools=["read_document", "extract_contract", "search_contract"],
++            workflow=["locate contract", "extract terms", "summarize", "flag risks"],
++            evaluation_criteria=["extraction accuracy", "risk identification"],
++        ),
++        dict(
++            slug="contract_extraction",
++            name="Contract Extraction",
++            description="Extract structured fields from contracts.",
++            objective="Produce structured contract fields from documents.",
++            instructions="Use extract_contract tool. Report missing fields clearly.",
++            required_knowledge=["contract_templates"],
++            allowed_tools=["read_document", "extract_contract"],
++            workflow=["load document", "extract fields", "validate"],
++            evaluation_criteria=["field completeness", "accuracy"],
++        ),
++        dict(
++            slug="contract_validation",
++            name="Contract Validation",
++            description="Validate contract data consistency.",
++            objective="Validate extracted contract data against guidelines.",
++            instructions="Do not approve invalid data. Escalate conflicts.",
++            required_knowledge=["legal_guidelines"],
++            allowed_tools=["search_contract", "extract_contract"],
++            workflow=["load data", "validate rules", "report issues"],
++            evaluation_criteria=["rule coverage", "escalation quality"],
++        ),
++    ]
++    for item in platform:
++        _upsert_skill(db, company_id=None, version="1.0.0", is_active=True, **item)
+diff --git a/app/services/skills.py b/app/services/skills.py
+new file mode 100644
+index 0000000..3457ac5
+--- /dev/null
++++ b/app/services/skills.py
+@@ -0,0 +1,105 @@
++"""Phase 4 — Skill catalog and agent assignment."""
++
++from __future__ import annotations
++
++from sqlalchemy import or_, select
++from sqlalchemy.orm import Session
++
++from app.models.entities import AgentSkill, Skill
++
++
++def list_available_skills(db: Session, company_id: str) -> list[Skill]:
++    """Platform skills (company_id IS NULL) + company custom skills."""
++    return list(
++        db.scalars(
++            select(Skill).where(
++                Skill.is_active.is_(True),
++                or_(
++                    Skill.company_id.is_(None),
++                    Skill.company_id == company_id,
++                ),
++            ).order_by(Skill.slug)
++        ).all()
++    )
++
++
++def get_skill_for_company(
++    db: Session,
++    *,
++    skill_id: str,
++    company_id: str,
++) -> Skill | None:
++    skill = db.get(Skill, skill_id)
++    if not skill or not skill.is_active:
++        return None
++    if skill.company_id is None:
++        return skill
++    if skill.company_id == company_id:
++        return skill
++    return None
++
++
++def assign_skill(
++    db: Session,
++    *,
++    company_id: str,
++    agent_instance_id: str,
++    skill_id: str,
++) -> AgentSkill:
++    existing = db.scalar(
++        select(AgentSkill).where(
++            AgentSkill.agent_instance_id == agent_instance_id,
++            AgentSkill.skill_id == skill_id,
++        )
++    )
++    if existing:
++        return existing
++    row = AgentSkill(
++        company_id=company_id,
++        agent_instance_id=agent_instance_id,
++        skill_id=skill_id,
++    )
++    db.add(row)
++    db.flush()
++    return row
++
++
++def list_agent_skills(
++    db: Session,
++    *,
++    company_id: str,
++    agent_instance_id: str,
++) -> list[AgentSkill]:
++    return list(
++        db.scalars(
++            select(AgentSkill).where(
++                AgentSkill.company_id == company_id,
++                AgentSkill.agent_instance_id == agent_instance_id,
++            )
++        ).all()
++    )
++
++
++def load_assigned_skills(
++    db: Session,
++    *,
++    company_id: str,
++    agent_instance_id: str,
++) -> list[Skill]:
++    assignments = list_agent_skills(
++        db, company_id=company_id, agent_instance_id=agent_instance_id
++    )
++    skills: list[Skill] = []
++    for a in assignments:
++        skill = db.get(Skill, a.skill_id)
++        if skill and skill.is_active:
++            if skill.company_id is None or skill.company_id == company_id:
++                skills.append(skill)
++    return skills
++
++
++def skill_tool_union(skills: list[Skill]) -> set[str]:
++    tools: set[str] = set()
++    for s in skills:
++        tools.update(s.allowed_tools or [])
++    return tools
+diff --git a/tests/test_skills.py b/tests/test_skills.py
+new file mode 100644
+index 0000000..b2be480
+--- /dev/null
++++ b/tests/test_skills.py
+@@ -0,0 +1,152 @@
++"""Phase 4 — Skill system tests."""
++
++import pytest
++from fastapi.testclient import TestClient
++from sqlalchemy import create_engine
++from sqlalchemy.orm import sessionmaker
++
++from app.core.database import Base, get_db
++from app.main import app
++from app.services.seed import seed_catalog
++
++engine = create_engine(
++    "sqlite:///./test_skills.db",
++    connect_args={"check_same_thread": False},
++)
++SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
++
++
++@pytest.fixture()
++def client():
++    Base.metadata.drop_all(bind=engine)
++    Base.metadata.create_all(bind=engine)
++    with SessionLocal() as db:
++        seed_catalog(db)
++
++    def override():
++        db = SessionLocal()
++        try:
++            yield db
++        finally:
++            db.close()
++
++    prev = app.dependency_overrides.get(get_db)
++    app.dependency_overrides[get_db] = override
++    with TestClient(app) as c:
++        yield c
++    if prev is None:
++        app.dependency_overrides.pop(get_db, None)
++    else:
++        app.dependency_overrides[get_db] = prev
++
++
++def setup(client):
++    co = client.post("/api/v1/companies", json={"name": "Skill Co"}).json()
++    owner = client.post(
++        f"/api/v1/companies/{co['id']}/users",
++        json={"name": "Owner", "email": "owner@s.test", "role": "owner"},
++    ).json()
++    catalog = client.get("/api/v1/agent-catalog").json()
++    res = next(i for i in catalog if i["slug"] == "reservation")
++    hire = client.post(
++        f"/api/v1/companies/{co['id']}/agents/{res['id']}/hire",
++        json={"name": "Skill AI"},
++        headers={"X-User-ID": owner["id"]},
++    )
++    assert hire.status_code == 201, hire.text
++    return co["id"], owner["id"], hire.json()["id"]
++
++
++def test_list_platform_skills(client):
++    company_id, owner_id, _ = setup(client)
++    resp = client.get(
++        f"/api/v1/companies/{company_id}/skills",
++        headers={"X-User-ID": owner_id},
++    )
++    assert resp.status_code == 200
++    slugs = {s["slug"] for s in resp.json()}
++    assert "availability_check" in slugs
++    assert "contract_analysis" in slugs
++    # platform skills have no company_id
++    platform = [s for s in resp.json() if s["company_id"] is None]
++    assert len(platform) >= 5
++
++
++def test_hire_auto_assigns_matching_skills(client):
++    company_id, owner_id, agent_id = setup(client)
++    resp = client.get(
++        f"/api/v1/companies/{company_id}/agents/{agent_id}/skills",
++        headers={"X-User-ID": owner_id},
++    )
++    assert resp.status_code == 200
++    assert len(resp.json()) >= 1
++
++
++def test_create_company_skill_tenant_isolated(client):
++    company_id, owner_id, _ = setup(client)
++    created = client.post(
++        f"/api/v1/companies/{company_id}/skills",
++        headers={"X-User-ID": owner_id},
++        json={
++            "slug": "custom_upsell",
++            "name": "Custom Upsell",
++            "instructions": "Suggest upsells from company knowledge only.",
++            "allowed_tools": ["search_availability"],
++        },
++    )
++    assert created.status_code == 201, created.text
++    assert created.json()["company_id"] == company_id
++
++    # second company cannot see first company's custom skill only platform
++    co2 = client.post("/api/v1/companies", json={"name": "Other Co"}).json()
++    owner2 = client.post(
++        f"/api/v1/companies/{co2['id']}/users",
++        json={"name": "O2", "email": "o2@s.test", "role": "owner"},
++    ).json()
++    skills2 = client.get(
++        f"/api/v1/companies/{co2['id']}/skills",
++        headers={"X-User-ID": owner2["id"]},
++    ).json()
++    custom = [s for s in skills2 if s["slug"] == "custom_upsell"]
++    assert custom == []
++
++
++def test_tool_requirement_enforcement(client):
++    company_id, owner_id, agent_id = setup(client)
++    # create skill with tool not on agent
++    skill = client.post(
++        f"/api/v1/companies/{company_id}/skills",
++        headers={"X-User-ID": owner_id},
++        json={
++            "slug": "forbidden_tool_skill",
++            "name": "Forbidden",
++            "allowed_tools": ["delete_everything"],
++        },
++    )
++    assert skill.status_code == 201
++    assign = client.post(
++        f"/api/v1/companies/{company_id}/agents/{agent_id}/skills",
++        headers={"X-User-ID": owner_id},
++        json={"skill_id": skill.json()["id"]},
++    )
++    assert assign.status_code == 400
++    assert "not allowed" in assign.json()["detail"].lower()
++
++
++def test_assign_compatible_skill(client):
++    company_id, owner_id, agent_id = setup(client)
++    skills = client.get(
++        f"/api/v1/companies/{company_id}/skills",
++        headers={"X-User-ID": owner_id},
++    ).json()
++    # pick a platform skill whose tools are subset of reservation agent tools
++    target = next(
++        s for s in skills if s["slug"] == "availability_check"
++    )
++    # may already be assigned at hire — second assign should be idempotent 201
++    assign = client.post(
++        f"/api/v1/companies/{company_id}/agents/{agent_id}/skills",
++        headers={"X-User-ID": owner_id},
++        json={"skill_id": target["id"]},
++    )
++    assert assign.status_code == 201, assign.text

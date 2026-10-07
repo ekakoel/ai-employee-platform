@@ -236,6 +236,75 @@ class AgentAccess(Base):
     company: Mapped["Company"] = relationship()
 
 
+
+class Skill(Base):
+    """Reusable professional capability (platform or company-scoped)."""
+
+    __tablename__ = "skills"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str | None] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    slug: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    objective: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    instructions: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    required_knowledge: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    allowed_tools: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    workflow: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    evaluation_criteria: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    version: Mapped[str] = mapped_column(String(32), default="1.0.0", nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+    assignments: Mapped[list["AgentSkill"]] = relationship(
+        back_populates="skill",
+        cascade="all, delete-orphan",
+    )
+
+
+class AgentSkill(Base):
+    """Assignment of a Skill to an Agent Instance."""
+
+    __tablename__ = "agent_skills"
+    __table_args__ = (
+        UniqueConstraint(
+            "agent_instance_id",
+            "skill_id",
+            name="uq_agent_skill",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    agent_instance_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_instances.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    skill_id: Mapped[str] = mapped_column(
+        ForeignKey("skills.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+    skill: Mapped["Skill"] = relationship(back_populates="assignments")
+    agent_instance: Mapped["AgentInstance"] = relationship()
+
+
 class KnowledgeItem(Base):
     __tablename__ = "knowledge_items"
 

@@ -221,3 +221,46 @@ class ApprovalReviewRequest(BaseModel):
         default=None,
         max_length=2000,
     )
+
+class SkillCreate(BaseModel):
+    slug: str = Field(min_length=2, max_length=100)
+    name: str = Field(min_length=2, max_length=200)
+    description: str = ""
+    objective: str = ""
+    instructions: str = ""
+    required_knowledge: list = []
+    allowed_tools: list = []
+    workflow: list = []
+    evaluation_criteria: list = []
+    version: str = "1.0.0"
+
+
+class SkillRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    company_id: str | None
+    slug: str
+    name: str
+    description: str
+    objective: str
+    instructions: str
+    required_knowledge: list
+    allowed_tools: list
+    workflow: list
+    evaluation_criteria: list
+    version: str
+    is_active: bool
+    created_at: datetime
+
+
+class AgentSkillAssign(BaseModel):
+    skill_id: str
+
+
+class AgentSkillRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    company_id: str
+    agent_instance_id: str
+    skill_id: str
+    created_at: datetime

@@ -35,6 +35,7 @@ class AgentContext:
     knowledge: list[dict[str, Any]] = field(default_factory=list)
 
     configuration: dict[str, Any] = field(default_factory=dict)
+    assigned_skills: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -56,6 +57,7 @@ class AgentContext:
             },
             "knowledge": list(self.knowledge),
             "configuration": dict(self.configuration),
+            "skills_detail": list(self.assigned_skills),
         }
 
 
@@ -107,6 +109,44 @@ def load_agent_context(
     skills = instance_skills if instance_skills else catalog_skills
     allowed_tools = instance_tools if instance_tools else catalog_tools
 
+    # Phase 4: formal Skill assignments enrich instructions and tools
+    from app.services.skills import load_assigned_skills, skill_tool_union
+
+    formal_skills = load_assigned_skills(
+        db,
+        company_id=agent.company_id,
+        agent_instance_id=agent.id,
+    )
+    skill_tools = skill_tool_union(formal_skills)
+    # Tool requirement: agent may use tools in its allow-list;
+    # skill tools that are also on the agent allow-list are emphasized.
+    # Skills cannot grant tools outside agent allowed_tools (security).
+    allowed_set = set(allowed_tools)
+    if skill_tools and allowed_set:
+        # keep agent allow-list; skill tools only valid if already allowed
+        allowed_tools = list(allowed_set)
+    elif skill_tools and not allowed_set:
+        allowed_tools = list(skill_tools)
+
+    skill_slugs = [s.slug for s in formal_skills]
+    if skill_slugs:
+        # merge formal skill slugs into skills list for runtime visibility
+        merged = list(dict.fromkeys(list(skills) + skill_slugs))
+        skills = merged
+
+    assigned_skills = [
+        {
+            "id": s.id,
+            "slug": s.slug,
+            "name": s.name,
+            "objective": s.objective,
+            "instructions": s.instructions,
+            "allowed_tools": list(s.allowed_tools or []),
+            "version": s.version,
+        }
+        for s in formal_skills
+    ]
+
     configuration = dict(agent.configuration or {})
     if agent.instructions:
         configuration.setdefault("instructions", agent.instructions)
@@ -140,4 +180,5 @@ def load_agent_context(
             for item in knowledge_items
         ],
         configuration=configuration,
+        assigned_skills=assigned_skills,
     )
