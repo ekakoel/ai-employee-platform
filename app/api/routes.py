@@ -342,13 +342,22 @@ def create_user(
         company_id,
     )
 
-    if x_user_id:
+    existing_users = db.scalar(
+        select(User.id).where(User.company_id == company_id).limit(1)
+    )
+    # First user for a company is bootstrap (Quick start / open setup).
+    # Later users require team.manage from a valid company member.
+    if existing_users is not None:
+        if not x_user_id:
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication required to add users",
+            )
         current = require_company_user(
             db,
             company_id,
             x_user_id,
         )
-
         require_permission(
             current,
             "team.manage",

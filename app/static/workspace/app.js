@@ -12,19 +12,41 @@
 
   const $ = (id) => document.getElementById(id);
 
-  function headers(json = true) {
+  function clearSession() {
+    state.companyId = "";
+    state.userId = "";
+    state.accessToken = "";
+    state.connected = false;
+    localStorage.removeItem("ws_companyId");
+    localStorage.removeItem("ws_userId");
+    localStorage.removeItem("ws_accessToken");
+    localStorage.removeItem("ws_refreshToken");
+    if ($("companyId")) $("companyId").value = "";
+    if ($("userId")) $("userId").value = "";
+    setConnected(false);
+  }
+
+  function headers(json = true, skipAuth = false) {
     const h = {};
     if (json) h["Content-Type"] = "application/json";
-    if (state.userId) h["X-User-ID"] = state.userId;
-    if (state.accessToken) h["Authorization"] = "Bearer " + state.accessToken;
+    if (!skipAuth) {
+      if (state.userId) h["X-User-ID"] = state.userId;
+      if (state.accessToken) h["Authorization"] = "Bearer " + state.accessToken;
+    }
     return h;
   }
 
   async function api(path, opts = {}) {
+    const skipAuth = !!opts.skipAuth;
+    const fetchOpts = { ...opts };
+    delete fetchOpts.skipAuth;
     const url = state.apiBase.replace(/\/$/, "") + path;
     const res = await fetch(url, {
-      ...opts,
-      headers: { ...headers(!(opts.body instanceof FormData)), ...(opts.headers || {}) },
+      ...fetchOpts,
+      headers: {
+        ...headers(!(opts.body instanceof FormData), skipAuth),
+        ...(opts.headers || {}),
+      },
     });
     let data = null;
     const text = await res.text();
@@ -142,20 +164,37 @@
       await refreshInboxBadge();
       showView("workforce");
     } catch (err) {
-      setConnected(false);
-      $("setupLog").textContent = "Connect failed: " + err.message;
+      $("setupLog").textContent =
+        "Connect failed: " + err.message +
+        "\nSession cleared. Use Quick start or create a new company, then Register/Login.";
+      clearSession();
     }
   };
 
+  const btnClear = $("btnClearSession");
+  if (btnClear) {
+    btnClear.onclick = () => {
+      clearSession();
+      $("setupLog").textContent = "Session cleared. Use Quick start or fill company/user IDs.";
+    };
+  }
+
   $("btnQuickStart").onclick = async () => {
+
     state.apiBase = $("apiBase").value.trim() || "/api/v1";
     localStorage.setItem("ws_apiBase", state.apiBase);
     const log = $("setupLog");
+    // Drop stale credentials so bootstrap is not blocked by old JWT/user
+    clearSession();
+    state.apiBase = $("apiBase").value.trim() || "/api/v1";
     try {
       log.textContent = "Creating company...";
       const co = await api("/companies", {
         method: "POST",
-        body: JSON.stringify({ name: "Workspace Demo Co" }),
+        body: JSON.stringify({
+          name: "Workspace Demo Co " + new Date().toISOString().slice(0, 19),
+        }),
+        skipAuth: true,
       });
       const user = await api(`/companies/${co.id}/users`, {
         method: "POST",
@@ -163,16 +202,41 @@
           name: "Workspace Owner",
           email: `owner-${Date.now()}@demo.local`,
           role: "owner",
+          password: "demo-pass-123",
         }),
+        skipAuth: true,
       });
       state.companyId = co.id;
       state.userId = user.id;
+      state.accessToken = "";
       $("companyId").value = co.id;
       $("userId").value = user.id;
+      if ($("loginEmail")) $("loginEmail").value = user.email || "";
+      if ($("loginPassword")) $("loginPassword").value = "demo-pass-123";
       localStorage.setItem("ws_companyId", co.id);
       localStorage.setItem("ws_userId", user.id);
 
-      const catalog = await api("/agent-catalog");
+      // Login to obtain JWT for subsequent calls
+      try {
+        const tok = await api("/auth/login", {
+          method: "POST",
+          body: JSON.stringify({
+            company_id: co.id,
+            email: user.email,
+            password: "demo-pass-123",
+          }),
+          skipAuth: true,
+        });
+        state.accessToken = tok.access_token || "";
+        localStorage.setItem("ws_accessToken", state.accessToken);
+        if (tok.refresh_token) {
+          localStorage.setItem("ws_refreshToken", tok.refresh_token);
+        }
+      } catch (loginErr) {
+        log.textContent += "\nLogin after create skipped: " + loginErr.message;
+      }
+
+      const catalog = await api("/agent-catalog", { skipAuth: true });
       const res = catalog.find((c) => c.slug === "reservation") || catalog[0];
       if (res) {
         await api(`/companies/${co.id}/agents/${res.id}/hire`, {
@@ -188,7 +252,8 @@
         });
       }
       setConnected(true);
-      log.textContent = `Company ${co.id}\nUser ${user.id}\nAgents hired.\nReady.`;
+      log.textContent =
+        `Company ${co.id}\nUser ${user.id}\nEmail ${user.email}\nPassword demo-pass-123\nAgents hired.\nReady.`;
       await refreshInboxBadge();
       showView("workforce");
     } catch (err) {
@@ -933,6 +998,7 @@
             email: $("loginEmail").value.trim(),
             password: $("loginPassword").value,
           }),
+          skipAuth: true,
         });
         $("setupLog").textContent = "Login OK for " + body.email;
         await applyAuthSession(body);
@@ -954,6 +1020,7 @@
             password: $("loginPassword").value,
             role: "member",
           }),
+          skipAuth: true,
         });
         $("setupLog").textContent = "Registered " + body.email;
         await applyAuthSession(body);
