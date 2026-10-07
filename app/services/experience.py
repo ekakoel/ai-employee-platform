@@ -143,3 +143,74 @@ def record_successful_reuse(db: Session, experience_id: str) -> None:
     # small confidence nudge, capped
     exp.confidence = min(1.0, float(exp.confidence or 0) + 0.02)
     db.flush()
+
+
+
+def submit_feedback(
+    db: Session,
+    *,
+    experience: Experience,
+    user_id: str,
+    helpful: bool,
+    human_correction: str = "",
+    lesson: str | None = None,
+    confidence_delta: float = 0.0,
+) -> Experience:
+    """
+    Post-validation human feedback (Job 10).
+
+    - helpful=True: bump success_count and confidence
+    - helpful=False: apply correction, lower confidence (does not auto-unvalidate)
+    """
+    if experience.validation_status != ExperienceStatus.VALIDATED.value:
+        raise ValueError(
+            "Feedback is only allowed on validated experiences."
+        )
+
+    if human_correction:
+        prev = experience.human_correction or ""
+        experience.human_correction = (
+            ((prev + "\n") if prev else "") + human_correction.strip()
+        )
+    if lesson is not None:
+        experience.lesson = lesson
+
+    if helpful:
+        experience.success_count = int(experience.success_count or 0) + 1
+        delta = confidence_delta if confidence_delta else 0.05
+        experience.confidence = min(
+            1.0, float(experience.confidence or 0) + abs(delta)
+        )
+    else:
+        delta = confidence_delta if confidence_delta else -0.1
+        experience.confidence = max(
+            0.0, float(experience.confidence or 0) + delta
+        )
+
+    db.flush()
+    return experience
+
+
+def archive_experience(
+    db: Session,
+    *,
+    experience: Experience,
+) -> Experience:
+    experience.validation_status = ExperienceStatus.ARCHIVED.value
+    experience.is_active = False
+    db.flush()
+    return experience
+
+
+def get_experience_for_company(
+    db: Session,
+    *,
+    company_id: str,
+    experience_id: str,
+) -> Experience | None:
+    return db.scalar(
+        select(Experience).where(
+            Experience.id == experience_id,
+            Experience.company_id == company_id,
+        )
+    )

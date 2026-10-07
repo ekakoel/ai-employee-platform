@@ -505,3 +505,12 @@ class DelegationExecuteRequest(BaseModel):
     """Optional overrides when executing a pending/accepted delegation."""
     mode: str = Field(default="consult", pattern="^(execute|consult)$")
     force: bool = False  # ignore soft timeout check only for status transitions
+
+
+class ExperienceFeedbackRequest(BaseModel):
+    """Human feedback after an experience was used or reviewed."""
+
+    helpful: bool
+    human_correction: str = ""
+    lesson: str | None = None
+    confidence_delta: float = Field(default=0.0, ge=-0.5, le=0.5)

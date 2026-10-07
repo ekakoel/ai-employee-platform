@@ -60,6 +60,7 @@ from app.schemas.domain import (
     ExperienceSearchHit,
     ExperienceSearchRequest,
     ExperienceValidateRequest,
+    ExperienceFeedbackRequest,
     KnowledgeSearchRequest,
     KnowledgeSearchHit,
     AgentCatalogRead,
@@ -109,8 +110,12 @@ from app.services.directory import (
     validate_delegation_target,
 )
 from app.services.experience import (
+    archive_experience,
     create_candidate_from_task,
+    get_experience_for_company,
+    record_successful_reuse,
     search_validated_experiences,
+    submit_feedback,
     validate_experience,
 )
 from app.services.audit import record_audit
@@ -1476,12 +1481,6 @@ def list_company_experiences(
 def create_experience_candidate(
     company_id: str,
     payload: ExperienceCreate,
-    AgentDirectoryEntry,
-    TargetValidationRequest,
-    TargetValidationResult,
-    DelegationRequestCreate,
-    DelegationRequestRead,
-    DelegationExecuteRequest,
     db: Session = Depends(get_db),
     x_user_id: str | None = Header(default=None),
 ):
@@ -1647,6 +1646,154 @@ def validate_company_experience(
         resource_id=exp.id,
         status="success",
         details={"approve": payload.approve},
+    )
+    db.commit()
+    db.refresh(exp)
+    return exp
+
+
+
+
+@router.get(
+    "/companies/{company_id}/experiences/{experience_id}",
+    response_model=ExperienceRead,
+)
+def get_company_experience(
+    company_id: str,
+    experience_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    exp = get_experience_for_company(
+        db, company_id=company_id, experience_id=experience_id
+    )
+    if not exp:
+        raise HTTPException(status_code=404, detail="Experience not found")
+    return exp
+
+
+@router.post(
+    "/companies/{company_id}/experiences/{experience_id}/feedback",
+    response_model=ExperienceRead,
+)
+def feedback_company_experience(
+    company_id: str,
+    experience_id: str,
+    payload: ExperienceFeedbackRequest,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """Job 10 — human feedback on a validated experience (confidence + correction)."""
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.manage")
+    exp = get_experience_for_company(
+        db, company_id=company_id, experience_id=experience_id
+    )
+    if not exp:
+        raise HTTPException(status_code=404, detail="Experience not found")
+    try:
+        submit_feedback(
+            db,
+            experience=exp,
+            user_id=user.id,
+            helpful=payload.helpful,
+            human_correction=payload.human_correction,
+            lesson=payload.lesson,
+            confidence_delta=payload.confidence_delta,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        agent_instance_id=exp.agent_instance_id,
+        task_id=exp.source_task_id,
+        action="experience.feedback",
+        resource_type="experience",
+        resource_id=exp.id,
+        status="success",
+        details={
+            "helpful": payload.helpful,
+            "confidence": exp.confidence,
+            "success_count": exp.success_count,
+        },
+    )
+    db.commit()
+    db.refresh(exp)
+    return exp
+
+
+@router.post(
+    "/companies/{company_id}/experiences/{experience_id}/reuse",
+    response_model=ExperienceRead,
+)
+def reuse_company_experience(
+    company_id: str,
+    experience_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """Record that a validated experience was reused successfully (confidence nudge)."""
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "task.create")
+    exp = get_experience_for_company(
+        db, company_id=company_id, experience_id=experience_id
+    )
+    if not exp:
+        raise HTTPException(status_code=404, detail="Experience not found")
+    if exp.validation_status != "validated":
+        raise HTTPException(
+            status_code=409,
+            detail="Only validated experiences can be marked reused",
+        )
+    record_successful_reuse(db, exp.id)
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        agent_instance_id=exp.agent_instance_id,
+        action="experience.reuse",
+        resource_type="experience",
+        resource_id=exp.id,
+        status="success",
+        details={"success_count": exp.success_count, "confidence": exp.confidence},
+    )
+    db.commit()
+    db.refresh(exp)
+    return exp
+
+
+@router.post(
+    "/companies/{company_id}/experiences/{experience_id}/archive",
+    response_model=ExperienceRead,
+)
+def archive_company_experience(
+    company_id: str,
+    experience_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.manage")
+    exp = get_experience_for_company(
+        db, company_id=company_id, experience_id=experience_id
+    )
+    if not exp:
+        raise HTTPException(status_code=404, detail="Experience not found")
+    archive_experience(db, experience=exp)
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        agent_instance_id=exp.agent_instance_id,
+        action="experience.archive",
+        resource_type="experience",
+        resource_id=exp.id,
+        status="success",
     )
     db.commit()
     db.refresh(exp)
