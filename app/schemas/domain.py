@@ -291,3 +291,63 @@ class PolicyRead(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+
+class KnowledgeChunkRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    company_id: str
+    agent_instance_id: str | None
+    knowledge_item_id: str | None
+    knowledge_document_id: str | None
+    chunk_index: int
+    content: str
+    token_estimate: int
+    is_active: bool
+    created_at: datetime
+
+
+class KnowledgeSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=2000)
+    limit: int = Field(default=5, ge=1, le=20)
+
+
+class KnowledgeSearchHit(BaseModel):
+    id: str
+    content: str
+    score: float
+    source: str
+    title: str | None = None
+    category: str | None = None
+    chunk_index: int | None = None
+
+
+class AgentMemoryCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    content: str = Field(min_length=1)
+    category: str = Field(default="context", max_length=100)
+    source_task_id: str | None = None
+    expires_at: datetime | None = None
+
+
+class AgentMemoryUpdate(BaseModel):
+    title: str | None = Field(default=None, max_length=300)
+    content: str | None = None
+    category: str | None = Field(default=None, max_length=100)
+    is_active: bool | None = None
+    expires_at: datetime | None = None
+
+
+class AgentMemoryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    company_id: str
+    agent_instance_id: str
+    title: str
+    content: str
+    category: str
+    source_task_id: str | None
+    is_active: bool
+    expires_at: datetime | None
+    created_at: datetime
+    updated_at: datetime

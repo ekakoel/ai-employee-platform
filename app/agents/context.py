@@ -36,6 +36,8 @@ class AgentContext:
 
     configuration: dict[str, Any] = field(default_factory=dict)
     assigned_skills: list[dict[str, Any]] = field(default_factory=list)
+    memories: list[dict[str, Any]] = field(default_factory=list)
+    retrieved_knowledge: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -58,6 +60,8 @@ class AgentContext:
             "knowledge": list(self.knowledge),
             "configuration": dict(self.configuration),
             "skills_detail": list(self.assigned_skills),
+            "memories": list(self.memories),
+            "retrieved_knowledge": list(self.retrieved_knowledge),
         }
 
 
@@ -159,6 +163,37 @@ def load_agent_context(
     if agent.template_version:
         configuration.setdefault("template_version", agent.template_version)
 
+    from app.knowledge.retrieval import (
+        active_agent_memories,
+        search_knowledge_chunks,
+    )
+
+    memory_rows = active_agent_memories(
+        db,
+        company_id=agent.company_id,
+        agent_instance_id=agent.id,
+        limit=10,
+    )
+    memories = [
+        {
+            "id": m.id,
+            "title": m.title,
+            "content": m.content,
+            "category": m.category,
+        }
+        for m in memory_rows
+    ]
+
+    retrieved_knowledge: list[dict[str, Any]] = []
+    if task is not None and task.instruction:
+        retrieved_knowledge = search_knowledge_chunks(
+            db,
+            company_id=agent.company_id,
+            agent_instance_id=agent.id,
+            query=f"{task.title or ''} {task.instruction}",
+            limit=5,
+        )
+
     return AgentContext(
         company_id=agent.company_id,
         company_name=agent.company.name,
@@ -181,4 +216,6 @@ def load_agent_context(
         ],
         configuration=configuration,
         assigned_skills=assigned_skills,
+        memories=memories,
+        retrieved_knowledge=retrieved_knowledge,
     )

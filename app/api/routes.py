@@ -7,20 +7,27 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.knowledge.service import save_document
+from app.knowledge.indexing import replace_chunks_for_item, replace_chunks_for_document
+from app.knowledge.retrieval import (
+    active_agent_memories,
+    search_knowledge_chunks,
+    search_knowledge_items,
+)
 from app.models import (
     AgentAccess,
-    AgentSkill,
     AgentCatalog,
     AgentInstance,
+    AgentMemory,
+    AgentSkill,
     AgentSubscription,
     Approval,
     AuditLog,
     Company,
+    KnowledgeChunk,
     KnowledgeItem,
     Policy,
     Skill,
     Task,
-    User,
     User,
 )
 from app.models.entities import TaskStatus
@@ -36,6 +43,11 @@ from app.schemas.domain import (
     PolicyCreate,
     PolicyRead,
     PolicyUpdate,
+    AgentMemoryCreate,
+    AgentMemoryRead,
+    AgentMemoryUpdate,
+    KnowledgeSearchRequest,
+    KnowledgeSearchHit,
     AgentCatalogRead,
     AgentInstanceRead,
     AgentInstanceUpdate,
@@ -1210,6 +1222,196 @@ def delete_company_policy(
     return None
 
 
+
+
+@router.post(
+    "/companies/{company_id}/knowledge/search",
+    response_model=list[KnowledgeSearchHit],
+)
+def search_company_knowledge(
+    company_id: str,
+    payload: KnowledgeSearchRequest,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+    agent_instance_id: str | None = None,
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "knowledge.read")
+
+    hits = search_knowledge_chunks(
+        db,
+        company_id=company_id,
+        agent_instance_id=agent_instance_id,
+        query=payload.query,
+        limit=payload.limit,
+    )
+    if len(hits) < payload.limit:
+        items = search_knowledge_items(
+            db,
+            company_id=company_id,
+            agent_instance_id=agent_instance_id,
+            query=payload.query,
+            limit=payload.limit - len(hits),
+        )
+        hits.extend(items)
+    return hits
+
+
+@router.get(
+    "/companies/{company_id}/agents/{agent_instance_id}/memories",
+    response_model=list[AgentMemoryRead],
+)
+def list_agent_memories(
+    company_id: str,
+    agent_instance_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    get_owned_agent_or_404(db, company_id, agent_instance_id)
+    require_permission(user, "agent.read")
+    return active_agent_memories(
+        db, company_id=company_id, agent_instance_id=agent_instance_id, limit=50
+    )
+
+
+@router.post(
+    "/companies/{company_id}/agents/{agent_instance_id}/memories",
+    response_model=AgentMemoryRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_agent_memory(
+    company_id: str,
+    agent_instance_id: str,
+    payload: AgentMemoryCreate,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    agent = get_owned_agent_or_404(db, company_id, agent_instance_id)
+    require_agent_manage(
+        db, user, company_id=company_id, agent_instance_id=agent.id
+    )
+
+    memory = AgentMemory(
+        company_id=company_id,
+        agent_instance_id=agent.id,
+        title=payload.title,
+        content=payload.content,
+        category=payload.category,
+        source_task_id=payload.source_task_id,
+        expires_at=payload.expires_at,
+        is_active=True,
+    )
+    db.add(memory)
+    db.flush()
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        agent_instance_id=agent.id,
+        task_id=payload.source_task_id,
+        action="memory.create",
+        resource_type="agent_memory",
+        resource_id=memory.id,
+        status="success",
+    )
+    db.commit()
+    db.refresh(memory)
+    return memory
+
+
+@router.patch(
+    "/companies/{company_id}/agents/{agent_instance_id}/memories/{memory_id}",
+    response_model=AgentMemoryRead,
+)
+def update_agent_memory(
+    company_id: str,
+    agent_instance_id: str,
+    memory_id: str,
+    payload: AgentMemoryUpdate,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    agent = get_owned_agent_or_404(db, company_id, agent_instance_id)
+    require_agent_manage(
+        db, user, company_id=company_id, agent_instance_id=agent.id
+    )
+
+    memory = db.scalar(
+        select(AgentMemory).where(
+            AgentMemory.id == memory_id,
+            AgentMemory.company_id == company_id,
+            AgentMemory.agent_instance_id == agent_instance_id,
+        )
+    )
+    if not memory:
+        raise HTTPException(status_code=404, detail="Memory not found")
+
+    data = payload.model_dump(exclude_unset=True)
+    for key, value in data.items():
+        setattr(memory, key, value)
+
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        agent_instance_id=agent.id,
+        action="memory.update",
+        resource_type="agent_memory",
+        resource_id=memory.id,
+        status="success",
+        details=data,
+    )
+    db.commit()
+    db.refresh(memory)
+    return memory
+
+
+@router.delete(
+    "/companies/{company_id}/agents/{agent_instance_id}/memories/{memory_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_agent_memory(
+    company_id: str,
+    agent_instance_id: str,
+    memory_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    agent = get_owned_agent_or_404(db, company_id, agent_instance_id)
+    require_agent_manage(
+        db, user, company_id=company_id, agent_instance_id=agent.id
+    )
+
+    memory = db.scalar(
+        select(AgentMemory).where(
+            AgentMemory.id == memory_id,
+            AgentMemory.company_id == company_id,
+            AgentMemory.agent_instance_id == agent_instance_id,
+        )
+    )
+    if not memory:
+        raise HTTPException(status_code=404, detail="Memory not found")
+
+    # soft delete via lifecycle
+    memory.is_active = False
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        agent_instance_id=agent.id,
+        action="memory.deactivate",
+        resource_type="agent_memory",
+        resource_id=memory.id,
+        status="success",
+    )
+    db.commit()
+    return None
+
+
 @router.post(
     "/companies/{company_id}/knowledge",
     response_model=KnowledgeRead,
@@ -1246,6 +1448,7 @@ def create_knowledge(
 
     db.add(item)
     db.flush()
+    replace_chunks_for_item(db, item)
 
     record_audit(
         db,
@@ -1303,6 +1506,7 @@ def create_agent_knowledge(
 
     db.add(item)
     db.flush()
+    replace_chunks_for_item(db, item)
 
     record_audit(
         db,

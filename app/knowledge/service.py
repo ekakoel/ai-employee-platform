@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.knowledge.extractor import extract_text
 from app.models.entities import DocumentStatus, KnowledgeDocument
+from app.knowledge.indexing import replace_chunks_for_document
 
 
 DOCUMENT_STORAGE_ROOT = Path("storage/documents")
@@ -63,6 +64,7 @@ def save_document(
         document.extracted_text = extracted_text
         document.status = DocumentStatus.READY
         document.error_message = None
+        replace_chunks_for_document(db, document)
 
     except Exception as exc:
         document.status = DocumentStatus.FAILED
