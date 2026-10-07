@@ -176,3 +176,31 @@ code { background: #0b0f14; padding: 0.1rem 0.3rem; border-radius: 4px; }
   .stats { grid-template-columns: 1fr 1fr; }
   .grid-2 { grid-template-columns: 1fr; }
 }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.4rem;
+  height: 1.4rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: #ef4444;
+  color: white;
+  font-size: 0.75rem;
+  font-weight: 700;
+  margin-right: 0.5rem;
+}
+.badge.hidden { display: none; }
+.inbox-item-type {
+  display: inline-block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.15rem 0.45rem;
+  border-radius: 6px;
+  margin-right: 0.4rem;
+}
+.inbox-item-type.task { background: #1e3a5f; color: #93c5fd; }
+.inbox-item-type.approval { background: #3b2f1a; color: #fcd34d; }
+.inbox-item-type.delegation { background: #2e1a3b; color: #d8b4fe; }

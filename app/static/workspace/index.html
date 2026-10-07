@@ -18,13 +18,16 @@
       </div>
       <nav id="nav">
         <button data-view="setup" class="nav-btn active">Setup</button>
-        <button data-view="dashboard" class="nav-btn" disabled>Dashboard</button>
-        <button data-view="agents" class="nav-btn" disabled>AI Workforce</button>
+        <button data-view="workforce" class="nav-btn" disabled>Workforce Overview</button>
+        <button data-view="inbox" class="nav-btn" disabled>AI Inbox</button>
         <button data-view="tasks" class="nav-btn" disabled>Task Center</button>
-        <button data-view="approvals" class="nav-btn" disabled>Approvals</button>
+        <button data-view="approvals" class="nav-btn" disabled>Approval Center</button>
+        <button data-view="agents" class="nav-btn" disabled>Agent Dashboard</button>
         <button data-view="consult" class="nav-btn" disabled>Consultation</button>
         <button data-view="directory" class="nav-btn" disabled>Directory</button>
         <button data-view="knowledge" class="nav-btn" disabled>Knowledge</button>
+        <button data-view="delegation" class="nav-btn" disabled>Delegation</button>
+        <button data-view="automation" class="nav-btn" disabled>Automation</button>
       </nav>
       <div class="session" id="sessionBox">
         <small>Not connected</small>
@@ -35,6 +38,7 @@
       <header class="topbar">
         <h1 id="viewTitle">Setup</h1>
         <div class="top-actions">
+          <span id="inboxBadge" class="badge hidden">0</span>
           <span id="statusPill" class="pill muted">Offline</span>
         </div>
       </header>
@@ -43,7 +47,7 @@
       <section id="view-setup" class="view active">
         <div class="card">
           <h2>Connect to company</h2>
-          <p class="muted">Workspace uses API headers <code>X-User-ID</code>. Create a company or paste existing IDs.</p>
+          <p class="muted">Workspace uses API header <code>X-User-ID</code>. Create a demo company or paste existing IDs.</p>
           <div class="grid-2">
             <label>API base
               <input id="apiBase" value="/api/v1" />
@@ -57,48 +61,46 @@
           </div>
           <div class="row">
             <button id="btnConnect" class="primary">Connect</button>
-            <button id="btnQuickStart" class="secondary">Quick start (create demo company)</button>
+            <button id="btnQuickStart" class="secondary">Quick start (demo company)</button>
           </div>
           <pre id="setupLog" class="log"></pre>
         </div>
       </section>
 
-      <!-- DASHBOARD -->
-      <section id="view-dashboard" class="view">
-        <div class="stats" id="dashStats"></div>
+      <!-- WORKFORCE OVERVIEW -->
+      <section id="view-workforce" class="view">
+        <div class="stats" id="wfStats"></div>
         <div class="grid-2">
           <div class="card">
-            <h3>Recent tasks</h3>
-            <div id="dashTasks" class="list"></div>
+            <h3>Workforce by status</h3>
+            <div id="wfStatusBreakdown" class="list"></div>
           </div>
           <div class="card">
-            <h3>Pending approvals</h3>
-            <div id="dashApprovals" class="list"></div>
+            <h3>Recent activity</h3>
+            <div id="wfActivity" class="list"></div>
           </div>
+        </div>
+        <div class="card">
+          <h3>AI Employees snapshot</h3>
+          <div id="wfAgentGrid" class="cards"></div>
         </div>
       </section>
 
-      <!-- AGENTS -->
-      <section id="view-agents" class="view">
+      <!-- AI INBOX -->
+      <section id="view-inbox" class="view">
         <div class="card">
           <div class="row between">
-            <h2>AI Workforce</h2>
-            <button id="btnRefreshAgents" class="secondary">Refresh</button>
+            <h2>AI Inbox</h2>
+            <button id="btnRefreshInbox" class="secondary">Refresh</button>
           </div>
-          <div id="agentList" class="cards"></div>
-        </div>
-        <div class="card">
-          <h3>Hire from catalog</h3>
-          <div class="row">
-            <select id="catalogSelect"></select>
-            <input id="hireName" placeholder="Instance name" />
-            <button id="btnHire" class="primary">Hire</button>
-          </div>
-          <pre id="hireLog" class="log"></pre>
+          <p class="muted">Unified queue: pending tasks, approvals, and open delegations that need human attention.</p>
+          <div class="stats" id="inboxStats"></div>
+          <h3>Needs attention</h3>
+          <div id="inboxList" class="list"></div>
         </div>
       </section>
 
-      <!-- TASKS -->
+      <!-- TASK CENTER -->
       <section id="view-tasks" class="view">
         <div class="card">
           <h2>Create task</h2>
@@ -123,21 +125,51 @@
         </div>
         <div class="card">
           <div class="row between">
-            <h3>Task inbox</h3>
-            <button id="btnRefreshTasks" class="secondary">Refresh</button>
+            <h3>Task Center</h3>
+            <div class="row">
+              <select id="taskFilter">
+                <option value="all">All</option>
+                <option value="pending">Pending</option>
+                <option value="completed">Completed</option>
+                <option value="consult">Consult mode</option>
+                <option value="execute">Execute mode</option>
+              </select>
+              <button id="btnRefreshTasks" class="secondary">Refresh</button>
+            </div>
           </div>
           <div id="taskList" class="list"></div>
         </div>
       </section>
 
-      <!-- APPROVALS -->
+      <!-- APPROVAL CENTER -->
       <section id="view-approvals" class="view">
         <div class="card">
           <div class="row between">
-            <h2>Approvals inbox</h2>
+            <h2>Approval Center</h2>
             <button id="btnRefreshApprovals" class="secondary">Refresh</button>
           </div>
+          <p class="muted">Review and decide on actions that require human authority.</p>
           <div id="approvalList" class="list"></div>
+        </div>
+      </section>
+
+      <!-- AGENT DASHBOARD -->
+      <section id="view-agents" class="view">
+        <div class="card">
+          <div class="row between">
+            <h2>Agent Dashboard</h2>
+            <button id="btnRefreshAgents" class="secondary">Refresh</button>
+          </div>
+          <div id="agentList" class="cards"></div>
+        </div>
+        <div class="card">
+          <h3>Hire from catalog</h3>
+          <div class="row">
+            <select id="catalogSelect"></select>
+            <input id="hireName" placeholder="Instance name" />
+            <button id="btnHire" class="primary">Hire</button>
+          </div>
+          <pre id="hireLog" class="log"></pre>
         </div>
       </section>
 
@@ -194,6 +226,83 @@
             <button id="btnSearchKnow" class="secondary">Search</button>
           </div>
           <div id="knowResults" class="list"></div>
+        </div>
+      </section>
+
+      <!-- DELEGATION -->
+      <section id="view-delegation" class="view">
+        <div class="card">
+          <h2>Create delegation</h2>
+          <div class="grid-2">
+            <label>Source agent
+              <select id="delSource"></select>
+            </label>
+            <label>Target agent
+              <select id="delTarget"></select>
+            </label>
+            <label>Capability
+              <input id="delCapability" placeholder="contract_analysis" />
+            </label>
+            <label>Title
+              <input id="delTitle" placeholder="Review supplier terms" />
+            </label>
+            <label class="full">Instruction
+              <textarea id="delInstruction" rows="2"></textarea>
+            </label>
+          </div>
+          <button id="btnCreateDel" class="primary">Create request</button>
+        </div>
+        <div class="card">
+          <div class="row between">
+            <h3>Delegation requests</h3>
+            <button id="btnRefreshDel" class="secondary">Refresh</button>
+          </div>
+          <div id="delList" class="list"></div>
+        </div>
+      </section>
+
+      <!-- AUTOMATION -->
+      <section id="view-automation" class="view">
+        <div class="card">
+          <h2>Create automation rule</h2>
+          <div class="grid-2">
+            <label>Agent
+              <select id="autoAgent"></select>
+            </label>
+            <label>Trigger
+              <select id="autoTrigger">
+                <option value="event">Event</option>
+                <option value="schedule">Schedule</option>
+              </select>
+            </label>
+            <label>Name
+              <input id="autoName" placeholder="On booking created" />
+            </label>
+            <label>Event type
+              <input id="autoEvent" placeholder="booking.created" />
+            </label>
+            <label>Title template
+              <input id="autoTitle" placeholder="Booking {booking_id}" />
+            </label>
+            <label class="full">Instruction template
+              <textarea id="autoInstruction" rows="2" placeholder="Handle booking {booking_id}"></textarea>
+            </label>
+          </div>
+          <button id="btnCreateAuto" class="primary">Create rule</button>
+          <div class="row">
+            <button id="btnTickAuto" class="secondary">Run schedule tick</button>
+            <button id="btnFireEvent" class="secondary">Fire sample event</button>
+          </div>
+          <pre id="autoLog" class="log"></pre>
+        </div>
+        <div class="card">
+          <div class="row between">
+            <h3>Rules & runs</h3>
+            <button id="btnRefreshAuto" class="secondary">Refresh</button>
+          </div>
+          <div id="autoRules" class="list"></div>
+          <hr />
+          <div id="autoRuns" class="list"></div>
         </div>
       </section>
     </main>
