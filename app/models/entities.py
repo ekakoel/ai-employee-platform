@@ -111,6 +111,8 @@ class User(Base):
 
 
 class AgentCatalog(Base):
+    """Platform AI Agent Template (published product in the catalog)."""
+
     __tablename__ = "agent_catalog"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -121,6 +123,20 @@ class AgentCatalog(Base):
     skills: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     allowed_tools: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     status: Mapped[str] = mapped_column(String(20), default=AgentStatus.ACTIVE.value, nullable=False)
+
+    # Phase 2 — Template fields
+    version: Mapped[str] = mapped_column(String(32), default="1.0.0", nullable=False)
+    scope: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    responsibilities: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    default_instructions: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    default_knowledge_requirements: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    default_policies: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    default_approval_recommendations: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    default_autonomy: Mapped[str] = mapped_column(String(10), default="1", nullable=False)
+    evaluation_criteria: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    is_published: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    changelog: Mapped[str] = mapped_column(Text, default="", nullable=False)
 
     instances: Mapped[list["AgentInstance"]] = relationship(back_populates="catalog")
     subscriptions: Mapped[list["AgentSubscription"]] = relationship(back_populates="catalog")
@@ -152,6 +168,15 @@ class AgentInstance(Base):
     status: Mapped[str] = mapped_column(String(20), default=AgentStatus.ACTIVE.value, nullable=False)
     configuration: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+    # Phase 2 — snapshot of template at hire time + company customization
+    template_version: Mapped[str] = mapped_column(String(32), default="1.0.0", nullable=False)
+    instructions: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    skills: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    allowed_tools: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    scope: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    autonomy: Mapped[str] = mapped_column(String(10), default="1", nullable=False)
+    policies: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
     company: Mapped[Company] = relationship(back_populates="agent_instances")
     catalog: Mapped[AgentCatalog] = relationship(back_populates="instances")

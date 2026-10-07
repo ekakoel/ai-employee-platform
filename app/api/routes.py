@@ -23,6 +23,7 @@ from app.runtime.tool_executor import ToolExecutionError, ToolExecutor
 from app.schemas.domain import (
     AgentCatalogRead,
     AgentInstanceRead,
+    AgentInstanceUpdate,
     AgentSubscriptionRead,
     ApprovalRead,
     ApprovalReviewRequest,
@@ -302,10 +303,28 @@ def list_agent_catalog(
     return list(
         db.scalars(
             select(AgentCatalog).where(
-                AgentCatalog.status == "active"
+                AgentCatalog.status == "active",
+                AgentCatalog.is_published.is_(True),
             )
         ).all()
     )
+
+
+@router.get(
+    "/agent-catalog/{catalog_id}",
+    response_model=AgentCatalogRead,
+)
+def get_agent_catalog(
+    catalog_id: str,
+    db: Session = Depends(get_db),
+):
+    catalog = db.get(AgentCatalog, catalog_id)
+    if not catalog or catalog.status != "active" or not catalog.is_published:
+        raise HTTPException(
+            status_code=404,
+            detail="Agent catalog item not found or inactive",
+        )
+    return catalog
 
 
 @router.post(
@@ -336,7 +355,11 @@ def hire_agent(
         catalog_agent_id,
     )
 
-    if not catalog or catalog.status != "active":
+    if (
+        not catalog
+        or catalog.status != "active"
+        or not catalog.is_published
+    ):
         raise HTTPException(
             status_code=404,
             detail="Agent catalog item not found or inactive",
@@ -350,15 +373,35 @@ def hire_agent(
     db.add(subscription)
     db.flush()
 
+    # Snapshot template defaults onto the instance at hire time.
+    skills = list(catalog.skills or [])
+    allowed_tools = list(catalog.allowed_tools or [])
+    scope = list(catalog.scope or [])
+    policies = dict(catalog.default_policies or {})
+
     instance = AgentInstance(
         company_id=company_id,
         catalog_agent_id=catalog.id,
         subscription_id=subscription.id,
         name=payload.name,
+        template_version=catalog.version,
+        instructions=catalog.default_instructions or "",
+        skills=skills,
+        allowed_tools=allowed_tools,
+        scope=scope,
+        autonomy=catalog.default_autonomy or "1",
+        policies=policies,
         configuration={
             "role": catalog.role,
-            "skills": catalog.skills,
-            "allowed_tools": catalog.allowed_tools,
+            "skills": skills,
+            "allowed_tools": allowed_tools,
+            "evaluation_criteria": list(catalog.evaluation_criteria or []),
+            "knowledge_requirements": list(
+                catalog.default_knowledge_requirements or []
+            ),
+            "approval_recommendations": dict(
+                catalog.default_approval_recommendations or {}
+            ),
         },
     )
 
@@ -377,6 +420,7 @@ def hire_agent(
         details={
             "catalog_slug": catalog.slug,
             "subscription_id": subscription.id,
+            "template_version": catalog.version,
         },
     )
 
@@ -509,6 +553,75 @@ def list_company_agents(
             )
         ).all()
     )
+
+
+@router.patch(
+    "/companies/{company_id}/agents/{agent_instance_id}",
+    response_model=AgentInstanceRead,
+)
+def update_company_agent(
+    company_id: str,
+    agent_instance_id: str,
+    payload: AgentInstanceUpdate,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """Company customization of a hired Agent Instance."""
+    user = require_company_user(
+        db,
+        company_id,
+        x_user_id,
+    )
+
+    # Prefer agent.manage; fall back to agent.hire for older role seeds.
+    permission_keys = {p.key for p in (user.role.permissions or [])}
+    if "agent.manage" in permission_keys:
+        require_permission(user, "agent.manage")
+    else:
+        require_permission(user, "agent.hire")
+
+    instance = db.scalar(
+        select(AgentInstance).where(
+            AgentInstance.id == agent_instance_id,
+            AgentInstance.company_id == company_id,
+        )
+    )
+    if not instance:
+        raise HTTPException(
+            status_code=404,
+            detail="Agent is not hired by this company",
+        )
+
+    if payload.name is not None:
+        instance.name = payload.name
+    if payload.instructions is not None:
+        instance.instructions = payload.instructions
+    if payload.autonomy is not None:
+        instance.autonomy = payload.autonomy
+    if payload.policies is not None:
+        instance.policies = dict(payload.policies)
+
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        agent_instance_id=instance.id,
+        action="agent.update",
+        resource_type="agent_instance",
+        resource_id=instance.id,
+        status="success",
+        details={
+            "fields": [
+                key
+                for key, value in payload.model_dump(exclude_unset=True).items()
+                if value is not None
+            ],
+        },
+    )
+
+    db.commit()
+    db.refresh(instance)
+    return instance
 
 
 @router.post(

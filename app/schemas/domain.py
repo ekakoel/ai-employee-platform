@@ -41,10 +41,31 @@ class AgentCatalogRead(BaseModel):
     skills: list
     allowed_tools: list
     status: str
+    version: str = "1.0.0"
+    scope: list = []
+    responsibilities: list = []
+    default_instructions: str = ""
+    default_knowledge_requirements: list = []
+    default_policies: dict = {}
+    default_approval_recommendations: dict = {}
+    default_autonomy: str = "1"
+    evaluation_criteria: list = []
+    is_published: bool = True
+    published_at: datetime | None = None
+    changelog: str = ""
 
 
 class HireAgentRequest(BaseModel):
     name: str = Field(min_length=2, max_length=200)
+
+
+class AgentInstanceUpdate(BaseModel):
+    """Company customization of a hired Agent Instance."""
+
+    name: str | None = Field(default=None, min_length=2, max_length=200)
+    instructions: str | None = None
+    autonomy: str | None = Field(default=None, pattern="^[0-3]$")
+    policies: dict | None = None
 
 
 class AgentSubscriptionRead(BaseModel):
@@ -67,6 +88,13 @@ class AgentInstanceRead(BaseModel):
     status: str
     configuration: dict
     created_at: datetime
+    template_version: str = "1.0.0"
+    instructions: str = ""
+    skills: list = []
+    allowed_tools: list = []
+    scope: list = []
+    autonomy: str = "1"
+    policies: dict = {}
 
 
 class KnowledgeCreate(BaseModel):

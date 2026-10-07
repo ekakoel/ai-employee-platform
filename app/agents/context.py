@@ -98,8 +98,26 @@ def load_agent_context(
     # AgentInstance defines the relationship as `catalog`.
     catalog = agent.catalog
 
-    skills = list(catalog.skills or []) if catalog else []
-    allowed_tools = list(catalog.allowed_tools or []) if catalog else []
+    # Prefer instance snapshot (pinned at hire); fall back to catalog.
+    instance_skills = list(agent.skills or [])
+    instance_tools = list(agent.allowed_tools or [])
+    catalog_skills = list(catalog.skills or []) if catalog else []
+    catalog_tools = list(catalog.allowed_tools or []) if catalog else []
+
+    skills = instance_skills if instance_skills else catalog_skills
+    allowed_tools = instance_tools if instance_tools else catalog_tools
+
+    configuration = dict(agent.configuration or {})
+    if agent.instructions:
+        configuration.setdefault("instructions", agent.instructions)
+    if agent.scope:
+        configuration.setdefault("scope", list(agent.scope))
+    if agent.autonomy:
+        configuration.setdefault("autonomy", agent.autonomy)
+    if agent.policies:
+        configuration.setdefault("policies", dict(agent.policies))
+    if agent.template_version:
+        configuration.setdefault("template_version", agent.template_version)
 
     return AgentContext(
         company_id=agent.company_id,
@@ -121,5 +139,5 @@ def load_agent_context(
             }
             for item in knowledge_items
         ],
-        configuration=dict(agent.configuration or {}),
+        configuration=configuration,
     )
