@@ -178,10 +178,62 @@ class AgentInstance(Base):
     autonomy: Mapped[str] = mapped_column(String(10), default="1", nullable=False)
     policies: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
+    # Phase 3 — primary human supervisor
+    supervisor_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=True,
+        index=True,
+    )
+
     company: Mapped[Company] = relationship(back_populates="agent_instances")
     catalog: Mapped[AgentCatalog] = relationship(back_populates="instances")
     subscription: Mapped["AgentSubscription"] = relationship(back_populates="agent_instances")
     tasks: Mapped[list["Task"]] = relationship(back_populates="agent_instance")
+    access_grants: Mapped[list["AgentAccess"]] = relationship(
+        back_populates="agent_instance",
+        cascade="all, delete-orphan",
+    )
+
+
+class AgentAccess(Base):
+    """Per-agent human access: use / manage / approve / supervisor."""
+
+    __tablename__ = "agent_access"
+    __table_args__ = (
+        UniqueConstraint(
+            "agent_instance_id",
+            "user_id",
+            name="uq_agent_user_access",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    agent_instance_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_instances.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    can_use: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    can_manage: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    can_approve: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_supervisor: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+    agent_instance: Mapped["AgentInstance"] = relationship(back_populates="access_grants")
+    user: Mapped["User"] = relationship()
+    company: Mapped["Company"] = relationship()
 
 
 class KnowledgeItem(Base):

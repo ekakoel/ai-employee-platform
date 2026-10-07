@@ -95,6 +95,35 @@ class AgentInstanceRead(BaseModel):
     scope: list = []
     autonomy: str = "1"
     policies: dict = {}
+    supervisor_user_id: str | None = None
+
+
+class AgentAccessCreate(BaseModel):
+    user_id: str
+    can_use: bool = True
+    can_manage: bool = False
+    can_approve: bool = False
+    is_supervisor: bool = False
+
+
+class AgentAccessUpdate(BaseModel):
+    can_use: bool | None = None
+    can_manage: bool | None = None
+    can_approve: bool | None = None
+    is_supervisor: bool | None = None
+
+
+class AgentAccessRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    company_id: str
+    agent_instance_id: str
+    user_id: str
+    can_use: bool
+    can_manage: bool
+    can_approve: bool
+    is_supervisor: bool
+    created_at: datetime
 
 
 class KnowledgeCreate(BaseModel):

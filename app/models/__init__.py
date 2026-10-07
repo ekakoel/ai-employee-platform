@@ -1,4 +1,5 @@
 from app.models.entities import (
+    AgentAccess,
     AgentCatalog,
     AgentSubscription,
     AgentInstance,
@@ -16,6 +17,7 @@ from app.models.entities import (
 )
 
 __all__ = [
+    "AgentAccess",
     "AgentCatalog",
     "AgentSubscription",
     "AgentInstance",

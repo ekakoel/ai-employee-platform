@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.knowledge.service import save_document
 from app.models import (
+    AgentAccess,
     AgentCatalog,
     AgentInstance,
     AgentSubscription,
@@ -17,10 +18,14 @@ from app.models import (
     KnowledgeItem,
     Task,
     User,
+    User,
 )
 from app.models.entities import TaskStatus
 from app.runtime.tool_executor import ToolExecutionError, ToolExecutor
 from app.schemas.domain import (
+    AgentAccessCreate,
+    AgentAccessRead,
+    AgentAccessUpdate,
     AgentCatalogRead,
     AgentInstanceRead,
     AgentInstanceUpdate,
@@ -39,6 +44,12 @@ from app.schemas.domain import (
     TaskRead,
     UserCreate,
     UserRead,
+)
+from app.services.access import (
+    grant_access,
+    require_agent_approve,
+    require_agent_manage,
+    require_agent_use,
 )
 from app.services.approval import ApprovalService
 from app.services.audit import record_audit
@@ -405,8 +416,21 @@ def hire_agent(
         },
     )
 
+    instance.supervisor_user_id = user.id
     db.add(instance)
     db.flush()
+
+    # Phase 3: hiring user becomes supervisor with full access
+    grant_access(
+        db,
+        company_id=company_id,
+        agent_instance_id=instance.id,
+        user_id=user.id,
+        can_use=True,
+        can_manage=True,
+        can_approve=True,
+        is_supervisor=True,
+    )
 
     record_audit(
         db,
@@ -573,13 +597,6 @@ def update_company_agent(
         x_user_id,
     )
 
-    # Prefer agent.manage; fall back to agent.hire for older role seeds.
-    permission_keys = {p.key for p in (user.role.permissions or [])}
-    if "agent.manage" in permission_keys:
-        require_permission(user, "agent.manage")
-    else:
-        require_permission(user, "agent.hire")
-
     instance = db.scalar(
         select(AgentInstance).where(
             AgentInstance.id == agent_instance_id,
@@ -591,6 +608,13 @@ def update_company_agent(
             status_code=404,
             detail="Agent is not hired by this company",
         )
+
+    require_agent_manage(
+        db,
+        user,
+        company_id=company_id,
+        agent_instance_id=instance.id,
+    )
 
     if payload.name is not None:
         instance.name = payload.name
@@ -622,6 +646,191 @@ def update_company_agent(
     db.commit()
     db.refresh(instance)
     return instance
+
+
+@router.get(
+    "/companies/{company_id}/agents/{agent_instance_id}/access",
+    response_model=list[AgentAccessRead],
+)
+def list_agent_access(
+    company_id: str,
+    agent_instance_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    get_owned_agent_or_404(db, company_id, agent_instance_id)
+    require_agent_manage(
+        db, user, company_id=company_id, agent_instance_id=agent_instance_id
+    )
+    return list(
+        db.scalars(
+            select(AgentAccess).where(
+                AgentAccess.company_id == company_id,
+                AgentAccess.agent_instance_id == agent_instance_id,
+            )
+        ).all()
+    )
+
+
+@router.post(
+    "/companies/{company_id}/agents/{agent_instance_id}/access",
+    response_model=AgentAccessRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def assign_agent_access(
+    company_id: str,
+    agent_instance_id: str,
+    payload: AgentAccessCreate,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    agent = get_owned_agent_or_404(db, company_id, agent_instance_id)
+    require_agent_manage(
+        db, user, company_id=company_id, agent_instance_id=agent_instance_id
+    )
+
+    target = db.scalar(
+        select(User).where(
+            User.id == payload.user_id,
+            User.company_id == company_id,
+        )
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found in this company")
+
+    access = grant_access(
+        db,
+        company_id=company_id,
+        agent_instance_id=agent.id,
+        user_id=target.id,
+        can_use=payload.can_use,
+        can_manage=payload.can_manage,
+        can_approve=payload.can_approve,
+        is_supervisor=payload.is_supervisor,
+    )
+
+    if payload.is_supervisor:
+        agent.supervisor_user_id = target.id
+
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        agent_instance_id=agent.id,
+        action="agent.access.assign",
+        resource_type="agent_access",
+        resource_id=access.id,
+        status="success",
+        details={
+            "target_user_id": target.id,
+            "can_use": payload.can_use,
+            "can_manage": payload.can_manage,
+            "can_approve": payload.can_approve,
+            "is_supervisor": payload.is_supervisor,
+        },
+    )
+    db.commit()
+    db.refresh(access)
+    return access
+
+
+@router.patch(
+    "/companies/{company_id}/agents/{agent_instance_id}/access/{access_id}",
+    response_model=AgentAccessRead,
+)
+def update_agent_access(
+    company_id: str,
+    agent_instance_id: str,
+    access_id: str,
+    payload: AgentAccessUpdate,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    agent = get_owned_agent_or_404(db, company_id, agent_instance_id)
+    require_agent_manage(
+        db, user, company_id=company_id, agent_instance_id=agent_instance_id
+    )
+
+    access = db.scalar(
+        select(AgentAccess).where(
+            AgentAccess.id == access_id,
+            AgentAccess.company_id == company_id,
+            AgentAccess.agent_instance_id == agent_instance_id,
+        )
+    )
+    if not access:
+        raise HTTPException(status_code=404, detail="Access grant not found")
+
+    data = payload.model_dump(exclude_unset=True)
+    for key, value in data.items():
+        setattr(access, key, value)
+
+    if data.get("is_supervisor") is True:
+        agent.supervisor_user_id = access.user_id
+
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        agent_instance_id=agent.id,
+        action="agent.access.update",
+        resource_type="agent_access",
+        resource_id=access.id,
+        status="success",
+        details=data,
+    )
+    db.commit()
+    db.refresh(access)
+    return access
+
+
+@router.delete(
+    "/companies/{company_id}/agents/{agent_instance_id}/access/{access_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def revoke_agent_access(
+    company_id: str,
+    agent_instance_id: str,
+    access_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    agent = get_owned_agent_or_404(db, company_id, agent_instance_id)
+    require_agent_manage(
+        db, user, company_id=company_id, agent_instance_id=agent_instance_id
+    )
+
+    access = db.scalar(
+        select(AgentAccess).where(
+            AgentAccess.id == access_id,
+            AgentAccess.company_id == company_id,
+            AgentAccess.agent_instance_id == agent_instance_id,
+        )
+    )
+    if not access:
+        raise HTTPException(status_code=404, detail="Access grant not found")
+
+    if agent.supervisor_user_id == access.user_id:
+        agent.supervisor_user_id = None
+
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        agent_instance_id=agent.id,
+        action="agent.access.revoke",
+        resource_type="agent_access",
+        resource_id=access.id,
+        status="success",
+        details={"target_user_id": access.user_id},
+    )
+    db.delete(access)
+    db.commit()
+    return None
 
 
 @router.post(
@@ -915,6 +1124,13 @@ def create_task(
         payload.agent_instance_id,
     )
 
+    require_agent_use(
+        db,
+        user,
+        company_id=company_id,
+        agent_instance_id=agent.id,
+    )
+
     task = Task(
         company_id=company_id,
         **payload.model_dump(),
@@ -1093,9 +1309,20 @@ def approve_company_approval(
         x_user_id,
     )
 
-    require_permission(
+    existing = db.scalar(
+        select(Approval).where(
+            Approval.id == approval_id,
+            Approval.company_id == company_id,
+        )
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="Approval not found")
+
+    require_agent_approve(
+        db,
         user,
-        "approval.manage",
+        company_id=company_id,
+        agent_instance_id=existing.agent_instance_id,
     )
 
     service = ApprovalService(db)
@@ -1145,9 +1372,20 @@ def reject_company_approval(
         x_user_id,
     )
 
-    require_permission(
+    existing = db.scalar(
+        select(Approval).where(
+            Approval.id == approval_id,
+            Approval.company_id == company_id,
+        )
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="Approval not found")
+
+    require_agent_approve(
+        db,
         user,
-        "approval.manage",
+        company_id=company_id,
+        agent_instance_id=existing.agent_instance_id,
     )
 
     service = ApprovalService(db)
