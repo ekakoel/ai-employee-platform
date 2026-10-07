@@ -47,6 +47,13 @@ class ApprovalStatus(str, Enum):
     REJECTED = "rejected"
     CANCELLED = "cancelled"
 
+
+class ExperienceStatus(str, Enum):
+    CANDIDATE = "candidate"
+    VALIDATED = "validated"
+    REJECTED = "rejected"
+    ARCHIVED = "archived"
+
 class SubscriptionStatus(str, Enum):
     ACTIVE = "active"
     SUSPENDED = "suspended"
@@ -460,6 +467,65 @@ class AgentMemory(Base):
     expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
+
+class Experience(Base):
+    """
+    Controlled learning record — never auto-changes policy or permissions.
+
+    Lifecycle: candidate -> validated | rejected -> archived
+    """
+
+    __tablename__ = "experiences"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    agent_instance_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_instances.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    source_task_id: Mapped[str | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    situation: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    context: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    problem: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    decision: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    action: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    result: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    human_correction: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    lesson: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    confidence: Mapped[float] = mapped_column(default=0.5, nullable=False)
+    validation_status: Mapped[str] = mapped_column(
+        String(30),
+        default=ExperienceStatus.CANDIDATE.value,
+        nullable=False,
+        index=True,
+    )
+    validated_by: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=True,
+        index=True,
+    )
+    validated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    success_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )

@@ -38,6 +38,7 @@ class AgentContext:
     assigned_skills: list[dict[str, Any]] = field(default_factory=list)
     memories: list[dict[str, Any]] = field(default_factory=list)
     retrieved_knowledge: list[dict[str, Any]] = field(default_factory=list)
+    experiences: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -62,6 +63,7 @@ class AgentContext:
             "skills_detail": list(self.assigned_skills),
             "memories": list(self.memories),
             "retrieved_knowledge": list(self.retrieved_knowledge),
+            "experiences": list(self.experiences),
         }
 
 
@@ -185,13 +187,25 @@ def load_agent_context(
     ]
 
     retrieved_knowledge: list[dict[str, Any]] = []
+    experiences: list[dict[str, Any]] = []
     if task is not None and task.instruction:
+        query = f"{task.title or ''} {task.instruction}"
         retrieved_knowledge = search_knowledge_chunks(
             db,
             company_id=agent.company_id,
             agent_instance_id=agent.id,
-            query=f"{task.title or ''} {task.instruction}",
+            query=query,
             limit=5,
+        )
+        from app.services.experience import search_validated_experiences
+
+        experiences = search_validated_experiences(
+            db,
+            company_id=agent.company_id,
+            agent_instance_id=agent.id,
+            query=query,
+            limit=3,
+            min_confidence=0.3,
         )
 
     return AgentContext(
@@ -218,4 +232,5 @@ def load_agent_context(
         assigned_skills=assigned_skills,
         memories=memories,
         retrieved_knowledge=retrieved_knowledge,
+        experiences=experiences,
     )

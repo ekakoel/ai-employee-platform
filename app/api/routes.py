@@ -23,6 +23,7 @@ from app.models import (
     Approval,
     AuditLog,
     Company,
+    Experience,
     KnowledgeChunk,
     KnowledgeItem,
     Policy,
@@ -46,6 +47,12 @@ from app.schemas.domain import (
     AgentMemoryCreate,
     AgentMemoryRead,
     AgentMemoryUpdate,
+    ExperienceCreate,
+    ExperienceFromTaskRequest,
+    ExperienceRead,
+    ExperienceSearchHit,
+    ExperienceSearchRequest,
+    ExperienceValidateRequest,
     KnowledgeSearchRequest,
     KnowledgeSearchHit,
     AgentCatalogRead,
@@ -80,6 +87,11 @@ from app.services.access import (
     require_agent_use,
 )
 from app.services.approval import ApprovalService
+from app.services.experience import (
+    create_candidate_from_task,
+    search_validated_experiences,
+    validate_experience,
+)
 from app.services.audit import record_audit
 from app.services.seed import get_or_create_role
 from app.services.task_runtime import TaskRuntimeService
@@ -1410,6 +1422,230 @@ def delete_agent_memory(
     )
     db.commit()
     return None
+
+
+
+
+@router.get(
+    "/companies/{company_id}/experiences",
+    response_model=list[ExperienceRead],
+)
+def list_company_experiences(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+    status_filter: str | None = None,
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    q = select(Experience).where(
+        Experience.company_id == company_id,
+        Experience.is_active.is_(True),
+    )
+    if status_filter:
+        q = q.where(Experience.validation_status == status_filter)
+    return list(db.scalars(q.order_by(Experience.created_at.desc())).all())
+
+
+@router.post(
+    "/companies/{company_id}/experiences",
+    response_model=ExperienceRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_experience_candidate(
+    company_id: str,
+    payload: ExperienceCreate,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "task.create")
+
+    agent_id = payload.agent_instance_id
+    if payload.source_task_id:
+        task = db.scalar(
+            select(Task).where(
+                Task.id == payload.source_task_id,
+                Task.company_id == company_id,
+            )
+        )
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        agent_id = task.agent_instance_id
+        exp = Experience(
+            company_id=company_id,
+            agent_instance_id=agent_id,
+            source_task_id=task.id,
+            situation=payload.situation or task.title,
+            context=payload.context,
+            problem=payload.problem or task.instruction,
+            decision=payload.decision,
+            action=payload.action,
+            result=payload.result or (task.result or ""),
+            human_correction=payload.human_correction,
+            lesson=payload.lesson,
+            confidence=payload.confidence,
+            validation_status="candidate",
+        )
+    else:
+        if agent_id:
+            get_owned_agent_or_404(db, company_id, agent_id)
+        exp = Experience(
+            company_id=company_id,
+            agent_instance_id=agent_id,
+            source_task_id=None,
+            situation=payload.situation,
+            context=payload.context,
+            problem=payload.problem,
+            decision=payload.decision,
+            action=payload.action,
+            result=payload.result,
+            human_correction=payload.human_correction,
+            lesson=payload.lesson,
+            confidence=payload.confidence,
+            validation_status="candidate",
+        )
+
+    db.add(exp)
+    db.flush()
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        agent_instance_id=exp.agent_instance_id,
+        task_id=exp.source_task_id,
+        action="experience.candidate",
+        resource_type="experience",
+        resource_id=exp.id,
+        status="success",
+    )
+    db.commit()
+    db.refresh(exp)
+    return exp
+
+
+@router.post(
+    "/companies/{company_id}/tasks/{task_id}/experiences",
+    response_model=ExperienceRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_experience_from_task(
+    company_id: str,
+    task_id: str,
+    payload: ExperienceFromTaskRequest,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "task.create")
+
+    task = db.scalar(
+        select(Task).where(Task.id == task_id, Task.company_id == company_id)
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    exp = create_candidate_from_task(
+        db,
+        task=task,
+        decision=payload.decision,
+        action=payload.action,
+        human_correction=payload.human_correction,
+        lesson=payload.lesson,
+        confidence=payload.confidence,
+    )
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        agent_instance_id=task.agent_instance_id,
+        task_id=task.id,
+        action="experience.candidate",
+        resource_type="experience",
+        resource_id=exp.id,
+        status="success",
+    )
+    db.commit()
+    db.refresh(exp)
+    return exp
+
+
+@router.post(
+    "/companies/{company_id}/experiences/{experience_id}/validate",
+    response_model=ExperienceRead,
+)
+def validate_company_experience(
+    company_id: str,
+    experience_id: str,
+    payload: ExperienceValidateRequest,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    # validation is a management/governance action
+    require_permission(user, "agent.manage")
+
+    exp = db.scalar(
+        select(Experience).where(
+            Experience.id == experience_id,
+            Experience.company_id == company_id,
+        )
+    )
+    if not exp:
+        raise HTTPException(status_code=404, detail="Experience not found")
+
+    if exp.validation_status not in ("candidate", "validated"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot validate experience in status '{exp.validation_status}'",
+        )
+
+    validate_experience(
+        db,
+        experience=exp,
+        user_id=user.id,
+        approve=payload.approve,
+        lesson=payload.lesson,
+        confidence=payload.confidence,
+        human_correction=payload.human_correction,
+    )
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        agent_instance_id=exp.agent_instance_id,
+        task_id=exp.source_task_id,
+        action="experience.validate" if payload.approve else "experience.reject",
+        resource_type="experience",
+        resource_id=exp.id,
+        status="success",
+        details={"approve": payload.approve},
+    )
+    db.commit()
+    db.refresh(exp)
+    return exp
+
+
+@router.post(
+    "/companies/{company_id}/experiences/search",
+    response_model=list[ExperienceSearchHit],
+)
+def search_company_experiences(
+    company_id: str,
+    payload: ExperienceSearchRequest,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    return search_validated_experiences(
+        db,
+        company_id=company_id,
+        agent_instance_id=payload.agent_instance_id,
+        query=payload.query,
+        limit=payload.limit,
+        min_confidence=payload.min_confidence,
+    )
 
 
 @router.post(

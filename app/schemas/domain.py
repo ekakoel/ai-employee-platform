@@ -351,3 +351,80 @@ class AgentMemoryRead(BaseModel):
     expires_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class ExperienceCreate(BaseModel):
+    """Create experience candidate (optionally linked to a completed task)."""
+
+    source_task_id: str | None = None
+    agent_instance_id: str | None = None
+    situation: str = ""
+    context: str = ""
+    problem: str = Field(min_length=1)
+    decision: str = ""
+    action: str = ""
+    result: str = ""
+    human_correction: str = ""
+    lesson: str = ""
+    confidence: float = Field(default=0.4, ge=0.0, le=1.0)
+
+
+class ExperienceFromTaskRequest(BaseModel):
+    decision: str = ""
+    action: str = ""
+    human_correction: str = ""
+    lesson: str = ""
+    confidence: float = Field(default=0.4, ge=0.0, le=1.0)
+
+
+class ExperienceValidateRequest(BaseModel):
+    approve: bool
+    lesson: str | None = None
+    human_correction: str | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class ExperienceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    company_id: str
+    agent_instance_id: str | None
+    source_task_id: str | None
+    situation: str
+    context: str
+    problem: str
+    decision: str
+    action: str
+    result: str
+    human_correction: str
+    lesson: str
+    confidence: float
+    validation_status: str
+    validated_by: str | None
+    validated_at: datetime | None
+    success_count: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class ExperienceSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=2000)
+    agent_instance_id: str | None = None
+    limit: int = Field(default=5, ge=1, le=20)
+    min_confidence: float = Field(default=0.3, ge=0.0, le=1.0)
+
+
+class ExperienceSearchHit(BaseModel):
+    id: str
+    situation: str
+    problem: str
+    decision: str
+    action: str
+    result: str
+    lesson: str
+    human_correction: str
+    confidence: float
+    score: float
+    agent_instance_id: str | None = None
+    source_task_id: str | None = None
