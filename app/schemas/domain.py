@@ -18,6 +18,7 @@ class UserCreate(BaseModel):
     name: str = Field(min_length=2, max_length=200)
     email: str = Field(min_length=3, max_length=320)
     role: str = Field(default="manager", min_length=2, max_length=100)
+    password: str | None = Field(default=None, min_length=8, max_length=128)
 
 
 class UserRead(BaseModel):

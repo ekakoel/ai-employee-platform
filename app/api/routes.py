@@ -158,21 +158,17 @@ def get_company_or_404(db: Session, company_id: str) -> Company:
 def get_current_user(
     x_user_id: str | None,
     db: Session,
+    authorization: str | None = None,
 ) -> User:
-    if not x_user_id:
-        raise HTTPException(
-            status_code=401,
-            detail="X-User-ID header is required",
-        )
+    from app.core.auth import resolve_user_id
 
-    user = db.get(User, x_user_id)
-
+    user_id = resolve_user_id(authorization=authorization, x_user_id=x_user_id)
+    user = db.get(User, user_id)
     if not user or user.status != "active":
         raise HTTPException(
             status_code=401,
             detail="Invalid or inactive user",
         )
-
     return user
 
 
@@ -180,8 +176,9 @@ def require_company_user(
     db: Session,
     company_id: str,
     x_user_id: str | None,
+    authorization: str | None = None,
 ) -> User:
-    user = get_current_user(x_user_id, db)
+    user = get_current_user(x_user_id, db, authorization=authorization)
 
     if user.company_id != company_id:
         raise HTTPException(
@@ -362,11 +359,21 @@ def create_user(
         payload.role,
     )
 
+    password_hash = None
+    if getattr(payload, "password", None):
+        from app.core.passwords import hash_password
+
+        try:
+            password_hash = hash_password(payload.password)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     user = User(
         company_id=company.id,
         name=payload.name,
         email=payload.email,
         role_id=role.id,
+        password_hash=password_hash,
     )
 
     db.add(user)

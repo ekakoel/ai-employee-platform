@@ -1,4 +1,4 @@
-"""HTTP middleware: request ID + basic access log."""
+"""HTTP middleware: request ID + auth bootstrap from Bearer."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ import uuid
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
+
+from app.core.security import decode_access_token
 
 logger = logging.getLogger("app.access")
 
@@ -30,3 +32,26 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
             extra={"request_id": request_id},
         )
         return response
+
+
+class AuthBootstrapMiddleware(BaseHTTPMiddleware):
+    """
+    If Authorization Bearer is present and X-User-ID is missing,
+    inject X-User-ID from JWT subject so existing route handlers work.
+    """
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        auth = request.headers.get("authorization") or request.headers.get("Authorization")
+        xuid = request.headers.get("x-user-id") or request.headers.get("X-User-ID")
+        if auth and auth.lower().startswith("bearer ") and not xuid:
+            token = auth.split(" ", 1)[1].strip()
+            try:
+                payload = decode_access_token(token)
+                sub = payload.get("sub")
+                if sub:
+                    # MutableHeaders
+                    headers = request.scope.setdefault("headers", [])
+                    headers.append((b"x-user-id", str(sub).encode("latin-1")))
+            except Exception:
+                pass
+        return await call_next(request)

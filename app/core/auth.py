@@ -1,4 +1,4 @@
-"""Authentication dependencies — JWT Bearer + legacy X-User-ID."""
+"""Authentication dependencies — JWT Bearer + optional legacy X-User-ID."""
 
 from __future__ import annotations
 
@@ -18,19 +18,18 @@ def _load_user(db: Session, user_id: str) -> User:
     return user
 
 
-def get_current_user(
-    db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
-    authorization: str | None = Header(default=None),
-) -> User:
+def resolve_user_id(
+    *,
+    authorization: str | None,
+    x_user_id: str | None,
+) -> str:
     """
-    Resolve current user from:
-    1. Authorization: Bearer <jwt>
-    2. X-User-ID header (MVP / workspace compatibility)
+    Resolve authenticated user id.
 
-    When auth_enabled=True in production, missing credentials → 401.
+    Priority:
+    1. Authorization: Bearer <access jwt>
+    2. X-User-ID (only if allowed by settings)
     """
-    # Bearer JWT
     if authorization and authorization.lower().startswith("bearer "):
         token = authorization.split(" ", 1)[1].strip()
         try:
@@ -40,15 +39,26 @@ def get_current_user(
         user_id = payload.get("sub")
         if not user_id:
             raise HTTPException(status_code=401, detail="Token missing subject")
-        return _load_user(db, user_id)
+        return str(user_id)
 
-    # Legacy header
     if x_user_id:
-        return _load_user(db, x_user_id)
+        if settings.auth_enabled and not settings.allow_legacy_user_header:
+            raise HTTPException(
+                status_code=401,
+                detail="Legacy X-User-ID disabled; use Bearer token",
+            )
+        return x_user_id
 
-    if settings.auth_enabled:
-        raise HTTPException(
-            status_code=401,
-            detail="Authentication required (Bearer token or X-User-ID)",
-        )
-    raise HTTPException(status_code=401, detail="X-User-ID header is required")
+    raise HTTPException(
+        status_code=401,
+        detail="Authentication required (Bearer token or X-User-ID)",
+    )
+
+
+def get_current_user(
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
+) -> User:
+    user_id = resolve_user_id(authorization=authorization, x_user_id=x_user_id)
+    return _load_user(db, user_id)

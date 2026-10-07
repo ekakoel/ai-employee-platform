@@ -4,6 +4,7 @@
     apiBase: localStorage.getItem("ws_apiBase") || "/api/v1",
     companyId: localStorage.getItem("ws_companyId") || "",
     userId: localStorage.getItem("ws_userId") || "",
+    accessToken: localStorage.getItem("ws_accessToken") || "",
     connected: false,
     tasks: [],
     agents: [],
@@ -15,6 +16,7 @@
     const h = {};
     if (json) h["Content-Type"] = "application/json";
     if (state.userId) h["X-User-ID"] = state.userId;
+    if (state.accessToken) h["Authorization"] = "Bearer " + state.accessToken;
     return h;
   }
 
@@ -901,6 +903,65 @@
   }
   const btnGov = $("btnRefreshGov");
   if (btnGov) btnGov.onclick = loadGovernance;
+
+
+  async function applyAuthSession(body) {
+    state.companyId = body.company_id;
+    state.userId = body.user_id;
+    state.accessToken = body.access_token || "";
+    $("companyId").value = state.companyId;
+    $("userId").value = state.userId;
+    localStorage.setItem("ws_companyId", state.companyId);
+    localStorage.setItem("ws_userId", state.userId);
+    localStorage.setItem("ws_accessToken", state.accessToken);
+    if (body.refresh_token) {
+      localStorage.setItem("ws_refreshToken", body.refresh_token);
+    }
+    setConnected(true);
+    await refreshInboxBadge();
+    showView("workforce");
+  }
+
+  const btnLogin = $("btnLogin");
+  if (btnLogin) {
+    btnLogin.onclick = async () => {
+      try {
+        const body = await api("/auth/login", {
+          method: "POST",
+          body: JSON.stringify({
+            company_id: $("companyId").value.trim(),
+            email: $("loginEmail").value.trim(),
+            password: $("loginPassword").value,
+          }),
+        });
+        $("setupLog").textContent = "Login OK for " + body.email;
+        await applyAuthSession(body);
+      } catch (err) {
+        $("setupLog").textContent = "Login failed: " + err.message;
+      }
+    };
+  }
+  const btnRegister = $("btnRegister");
+  if (btnRegister) {
+    btnRegister.onclick = async () => {
+      try {
+        const body = await api("/auth/register", {
+          method: "POST",
+          body: JSON.stringify({
+            company_id: $("companyId").value.trim(),
+            email: $("loginEmail").value.trim(),
+            name: $("loginEmail").value.trim().split("@")[0] || "User",
+            password: $("loginPassword").value,
+            role: "member",
+          }),
+        });
+        $("setupLog").textContent = "Registered " + body.email;
+        await applyAuthSession(body);
+      } catch (err) {
+        $("setupLog").textContent = "Register failed: " + err.message;
+      }
+    };
+  }
 
   if (state.companyId && state.userId) {
     $("btnConnect").click();
