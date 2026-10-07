@@ -63,6 +63,20 @@ class DelegationStatus(str, Enum):
     FAILED = "failed"
     CANCELLED = "cancelled"
 
+
+class AutomationTriggerType(str, Enum):
+    SCHEDULE = "schedule"
+    EVENT = "event"
+
+
+class AutomationRunStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    PAUSED_APPROVAL = "paused_approval"
+    CANCELLED = "cancelled"
+
 class SubscriptionStatus(str, Enum):
     ACTIVE = "active"
     SUSPENDED = "suspended"
@@ -605,6 +619,95 @@ class DelegationRequest(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
+
+class AutomationRule(Base):
+    """Scheduled or event-driven automation that creates agent tasks."""
+
+    __tablename__ = "automation_rules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    agent_instance_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_instances.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    trigger_type: Mapped[str] = mapped_column(
+        String(30),
+        default=AutomationTriggerType.SCHEDULE.value,
+        nullable=False,
+        index=True,
+    )
+    # schedule: interval_seconds between runs; next_run_at is the due clock
+    interval_seconds: Mapped[int | None] = mapped_column(nullable=True)
+    next_run_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    # event: fire when this event_type is posted
+    event_type: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    task_title_template: Mapped[str] = mapped_column(String(300), nullable=False)
+    task_instruction_template: Mapped[str] = mapped_column(Text, nullable=False)
+    task_mode: Mapped[str] = mapped_column(String(20), default="consult", nullable=False)
+    max_retries: Mapped[int] = mapped_column(default=3, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    last_run_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
+class AutomationRun(Base):
+    """One execution attempt of an automation rule (idempotent)."""
+
+    __tablename__ = "automation_runs"
+    __table_args__ = (
+        UniqueConstraint("company_id", "idempotency_key", name="uq_automation_idempotency"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    rule_id: Mapped[str] = mapped_column(
+        ForeignKey("automation_rules.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    attempt: Mapped[int] = mapped_column(default=1, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(30),
+        default=AutomationRunStatus.PENDING.value,
+        nullable=False,
+        index=True,
+    )
+    task_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trigger_payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
     )
 
 

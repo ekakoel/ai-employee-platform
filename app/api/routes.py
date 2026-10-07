@@ -22,6 +22,8 @@ from app.models import (
     AgentSubscription,
     Approval,
     AuditLog,
+    AutomationRule,
+    AutomationRun,
     Company,
     DelegationRequest,
     Experience,
@@ -61,6 +63,10 @@ from app.schemas.domain import (
     ExperienceSearchRequest,
     ExperienceValidateRequest,
     ExperienceFeedbackRequest,
+    AutomationRuleCreate,
+    AutomationRuleRead,
+    AutomationRunRead,
+    AutomationEventRequest,
     KnowledgeSearchRequest,
     KnowledgeSearchHit,
     AgentCatalogRead,
@@ -87,6 +93,11 @@ from app.services.skills import (
     get_skill_for_company,
     list_agent_skills,
     list_available_skills,
+)
+from app.services.automation import (
+    fire_event,
+    retry_run,
+    tick_schedules,
 )
 from app.services.access import (
     grant_access,
@@ -2516,6 +2527,176 @@ def propagate_delegation_result(
         raise HTTPException(status_code=404, detail="Delegation request not found")
     try:
         return propagate_child_task_result(db, req=req)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+
+
+@router.get(
+    "/companies/{company_id}/automations",
+    response_model=list[AutomationRuleRead],
+)
+def list_automation_rules(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    return list(
+        db.scalars(
+            select(AutomationRule)
+            .where(AutomationRule.company_id == company_id)
+            .order_by(AutomationRule.created_at.desc())
+        ).all()
+    )
+
+
+@router.post(
+    "/companies/{company_id}/automations",
+    response_model=AutomationRuleRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_automation_rule(
+    company_id: str,
+    payload: AutomationRuleCreate,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.manage")
+    agent = get_owned_agent_or_404(db, company_id, payload.agent_instance_id)
+
+    if payload.trigger_type == "schedule":
+        if not payload.interval_seconds:
+            raise HTTPException(
+                status_code=400,
+                detail="interval_seconds required for schedule triggers",
+            )
+    if payload.trigger_type == "event":
+        if not payload.event_type:
+            raise HTTPException(
+                status_code=400,
+                detail="event_type required for event triggers",
+            )
+
+    from datetime import datetime, timezone
+
+    next_run = payload.next_run_at
+    if payload.trigger_type == "schedule" and next_run is None:
+        next_run = datetime.now(timezone.utc)
+
+    rule = AutomationRule(
+        company_id=company_id,
+        agent_instance_id=agent.id,
+        name=payload.name,
+        description=payload.description or "",
+        trigger_type=payload.trigger_type,
+        interval_seconds=payload.interval_seconds,
+        next_run_at=next_run,
+        event_type=payload.event_type,
+        task_title_template=payload.task_title_template,
+        task_instruction_template=payload.task_instruction_template,
+        task_mode=payload.task_mode,
+        max_retries=payload.max_retries,
+        is_active=payload.is_active,
+    )
+    db.add(rule)
+    db.flush()
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        agent_instance_id=agent.id,
+        action="automation.rule.create",
+        resource_type="automation_rule",
+        resource_id=rule.id,
+        status="success",
+        details={"trigger_type": rule.trigger_type},
+    )
+    db.commit()
+    db.refresh(rule)
+    return rule
+
+
+@router.post(
+    "/companies/{company_id}/automations/tick",
+    response_model=list[AutomationRunRead],
+)
+def tick_company_automations(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """Process due scheduled automations (call from cron or manually)."""
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.manage")
+    return tick_schedules(db, company_id=company_id, user_id=user.id)
+
+
+@router.post(
+    "/companies/{company_id}/automations/events",
+    response_model=list[AutomationRunRead],
+)
+def fire_company_automation_event(
+    company_id: str,
+    payload: AutomationEventRequest,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "task.create")
+    return fire_event(
+        db,
+        company_id=company_id,
+        event_type=payload.event_type,
+        payload=payload.payload,
+        idempotency_key=payload.idempotency_key,
+        user_id=user.id,
+    )
+
+
+@router.get(
+    "/companies/{company_id}/automations/runs",
+    response_model=list[AutomationRunRead],
+)
+def list_automation_runs(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+    rule_id: str | None = None,
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    q = select(AutomationRun).where(AutomationRun.company_id == company_id)
+    if rule_id:
+        q = q.where(AutomationRun.rule_id == rule_id)
+    return list(db.scalars(q.order_by(AutomationRun.created_at.desc())).all())
+
+
+@router.post(
+    "/companies/{company_id}/automations/runs/{run_id}/retry",
+    response_model=AutomationRunRead,
+)
+def retry_automation_run(
+    company_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.manage")
+    run = db.scalar(
+        select(AutomationRun).where(
+            AutomationRun.id == run_id,
+            AutomationRun.company_id == company_id,
+        )
+    )
+    if not run:
+        raise HTTPException(status_code=404, detail="Automation run not found")
+    try:
+        return retry_run(db, run=run, user_id=user.id)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

@@ -514,3 +514,61 @@ class ExperienceFeedbackRequest(BaseModel):
     human_correction: str = ""
     lesson: str | None = None
     confidence_delta: float = Field(default=0.0, ge=-0.5, le=0.5)
+
+
+class AutomationRuleCreate(BaseModel):
+    agent_instance_id: str
+    name: str = Field(min_length=2, max_length=200)
+    description: str = ""
+    trigger_type: str = Field(default="schedule", pattern="^(schedule|event)$")
+    interval_seconds: int | None = Field(default=None, ge=1)
+    next_run_at: datetime | None = None
+    event_type: str | None = Field(default=None, max_length=100)
+    task_title_template: str = Field(min_length=1, max_length=300)
+    task_instruction_template: str = Field(min_length=1)
+    task_mode: str = Field(default="consult", pattern="^(execute|consult)$")
+    max_retries: int = Field(default=3, ge=0, le=20)
+    is_active: bool = True
+
+
+class AutomationRuleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    company_id: str
+    agent_instance_id: str
+    name: str
+    description: str
+    trigger_type: str
+    interval_seconds: int | None
+    next_run_at: datetime | None
+    event_type: str | None
+    task_title_template: str
+    task_instruction_template: str
+    task_mode: str
+    max_retries: int
+    is_active: bool
+    last_run_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AutomationRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    company_id: str
+    rule_id: str
+    idempotency_key: str
+    attempt: int
+    status: str
+    task_id: str | None
+    error_message: str | None
+    trigger_payload: dict
+    started_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+
+
+class AutomationEventRequest(BaseModel):
+    event_type: str = Field(min_length=1, max_length=100)
+    payload: dict = Field(default_factory=dict)
+    idempotency_key: str | None = Field(default=None, max_length=200)
