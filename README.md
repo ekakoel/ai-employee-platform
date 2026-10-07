@@ -29,6 +29,7 @@ Buka:
 - API: http://127.0.0.1:8000
 - Swagger: http://127.0.0.1:8000/docs
 - Health: http://127.0.0.1:8000/health
+- **Workspace UI (Phase 8):** http://127.0.0.1:8000/workspace
 
 ## Test
 

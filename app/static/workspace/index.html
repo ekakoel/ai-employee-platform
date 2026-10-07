@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Employee Workspace</title>
+  <link rel="stylesheet" href="/workspace/assets/styles.css" />
+</head>
+<body>
+  <div id="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="logo">AI</span>
+        <div>
+          <strong>Employee Platform</strong>
+          <small>Human + AI Workspace</small>
+        </div>
+      </div>
+      <nav id="nav">
+        <button data-view="setup" class="nav-btn active">Setup</button>
+        <button data-view="dashboard" class="nav-btn" disabled>Dashboard</button>
+        <button data-view="agents" class="nav-btn" disabled>AI Workforce</button>
+        <button data-view="tasks" class="nav-btn" disabled>Task Center</button>
+        <button data-view="approvals" class="nav-btn" disabled>Approvals</button>
+        <button data-view="consult" class="nav-btn" disabled>Consultation</button>
+        <button data-view="directory" class="nav-btn" disabled>Directory</button>
+        <button data-view="knowledge" class="nav-btn" disabled>Knowledge</button>
+      </nav>
+      <div class="session" id="sessionBox">
+        <small>Not connected</small>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <h1 id="viewTitle">Setup</h1>
+        <div class="top-actions">
+          <span id="statusPill" class="pill muted">Offline</span>
+        </div>
+      </header>
+
+      <!-- SETUP -->
+      <section id="view-setup" class="view active">
+        <div class="card">
+          <h2>Connect to company</h2>
+          <p class="muted">Workspace uses API headers <code>X-User-ID</code>. Create a company or paste existing IDs.</p>
+          <div class="grid-2">
+            <label>API base
+              <input id="apiBase" value="/api/v1" />
+            </label>
+            <label>Company ID
+              <input id="companyId" placeholder="uuid" />
+            </label>
+            <label>User ID
+              <input id="userId" placeholder="uuid" />
+            </label>
+          </div>
+          <div class="row">
+            <button id="btnConnect" class="primary">Connect</button>
+            <button id="btnQuickStart" class="secondary">Quick start (create demo company)</button>
+          </div>
+          <pre id="setupLog" class="log"></pre>
+        </div>
+      </section>
+
+      <!-- DASHBOARD -->
+      <section id="view-dashboard" class="view">
+        <div class="stats" id="dashStats"></div>
+        <div class="grid-2">
+          <div class="card">
+            <h3>Recent tasks</h3>
+            <div id="dashTasks" class="list"></div>
+          </div>
+          <div class="card">
+            <h3>Pending approvals</h3>
+            <div id="dashApprovals" class="list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- AGENTS -->
+      <section id="view-agents" class="view">
+        <div class="card">
+          <div class="row between">
+            <h2>AI Workforce</h2>
+            <button id="btnRefreshAgents" class="secondary">Refresh</button>
+          </div>
+          <div id="agentList" class="cards"></div>
+        </div>
+        <div class="card">
+          <h3>Hire from catalog</h3>
+          <div class="row">
+            <select id="catalogSelect"></select>
+            <input id="hireName" placeholder="Instance name" />
+            <button id="btnHire" class="primary">Hire</button>
+          </div>
+          <pre id="hireLog" class="log"></pre>
+        </div>
+      </section>
+
+      <!-- TASKS -->
+      <section id="view-tasks" class="view">
+        <div class="card">
+          <h2>Create task</h2>
+          <div class="grid-2">
+            <label>Agent
+              <select id="taskAgent"></select>
+            </label>
+            <label>Mode
+              <select id="taskMode">
+                <option value="execute">Execute</option>
+                <option value="consult">Consult</option>
+              </select>
+            </label>
+            <label class="full">Title
+              <input id="taskTitle" placeholder="Task title" />
+            </label>
+            <label class="full">Instruction
+              <textarea id="taskInstruction" rows="3" placeholder="What should the AI do?"></textarea>
+            </label>
+          </div>
+          <button id="btnCreateTask" class="primary">Create task</button>
+        </div>
+        <div class="card">
+          <div class="row between">
+            <h3>Task inbox</h3>
+            <button id="btnRefreshTasks" class="secondary">Refresh</button>
+          </div>
+          <div id="taskList" class="list"></div>
+        </div>
+      </section>
+
+      <!-- APPROVALS -->
+      <section id="view-approvals" class="view">
+        <div class="card">
+          <div class="row between">
+            <h2>Approvals inbox</h2>
+            <button id="btnRefreshApprovals" class="secondary">Refresh</button>
+          </div>
+          <div id="approvalList" class="list"></div>
+        </div>
+      </section>
+
+      <!-- CONSULT -->
+      <section id="view-consult" class="view">
+        <div class="card">
+          <h2>Consultation</h2>
+          <p class="muted">Ask for a recommendation without side-effect tools.</p>
+          <div class="grid-2">
+            <label>Agent
+              <select id="consultAgent"></select>
+            </label>
+            <label>Title
+              <input id="consultTitle" placeholder="e.g. Discount question" />
+            </label>
+            <label class="full">Question
+              <textarea id="consultQuestion" rows="3" placeholder="Should we give 10% discount?"></textarea>
+            </label>
+          </div>
+          <button id="btnConsult" class="primary">Ask AI</button>
+          <pre id="consultResult" class="log"></pre>
+        </div>
+      </section>
+
+      <!-- DIRECTORY -->
+      <section id="view-directory" class="view">
+        <div class="card">
+          <h2>Agent Directory</h2>
+          <div class="row">
+            <input id="dirSkill" placeholder="skill filter e.g. contract_analysis" />
+            <button id="btnSearchDir" class="primary">Search</button>
+            <button id="btnListDir" class="secondary">List all</button>
+          </div>
+          <div id="dirList" class="cards"></div>
+        </div>
+      </section>
+
+      <!-- KNOWLEDGE -->
+      <section id="view-knowledge" class="view">
+        <div class="card">
+          <h2>Knowledge</h2>
+          <div class="grid-2">
+            <label class="full">Title
+              <input id="knowTitle" />
+            </label>
+            <label class="full">Content
+              <textarea id="knowContent" rows="3"></textarea>
+            </label>
+          </div>
+          <button id="btnAddKnowledge" class="primary">Add knowledge</button>
+          <hr />
+          <div class="row">
+            <input id="knowQuery" placeholder="Search knowledge..." />
+            <button id="btnSearchKnow" class="secondary">Search</button>
+          </div>
+          <div id="knowResults" class="list"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="/workspace/assets/app.js"></script>
+</body>
+</html>
