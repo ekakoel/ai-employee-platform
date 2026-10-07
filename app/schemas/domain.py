@@ -476,6 +476,7 @@ class DelegationRequestCreate(BaseModel):
     capability: str = Field(min_length=1, max_length=200)
     title: str = Field(min_length=1, max_length=300)
     instruction: str = Field(min_length=1)
+    timeout_seconds: int = Field(default=300, ge=1, le=86400)
 
 
 class DelegationRequestRead(BaseModel):
@@ -491,5 +492,16 @@ class DelegationRequestRead(BaseModel):
     status: str
     validation_notes: str
     result: str | None
+    child_task_id: str | None = None
+    timeout_seconds: int = 300
+    error_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class DelegationExecuteRequest(BaseModel):
+    """Optional overrides when executing a pending/accepted delegation."""
+    mode: str = Field(default="consult", pattern="^(execute|consult)$")
+    force: bool = False  # ignore soft timeout check only for status transitions

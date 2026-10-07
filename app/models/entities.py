@@ -586,6 +586,20 @@ class DelegationRequest(Base):
     )
     validation_notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
     result: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Job 09 — execution fields
+    child_task_id: Mapped[str | None] = mapped_column(
+        String(36),
+        nullable=True,
+        index=True,
+    )
+    timeout_seconds: Mapped[int] = mapped_column(default=300, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )

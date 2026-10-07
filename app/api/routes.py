@@ -54,6 +54,7 @@ from app.schemas.domain import (
     TargetValidationResult,
     DelegationRequestCreate,
     DelegationRequestRead,
+    DelegationExecuteRequest,
     ExperienceFromTaskRequest,
     ExperienceRead,
     ExperienceSearchHit,
@@ -94,6 +95,14 @@ from app.services.access import (
 )
 from app.services.approval import ApprovalService
 from app.services.consultation import run_consultation
+from app.services.delegation import (
+    accept_delegation,
+    cancel_delegation,
+    execute_delegation,
+    mark_timeout_if_needed,
+    propagate_child_task_result,
+    reject_delegation,
+)
 from app.services.directory import (
     discover_agents,
     list_directory,
@@ -1472,6 +1481,7 @@ def create_experience_candidate(
     TargetValidationResult,
     DelegationRequestCreate,
     DelegationRequestRead,
+    DelegationExecuteRequest,
     db: Session = Depends(get_db),
     x_user_id: str | None = Header(default=None),
 ):
@@ -2141,6 +2151,7 @@ def create_delegation_request(
         instruction=payload.instruction,
         status="pending",
         validation_notes=validation.reason,
+        timeout_seconds=payload.timeout_seconds,
     )
     db.add(req)
     db.flush()
@@ -2181,6 +2192,185 @@ def list_delegation_requests(
             .order_by(DelegationRequest.created_at.desc())
         ).all()
     )
+
+
+
+
+@router.get(
+    "/companies/{company_id}/delegation-requests/{request_id}",
+    response_model=DelegationRequestRead,
+)
+def get_delegation_request(
+    company_id: str,
+    request_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    req = db.scalar(
+        select(DelegationRequest).where(
+            DelegationRequest.id == request_id,
+            DelegationRequest.company_id == company_id,
+        )
+    )
+    if not req:
+        raise HTTPException(status_code=404, detail="Delegation request not found")
+    mark_timeout_if_needed(db, req)
+    db.commit()
+    db.refresh(req)
+    return req
+
+
+@router.post(
+    "/companies/{company_id}/delegation-requests/{request_id}/accept",
+    response_model=DelegationRequestRead,
+)
+def accept_delegation_request(
+    company_id: str,
+    request_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "task.create")
+    req = db.scalar(
+        select(DelegationRequest).where(
+            DelegationRequest.id == request_id,
+            DelegationRequest.company_id == company_id,
+        )
+    )
+    if not req:
+        raise HTTPException(status_code=404, detail="Delegation request not found")
+    try:
+        accept_delegation(db, req=req, user_id=user.id)
+        db.commit()
+        db.refresh(req)
+        return req
+    except ValueError as exc:
+        db.commit()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    "/companies/{company_id}/delegation-requests/{request_id}/reject",
+    response_model=DelegationRequestRead,
+)
+def reject_delegation_request(
+    company_id: str,
+    request_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+    reason: str = "",
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "task.create")
+    req = db.scalar(
+        select(DelegationRequest).where(
+            DelegationRequest.id == request_id,
+            DelegationRequest.company_id == company_id,
+        )
+    )
+    if not req:
+        raise HTTPException(status_code=404, detail="Delegation request not found")
+    try:
+        reject_delegation(db, req=req, user_id=user.id, reason=reason)
+        db.commit()
+        db.refresh(req)
+        return req
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    "/companies/{company_id}/delegation-requests/{request_id}/cancel",
+    response_model=DelegationRequestRead,
+)
+def cancel_delegation_request(
+    company_id: str,
+    request_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "task.create")
+    req = db.scalar(
+        select(DelegationRequest).where(
+            DelegationRequest.id == request_id,
+            DelegationRequest.company_id == company_id,
+        )
+    )
+    if not req:
+        raise HTTPException(status_code=404, detail="Delegation request not found")
+    try:
+        cancel_delegation(db, req=req, user_id=user.id)
+        db.commit()
+        db.refresh(req)
+        return req
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    "/companies/{company_id}/delegation-requests/{request_id}/execute",
+    response_model=DelegationRequestRead,
+)
+def execute_delegation_request(
+    company_id: str,
+    request_id: str,
+    payload: DelegationExecuteRequest | None = None,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """
+    Run inter-agent delegation: create child task on target, optionally
+    complete via consultation, propagate result to source.
+    """
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "task.create")
+    req = db.scalar(
+        select(DelegationRequest).where(
+            DelegationRequest.id == request_id,
+            DelegationRequest.company_id == company_id,
+        )
+    )
+    if not req:
+        raise HTTPException(status_code=404, detail="Delegation request not found")
+
+    mode = (payload.mode if payload else "consult") or "consult"
+    try:
+        return execute_delegation(
+            db, req=req, user_id=user.id, mode=mode
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    "/companies/{company_id}/delegation-requests/{request_id}/propagate",
+    response_model=DelegationRequestRead,
+)
+def propagate_delegation_result(
+    company_id: str,
+    request_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """Propagate completed child task result back to the delegation request."""
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "task.create")
+    req = db.scalar(
+        select(DelegationRequest).where(
+            DelegationRequest.id == request_id,
+            DelegationRequest.company_id == company_id,
+        )
+    )
+    if not req:
+        raise HTTPException(status_code=404, detail="Delegation request not found")
+    try:
+        return propagate_child_task_result(db, req=req)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post(
