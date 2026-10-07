@@ -23,6 +23,7 @@ from app.models import (
     Approval,
     AuditLog,
     Company,
+    DelegationRequest,
     Experience,
     KnowledgeChunk,
     KnowledgeItem,
@@ -48,6 +49,11 @@ from app.schemas.domain import (
     AgentMemoryRead,
     AgentMemoryUpdate,
     ExperienceCreate,
+    AgentDirectoryEntry,
+    TargetValidationRequest,
+    TargetValidationResult,
+    DelegationRequestCreate,
+    DelegationRequestRead,
     ExperienceFromTaskRequest,
     ExperienceRead,
     ExperienceSearchHit,
@@ -88,6 +94,11 @@ from app.services.access import (
 )
 from app.services.approval import ApprovalService
 from app.services.consultation import run_consultation
+from app.services.directory import (
+    discover_agents,
+    list_directory,
+    validate_delegation_target,
+)
 from app.services.experience import (
     create_candidate_from_task,
     search_validated_experiences,
@@ -1456,6 +1467,11 @@ def list_company_experiences(
 def create_experience_candidate(
     company_id: str,
     payload: ExperienceCreate,
+    AgentDirectoryEntry,
+    TargetValidationRequest,
+    TargetValidationResult,
+    DelegationRequestCreate,
+    DelegationRequestRead,
     db: Session = Depends(get_db),
     x_user_id: str | None = Header(default=None),
 ):
@@ -2005,6 +2021,166 @@ def list_tasks(
     )
 
 
+
+
+
+
+@router.get(
+    "/companies/{company_id}/directory",
+    response_model=list[AgentDirectoryEntry],
+)
+def get_agent_directory(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """List active AI Employees with capability registry cards."""
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    cards = list_directory(db, company_id=company_id, active_only=True)
+    return [c.to_dict() for c in cards]
+
+
+@router.get(
+    "/companies/{company_id}/directory/search",
+    response_model=list[AgentDirectoryEntry],
+)
+def search_agent_directory(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+    capability: str | None = None,
+    skill: str | None = None,
+    tool: str | None = None,
+    role: str | None = None,
+    exclude_agent_id: str | None = None,
+):
+    """Discover agents by capability / skill / tool / role."""
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    cards = discover_agents(
+        db,
+        company_id=company_id,
+        capability=capability,
+        skill=skill,
+        tool=tool,
+        role=role,
+        exclude_agent_id=exclude_agent_id,
+    )
+    return [c.to_dict() for c in cards]
+
+
+@router.post(
+    "/companies/{company_id}/directory/validate-target",
+    response_model=TargetValidationResult,
+)
+def validate_directory_target(
+    company_id: str,
+    payload: TargetValidationRequest,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """Validate a target agent for structured delegation."""
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    result = validate_delegation_target(
+        db,
+        company_id=company_id,
+        target_agent_instance_id=payload.target_agent_instance_id,
+        required_capability=payload.required_capability,
+        source_agent_instance_id=payload.source_agent_instance_id,
+    )
+    return result.to_dict()
+
+
+@router.post(
+    "/companies/{company_id}/delegation-requests",
+    response_model=DelegationRequestRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_delegation_request(
+    company_id: str,
+    payload: DelegationRequestCreate,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """
+    Create a structured delegation request after target validation.
+
+    Execution of the delegated work is Job 09; this endpoint only
+    records a validated request.
+    """
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "task.create")
+
+    # Source must exist and be usable
+    source = get_owned_agent_or_404(
+        db, company_id, payload.source_agent_instance_id
+    )
+    require_agent_use(
+        db, user, company_id=company_id, agent_instance_id=source.id
+    )
+
+    validation = validate_delegation_target(
+        db,
+        company_id=company_id,
+        target_agent_instance_id=payload.target_agent_instance_id,
+        required_capability=payload.capability,
+        source_agent_instance_id=payload.source_agent_instance_id,
+    )
+    if not validation.valid:
+        raise HTTPException(status_code=400, detail=validation.reason)
+
+    req = DelegationRequest(
+        company_id=company_id,
+        source_agent_instance_id=payload.source_agent_instance_id,
+        target_agent_instance_id=payload.target_agent_instance_id,
+        requested_by_user_id=user.id,
+        capability=payload.capability,
+        title=payload.title,
+        instruction=payload.instruction,
+        status="pending",
+        validation_notes=validation.reason,
+    )
+    db.add(req)
+    db.flush()
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        agent_instance_id=payload.source_agent_instance_id,
+        action="delegation.request",
+        resource_type="delegation_request",
+        resource_id=req.id,
+        status="success",
+        details={
+            "target_agent_instance_id": payload.target_agent_instance_id,
+            "capability": payload.capability,
+        },
+    )
+    db.commit()
+    db.refresh(req)
+    return req
+
+
+@router.get(
+    "/companies/{company_id}/delegation-requests",
+    response_model=list[DelegationRequestRead],
+)
+def list_delegation_requests(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    return list(
+        db.scalars(
+            select(DelegationRequest)
+            .where(DelegationRequest.company_id == company_id)
+            .order_by(DelegationRequest.created_at.desc())
+        ).all()
+    )
 
 
 @router.post(

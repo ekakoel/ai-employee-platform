@@ -443,3 +443,53 @@ class ExperienceSearchHit(BaseModel):
     score: float
     agent_instance_id: str | None = None
     source_task_id: str | None = None
+
+
+class AgentDirectoryEntry(BaseModel):
+    agent_instance_id: str
+    name: str
+    status: str
+    role: str
+    skills: list[str] = []
+    tools: list[str] = []
+    scope: list[str] = []
+    capabilities: list[str] = []
+    catalog_slug: str | None = None
+
+
+class TargetValidationRequest(BaseModel):
+    target_agent_instance_id: str
+    required_capability: str | None = None
+    source_agent_instance_id: str | None = None
+
+
+class TargetValidationResult(BaseModel):
+    valid: bool
+    reason: str
+    target: AgentDirectoryEntry | None = None
+    matched_capabilities: list[str] = []
+
+
+class DelegationRequestCreate(BaseModel):
+    source_agent_instance_id: str
+    target_agent_instance_id: str
+    capability: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=1, max_length=300)
+    instruction: str = Field(min_length=1)
+
+
+class DelegationRequestRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    company_id: str
+    source_agent_instance_id: str
+    target_agent_instance_id: str
+    requested_by_user_id: str | None
+    capability: str
+    title: str
+    instruction: str
+    status: str
+    validation_notes: str
+    result: str | None
+    created_at: datetime
+    updated_at: datetime
