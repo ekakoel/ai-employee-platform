@@ -28,6 +28,7 @@
         <button data-view="knowledge" class="nav-btn" disabled>Knowledge</button>
         <button data-view="delegation" class="nav-btn" disabled>Delegation</button>
         <button data-view="automation" class="nav-btn" disabled>Automation</button>
+        <button data-view="governance" class="nav-btn" disabled>Governance</button>
       </nav>
       <div class="session" id="sessionBox">
         <small>Not connected</small>
@@ -305,6 +306,33 @@
           <div id="autoRuns" class="list"></div>
         </div>
       </section>
+    
+      <!-- GOVERNANCE -->
+      <section id="view-governance" class="view">
+        <div class="card">
+          <div class="row between">
+            <h2>Performance & Governance</h2>
+            <button id="btnRefreshGov" class="secondary">Refresh</button>
+          </div>
+          <p class="muted">Read-only metrics: workforce, tasks, approvals, experience quality, audit.</p>
+          <div class="stats" id="govStats"></div>
+        </div>
+        <div class="grid-2">
+          <div class="card">
+            <h3>Agent performance</h3>
+            <div id="govAgents" class="list"></div>
+          </div>
+          <div class="card">
+            <h3>Experience quality</h3>
+            <pre id="govExp" class="log"></pre>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Audit analytics (recent)</h3>
+          <pre id="govAudit" class="log"></pre>
+        </div>
+      </section>
+
     </main>
   </div>
   <script src="/workspace/assets/app.js"></script>

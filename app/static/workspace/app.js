@@ -82,6 +82,7 @@
     knowledge: "Knowledge",
     delegation: "Delegation",
     automation: "Automation",
+    governance: "Governance",
   };
 
   function showView(name) {
@@ -111,6 +112,7 @@
       loadAgentOptions();
       loadAutomations();
     }
+    if (name === "governance") loadGovernance();
   }
 
   document.getElementById("nav").addEventListener("click", (e) => {
@@ -858,6 +860,47 @@
       $("autoLog").textContent = err.message;
     }
   };
+
+
+  async function loadGovernance() {
+    try {
+      const [ov, agents, exp, audit] = await Promise.all([
+        api(`/companies/${state.companyId}/governance/overview`),
+        api(`/companies/${state.companyId}/governance/agents`),
+        api(`/companies/${state.companyId}/governance/experiences`),
+        api(`/companies/${state.companyId}/governance/audit?limit=50`),
+      ]);
+      $("govStats").innerHTML = [
+        ["Agents", ov.workforce.agents_total],
+        ["Open tasks", ov.tasks.open],
+        ["Pending approvals", ov.approvals.pending],
+        ["Validated experiences", ov.experiences.validated],
+      ]
+        .map(
+          ([l, n]) =>
+            `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`
+        )
+        .join("");
+      $("govAgents").innerHTML =
+        agents
+          .map(
+            (a) =>
+              `<div class="item"><strong>${escapeHtml(a.name)}</strong>
+               <div class="meta">tasks ${a.tasks_total} · completed ${a.tasks_completed} · rate ${a.completion_rate}</div></div>`
+          )
+          .join("") || '<div class="muted">No agents</div>';
+      $("govExp").textContent = JSON.stringify(exp, null, 2);
+      $("govAudit").textContent = JSON.stringify(
+        { by_action: audit.by_action, recent: audit.recent },
+        null,
+        2
+      );
+    } catch (err) {
+      $("govStats").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+    }
+  }
+  const btnGov = $("btnRefreshGov");
+  if (btnGov) btnGov.onclick = loadGovernance;
 
   if (state.companyId && state.userId) {
     $("btnConnect").click();

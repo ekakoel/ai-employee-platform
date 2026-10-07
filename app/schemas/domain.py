@@ -572,3 +572,15 @@ class AutomationEventRequest(BaseModel):
     event_type: str = Field(min_length=1, max_length=100)
     payload: dict = Field(default_factory=dict)
     idempotency_key: str | None = Field(default=None, max_length=200)
+
+
+class GovernanceOverview(BaseModel):
+    company_id: str
+    generated_at: str
+    workforce: dict
+    tasks: dict
+    approvals: dict
+    experiences: dict
+    automation: dict
+    delegation: dict
+    audit: dict

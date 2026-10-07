@@ -94,6 +94,13 @@ from app.services.skills import (
     list_agent_skills,
     list_available_skills,
 )
+from app.services.governance import (
+    agent_performance,
+    approval_metrics,
+    audit_analytics,
+    company_overview,
+    experience_quality,
+)
 from app.services.automation import (
     fire_event,
     retry_run,
@@ -2699,6 +2706,75 @@ def retry_automation_run(
         return retry_run(db, run=run, user_id=user.id)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+
+
+@router.get(
+    "/companies/{company_id}/governance/overview",
+)
+def governance_overview(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """Job 14 — company-wide performance & governance snapshot."""
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    return company_overview(db, company_id=company_id)
+
+
+@router.get(
+    "/companies/{company_id}/governance/agents",
+)
+def governance_agents(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    return agent_performance(db, company_id=company_id)
+
+
+@router.get(
+    "/companies/{company_id}/governance/approvals",
+)
+def governance_approvals(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    return approval_metrics(db, company_id=company_id)
+
+
+@router.get(
+    "/companies/{company_id}/governance/experiences",
+)
+def governance_experiences(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    return experience_quality(db, company_id=company_id)
+
+
+@router.get(
+    "/companies/{company_id}/governance/audit",
+)
+def governance_audit(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+    limit: int = 100,
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    return audit_analytics(db, company_id=company_id, limit=min(limit, 500))
 
 
 @router.post(
