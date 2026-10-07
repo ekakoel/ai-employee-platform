@@ -542,6 +542,8 @@ class Task(Base):
     agent_instance_id: Mapped[str] = mapped_column(ForeignKey("agent_instances.id"), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     instruction: Mapped[str] = mapped_column(Text, nullable=False)
+    # execute = may run tools; consult = recommendation only (no side-effect tools)
+    mode: Mapped[str] = mapped_column(String(20), default="execute", nullable=False)
     status: Mapped[str] = mapped_column(String(30), default=TaskStatus.PENDING.value, nullable=False)
     result: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)

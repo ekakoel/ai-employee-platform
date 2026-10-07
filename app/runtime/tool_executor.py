@@ -7,7 +7,9 @@ from app.models.entities import (
     AgentInstance,
     Approval,
     ApprovalStatus,
+    Task,
 )
+from app.services.consultation import is_read_only_tool
 from app.security.policy_engine import PolicyEngine
 from app.services.approval import ApprovalService
 from app.services.audit import record_audit
@@ -60,6 +62,31 @@ class ToolExecutor:
         arguments: dict[str, Any],
         task_id: str | None = None,
     ) -> dict[str, Any]:
+
+        # ---------------------------------------------------------
+        # Consultation mode: block side-effect tools early
+        # ---------------------------------------------------------
+        if task_id:
+            task = self.db.get(Task, task_id)
+            if (
+                task is not None
+                and task.company_id == company_id
+                and getattr(task, "mode", "execute") == "consult"
+                and not is_read_only_tool(tool_name)
+            ):
+                self._audit_denied(
+                    company_id=company_id,
+                    agent_instance_id=agent_instance_id,
+                    task_id=task_id,
+                    tool_name=tool_name,
+                    reason="consultation_side_effect_blocked",
+                    extra={"mode": "consult"},
+                )
+                self.db.commit()
+                raise ToolExecutionError(
+                    f"Tool '{tool_name}' is not allowed in consultation "
+                    f"mode (side-effect tools are blocked)."
+                )
 
         agent, tool = self._validate_agent_and_tool(
             company_id=company_id,

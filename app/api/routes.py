@@ -87,6 +87,7 @@ from app.services.access import (
     require_agent_use,
 )
 from app.services.approval import ApprovalService
+from app.services.consultation import run_consultation
 from app.services.experience import (
     create_candidate_from_task,
     search_validated_experiences,
@@ -2002,6 +2003,59 @@ def list_tasks(
             )
         ).all()
     )
+
+
+
+
+@router.post(
+    "/companies/{company_id}/tasks/{task_id}/consult",
+    response_model=TaskRead,
+)
+def consult_task(
+    company_id: str,
+    task_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """
+    Run consultation mode: recommendation only, no side-effect tools.
+    Task must have mode=consult.
+    """
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "task.create")
+
+    task = db.scalar(
+        select(Task).where(
+            Task.id == task_id,
+            Task.company_id == company_id,
+        )
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    require_agent_use(
+        db,
+        user,
+        company_id=company_id,
+        agent_instance_id=task.agent_instance_id,
+    )
+
+    if task.mode != "consult":
+        raise HTTPException(
+            status_code=400,
+            detail="Task mode must be 'consult'. Create task with mode=consult.",
+        )
+
+    try:
+        task = run_consultation(
+            db,
+            company_id=company_id,
+            task_id=task_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return task
 
 
 @router.post(

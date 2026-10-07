@@ -170,6 +170,7 @@ class TaskCreate(BaseModel):
     agent_instance_id: str
     title: str = Field(min_length=1, max_length=300)
     instruction: str = Field(min_length=1)
+    mode: str = Field(default="execute", pattern="^(execute|consult)$")
 
 
 class TaskRead(BaseModel):
@@ -179,9 +180,23 @@ class TaskRead(BaseModel):
     agent_instance_id: str
     title: str
     instruction: str
+    mode: str = "execute"
     status: str
     result: str | None
     created_at: datetime
+
+
+class ConsultationResult(BaseModel):
+    mode: str = "consult"
+    recommendation: str
+    rationale: str
+    expected_impact: str = ""
+    alternatives: list[str] = []
+    confidence: float = Field(ge=0.0, le=1.0, default=0.5)
+    side_effects_executed: bool = False
+    retrieved_knowledge_count: int = 0
+    experience_count: int = 0
+    notes: str = "Consultation mode: no side-effect tools were executed."
 
 
 class AuditLogRead(BaseModel):
