@@ -103,6 +103,9 @@ from app.schemas.domain import (
     TaskRead,
     UserCreate,
     UserRead,
+    MarketplaceTemplateRead,
+    MarketplaceInstallationRead,
+    MarketplaceInstallResponse,
 )
 from app.services.skills import (
     assign_skill,
@@ -4347,3 +4350,100 @@ async def upload_agent_knowledge_document(
     db.refresh(document)
 
     return document
+
+
+# ---------------------------------------------------------------------------
+# Job 30 — Marketplace read-model
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/marketplace/templates",
+    response_model=list[MarketplaceTemplateRead],
+)
+def marketplace_list_templates(
+    db: Session = Depends(get_db),
+):
+    """Public catalog of published agent templates (no auth required)."""
+    from app.services.marketplace import list_public_templates
+
+    return list_public_templates(db)
+
+
+@router.get(
+    "/marketplace/templates/{catalog_id}",
+    response_model=MarketplaceTemplateRead,
+)
+def marketplace_get_template(
+    catalog_id: str,
+    db: Session = Depends(get_db),
+):
+    from app.services.marketplace import get_public_template
+
+    catalog = get_public_template(db, catalog_id)
+    if not catalog:
+        raise HTTPException(status_code=404, detail="Template not found or not published")
+    return catalog
+
+
+@router.post(
+    "/companies/{company_id}/marketplace/install/{catalog_id}",
+    response_model=MarketplaceInstallResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def marketplace_install_template(
+    company_id: str,
+    catalog_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None, alias="X-User-ID"),
+    authorization: str | None = Header(default=None),
+):
+    """Install published template into company: copy platform skills → company skills."""
+    from app.services.marketplace import install_template
+    from app.schemas.domain import MarketplaceInstallResponse, MarketplaceInstallationRead
+
+    user = require_company_user(db, company_id, x_user_id, authorization=authorization)
+    try:
+        installation = install_template(
+            db,
+            company_id=company_id,
+            catalog_id=catalog_id,
+            user_id=user.id,
+        )
+    except ValueError as exc:
+        msg = str(exc)
+        if "already installed" in msg.lower():
+            raise HTTPException(status_code=409, detail=msg) from exc
+        raise HTTPException(status_code=404, detail=msg) from exc
+
+    skill_rows = []
+    for sid in installation.installed_skill_ids or []:
+        sk = db.get(Skill, sid)
+        if sk:
+            skill_rows.append(sk)
+
+    db.commit()
+    db.refresh(installation)
+
+    return MarketplaceInstallResponse(
+        installation=MarketplaceInstallationRead.model_validate(installation),
+        skills=[SkillRead.model_validate(s) for s in skill_rows],
+    )
+
+
+@router.get(
+    "/companies/{company_id}/marketplace/installations",
+    response_model=list[MarketplaceInstallationRead],
+)
+def marketplace_list_installations(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None, alias="X-User-ID"),
+    authorization: str | None = Header(default=None),
+):
+    from app.services.marketplace import list_installations
+    from app.schemas.domain import MarketplaceInstallationRead
+
+    require_company_user(db, company_id, x_user_id, authorization=authorization)
+    rows = list_installations(db, company_id=company_id)
+    return [MarketplaceInstallationRead.model_validate(r) for r in rows]

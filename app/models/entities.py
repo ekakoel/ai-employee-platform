@@ -1339,3 +1339,43 @@ class Approval(Base):
     )
 
     company: Mapped[Company] = relationship()
+class MarketplaceInstallation(Base):
+    """Record of installing a platform AgentCatalog template into a company (Job 30).
+
+    Install copies platform skills referenced by the template into company-scoped
+    skills so they become company-visible and customizable. No payments.
+    """
+
+    __tablename__ = "marketplace_installations"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id",
+            "catalog_agent_id",
+            name="uq_company_marketplace_catalog",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    catalog_agent_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_catalog.id"),
+        nullable=False,
+        index=True,
+    )
+    installed_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # IDs of company-scoped Skill rows created or reused by this install
+    installed_skill_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    template_version: Mapped[str] = mapped_column(String(32), default="1.0.0", nullable=False)
+    catalog_slug: Mapped[str] = mapped_column(String(100), nullable=False)
+    catalog_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    installed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )

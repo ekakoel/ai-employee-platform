@@ -1,4 +1,5 @@
 from app.models.entities import (
+    MarketplaceInstallation,
     Integration,
     IntegrationStatus,
     LLMUsage,
@@ -47,6 +48,7 @@ from app.models.entities import (
 )
 
 __all__ = [
+    "MarketplaceInstallation",
     "Integration",
     "IntegrationStatus",
     "LLMUsage",

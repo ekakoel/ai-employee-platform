@@ -748,3 +748,43 @@ class ChatPostResponse(BaseModel):
     human: MessageRead
     agent: MessageRead
     task_id: str | None = None
+
+
+# --- Job 30 Marketplace ---
+
+class MarketplaceTemplateRead(BaseModel):
+    """Public catalog metadata for marketplace listing."""
+
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    slug: str
+    name: str
+    description: str
+    role: str
+    skills: list
+    allowed_tools: list
+    version: str = "1.0.0"
+    scope: list = []
+    responsibilities: list = []
+    evaluation_criteria: list = []
+    is_published: bool = True
+    published_at: datetime | None = None
+    changelog: str = ""
+
+
+class MarketplaceInstallationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    company_id: str
+    catalog_agent_id: str
+    installed_by_user_id: str | None = None
+    installed_skill_ids: list
+    template_version: str
+    catalog_slug: str
+    catalog_name: str
+    installed_at: datetime
+
+
+class MarketplaceInstallResponse(BaseModel):
+    installation: MarketplaceInstallationRead
+    skills: list[SkillRead]
