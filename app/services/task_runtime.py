@@ -16,9 +16,35 @@ from app.runtime.executor import (
     RuntimeExecutionError,
 )
 from app.services.audit import record_audit
+from app.models.entities import NotificationType
+from app.services.notifications import emit_notification
 from app.llm.base import LLMProvider
 from app.runtime.factory import create_llm_provider
 from app.runtime.agent_runtime import AgentRuntimeResult
+
+
+
+def _notify_task_failed(db, task) -> None:
+    try:
+        from app.models.entities import AgentInstance, NotificationType
+        from app.services.notifications import emit_notification
+        agent = db.get(AgentInstance, task.agent_instance_id)
+        if agent and agent.supervisor_user_id:
+            emit_notification(
+                db,
+                company_id=task.company_id,
+                user_id=agent.supervisor_user_id,
+                type=NotificationType.TASK_FAILED.value,
+                title=f"Task failed: {task.title}",
+                body=(task.result or "")[:500],
+                payload={
+                    "task_id": task.id,
+                    "agent_instance_id": task.agent_instance_id,
+                    "status": task.status,
+                },
+            )
+    except Exception:
+        pass
 
 
 class TaskRuntimeService:
@@ -134,6 +160,7 @@ class TaskRuntimeService:
 
         if agent is None:
             task.status = TaskStatus.FAILED.value
+            _notify_task_failed(db, task)
             task.result = (
                 "Agent instance not found for this company."
             )
@@ -275,6 +302,7 @@ class TaskRuntimeService:
                 raise
 
             task.status = TaskStatus.FAILED.value
+            _notify_task_failed(db, task)
             task.result = str(exc)
 
             record_audit(
@@ -358,6 +386,7 @@ class TaskRuntimeService:
             )
 
         task.status = TaskStatus.FAILED.value
+        _notify_task_failed(db, task)
         task.result = (
             "Task stopped because the approval was rejected."
         )
@@ -567,6 +596,7 @@ class TaskRuntimeService:
                 raise
 
             task.status = TaskStatus.FAILED.value
+            _notify_task_failed(db, task)
             task.result = str(exc)
 
             record_audit(
@@ -793,6 +823,7 @@ class TaskRuntimeService:
                 raise
 
             task.status = TaskStatus.FAILED.value
+            _notify_task_failed(db, task)
             task.result = str(exc)
 
             record_audit(

@@ -20,6 +20,7 @@
         <button data-view="setup" class="nav-btn active">Setup</button>
         <button data-view="workforce" class="nav-btn" disabled>Workforce Overview</button>
         <button data-view="inbox" class="nav-btn" disabled>AI Inbox</button>
+        <button data-view="notifications" class="nav-btn" disabled>Notifications</button>
         <button data-view="tasks" class="nav-btn" disabled>Task Center</button>
         <button data-view="approvals" class="nav-btn" disabled>Approval Center</button>
         <button data-view="agents" class="nav-btn" disabled>Agent Dashboard</button>
@@ -106,6 +107,20 @@
       </section>
 
       <!-- AI INBOX -->
+      
+      <section id="view-notifications" class="view">
+        <div class="card">
+          <h2>Notifications</h2>
+          <p class="muted">Approvals, delegations, and task failures routed to you.</p>
+          <div class="row">
+            <button id="btnNotifRefresh" class="secondary">Refresh</button>
+            <button id="btnNotifReadAll" class="secondary">Mark all read</button>
+          </div>
+          <div id="notifStats" class="stats"></div>
+          <div id="notifList" class="list"></div>
+        </div>
+      </section>
+
       <section id="view-inbox" class="view">
         <div class="card">
           <div class="row between">

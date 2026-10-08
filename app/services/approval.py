@@ -4,7 +4,9 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models import Approval, ApprovalStatus
+from app.models.entities import AgentInstance, NotificationType
 from app.services.audit import record_audit
+from app.services.notifications import emit_notification, notify_users
 
 
 class ApprovalService:
@@ -66,6 +68,28 @@ class ApprovalService:
                 "approval_level": approval_level,
                 "route_to_role": route_to_role,
                 "route_to_user_id": route_to_user_id,
+            },
+        )
+
+        # Job 20 — notify routed approver and agent supervisor
+        recipients: list[str] = []
+        if route_to_user_id:
+            recipients.append(route_to_user_id)
+        agent = self.db.get(AgentInstance, agent_instance_id)
+        if agent and agent.supervisor_user_id:
+            recipients.append(agent.supervisor_user_id)
+        notify_users(
+            self.db,
+            company_id=company_id,
+            user_ids=recipients,
+            type=NotificationType.APPROVAL_REQUESTED.value,
+            title=f"Approval needed: {action}",
+            body=reason or "A tool action requires your approval.",
+            payload={
+                "approval_id": approval.id,
+                "task_id": task_id,
+                "agent_instance_id": agent_instance_id,
+                "action": action,
             },
         )
 

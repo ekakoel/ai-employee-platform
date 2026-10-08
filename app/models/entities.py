@@ -861,6 +861,47 @@ class AuditLog(Base):
     company: Mapped[Company] = relationship(back_populates="audit_logs")
 
 
+
+
+class NotificationType(str, Enum):
+    APPROVAL_REQUESTED = "approval.requested"
+    DELEGATION_RECEIVED = "delegation.received"
+    TASK_FAILED = "task.failed"
+    TASK_COMPLETED = "task.completed"
+    SCOPE_MISS = "scope.miss"
+    SYSTEM = "system"
+
+
+class Notification(Base):
+    """User-targeted in-app notification (Job 20)."""
+
+    __tablename__ = "notifications"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    body: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    read_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False, index=True
+    )
+
+    company: Mapped[Company] = relationship()
+    user: Mapped[User] = relationship()
+
 class Policy(Base):
     __tablename__ = "policies"
 

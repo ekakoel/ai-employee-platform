@@ -2432,6 +2432,100 @@ def add_team_members(
 
 
 
+
+@router.get(
+    "/companies/{company_id}/notifications",
+)
+def list_user_notifications(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+    unread_only: bool = False,
+    limit: int = 50,
+):
+    """Job 20 — list notifications for the current user."""
+    from app.services.notifications import list_notifications
+
+    user = require_company_user(db, company_id, x_user_id)
+    notes = list_notifications(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        unread_only=unread_only,
+        limit=limit,
+    )
+    return [
+        {
+            "id": n.id,
+            "company_id": n.company_id,
+            "user_id": n.user_id,
+            "type": n.type,
+            "title": n.title,
+            "body": n.body,
+            "payload": n.payload,
+            "read_at": n.read_at.isoformat() if n.read_at else None,
+            "created_at": n.created_at.isoformat() if n.created_at else None,
+        }
+        for n in notes
+    ]
+
+
+@router.get(
+    "/companies/{company_id}/notifications/unread-count",
+)
+def notifications_unread_count(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    from app.services.notifications import unread_count
+
+    user = require_company_user(db, company_id, x_user_id)
+    return {"count": unread_count(db, company_id=company_id, user_id=user.id)}
+
+
+@router.post(
+    "/companies/{company_id}/notifications/{notification_id}/read",
+)
+def mark_notification_read(
+    company_id: str,
+    notification_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    from app.services.notifications import mark_read
+
+    user = require_company_user(db, company_id, x_user_id)
+    note = mark_read(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        notification_id=notification_id,
+    )
+    if not note:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    db.commit()
+    return {
+        "id": note.id,
+        "read_at": note.read_at.isoformat() if note.read_at else None,
+    }
+
+
+@router.post(
+    "/companies/{company_id}/notifications/read-all",
+)
+def mark_all_notifications_read(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    from app.services.notifications import mark_all_read
+
+    user = require_company_user(db, company_id, x_user_id)
+    n = mark_all_read(db, company_id=company_id, user_id=user.id)
+    db.commit()
+    return {"marked": n}
+
 @router.get("/tools")
 def list_platform_tools():
     """Job 19 — global tool catalog (metadata: side_effect, risk)."""
@@ -2739,6 +2833,26 @@ def create_delegation_request(
             "capability": payload.capability,
         },
     )
+    # Job 20 — notify target agent supervisor
+    from app.models.entities import NotificationType
+    from app.services.notifications import emit_notification
+    target = get_owned_agent_or_404(
+        db, company_id, payload.target_agent_instance_id
+    )
+    if target.supervisor_user_id:
+        emit_notification(
+            db,
+            company_id=company_id,
+            user_id=target.supervisor_user_id,
+            type=NotificationType.DELEGATION_RECEIVED.value,
+            title=f"Delegation received: {payload.title}",
+            body=payload.instruction[:500],
+            payload={
+                "delegation_request_id": req.id,
+                "source_agent_instance_id": payload.source_agent_instance_id,
+                "target_agent_instance_id": payload.target_agent_instance_id,
+            },
+        )
     db.commit()
     db.refresh(req)
     return req

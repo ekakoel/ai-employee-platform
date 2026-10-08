@@ -1,4 +1,6 @@
 from app.models.entities import (
+    Notification,
+    NotificationType,
     AgentAccess,
     AgentCatalog,
     AgentInstance,
@@ -32,6 +34,8 @@ from app.models.entities import (
 )
 
 __all__ = [
+    "Notification",
+    "NotificationType",
     "AgentAccess",
     "AgentCatalog",
     "AgentInstance",

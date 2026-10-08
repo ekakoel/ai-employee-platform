@@ -277,19 +277,71 @@
 
   async function refreshInboxBadge() {
     try {
-      const [tasks, approvals, dels] = await Promise.all([
+      const [tasks, approvals, dels, notif] = await Promise.all([
         api(`/companies/${state.companyId}/tasks`),
         api(`/companies/${state.companyId}/approvals`).catch(() => []),
         api(`/companies/${state.companyId}/delegation-requests`).catch(() => []),
+        api(`/companies/${state.companyId}/notifications/unread-count`).catch(() => ({
+          count: 0,
+        })),
       ]);
       const n =
         tasks.filter((t) => t.status === "pending").length +
         (approvals || []).filter((a) => a.status === "pending").length +
         (dels || []).filter((d) => d.status === "pending" || d.status === "accepted")
-          .length;
+          .length +
+        (notif && notif.count ? notif.count : 0);
       setInboxBadge(n);
     } catch {
       setInboxBadge(0);
+    }
+  }
+
+  async function loadNotifications() {
+    try {
+      const [notes, count] = await Promise.all([
+        api(`/companies/${state.companyId}/notifications?limit=50`),
+        api(`/companies/${state.companyId}/notifications/unread-count`),
+      ]);
+      $("notifStats").innerHTML = [
+        `<span class="stat"><strong>${count.count}</strong> unread</span>`,
+        `<span class="stat"><strong>${notes.length}</strong> shown</span>`,
+      ].join("");
+      if (!notes.length) {
+        $("notifList").innerHTML = '<p class="muted">No notifications yet.</p>';
+        return;
+      }
+      $("notifList").innerHTML = notes
+        .map(
+          (n) => `
+        <div class="list-item ${n.read_at ? "muted" : ""}">
+          <div>
+            <strong>${n.title}</strong>
+            <div class="muted">${n.type} · ${n.created_at || ""}</div>
+            <div>${(n.body || "").slice(0, 200)}</div>
+          </div>
+          <div class="row">
+            ${
+              n.read_at
+                ? "<span class=\"muted\">Read</span>"
+                : `<button class="secondary" data-notif-read="${n.id}">Mark read</button>`
+            }
+          </div>
+        </div>`
+        )
+        .join("");
+      $("notifList").querySelectorAll("[data-notif-read]").forEach((btn) => {
+        btn.onclick = async () => {
+          await api(
+            `/companies/${state.companyId}/notifications/${btn.dataset.notifRead}/read`,
+            { method: "POST", body: "{}" }
+          );
+          await loadNotifications();
+          await refreshInboxBadge();
+        };
+      });
+    } catch (err) {
+      $("notifList").innerHTML = `<p class="danger">${err.message}</p>`;
     }
   }
 
@@ -1034,3 +1086,21 @@
     $("btnConnect").click();
   }
 })();
+
+
+  // Job 20 — notification controls
+  document.addEventListener("DOMContentLoaded", () => {
+    const r = $("btnNotifRefresh");
+    if (r) r.onclick = () => loadNotifications();
+    const a = $("btnNotifReadAll");
+    if (a)
+      a.onclick = async () => {
+        if (!state.companyId) return;
+        await api(`/companies/${state.companyId}/notifications/read-all`, {
+          method: "POST",
+          body: "{}",
+        });
+        await loadNotifications();
+        await refreshInboxBadge();
+      };
+  });
