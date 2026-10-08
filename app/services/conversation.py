@@ -119,11 +119,59 @@ def list_messages(
 
 def _agent_reply_text(db: Session, conv: Conversation, human_text: str) -> str:
     """
-    Advisory reply only — uses consultation builder when possible.
+    Advisory reply only. Prefer local LLM (Ollama) when available;
+    fall back to deterministic consultation template.
     Never calls ToolExecutor.
     """
+    agent = db.get(AgentInstance, conv.agent_instance_id)
+    role = "AI Employee"
+    scope = ""
+    instructions = ""
+    if agent is not None:
+        role = (agent.configuration or {}).get("role") or agent.name or role
+        scope_list = list(agent.scope or [])
+        scope = ", ".join(scope_list) if scope_list else ""
+        instructions = (agent.instructions or "")[:800]
+
+    # 1) Try LLM advisory chat (no tools)
     try:
-        # Build a transient task-like context for consultation helpers
+        from app.llm.base import LLMMessage
+        from app.runtime.factory import create_llm_provider
+
+        provider = create_llm_provider()
+        system = (
+            f"You are {role}, an AI Employee co-worker on the AI Employee Platform.\n"
+            f"Your professional scope: {scope or 'general company assistance'}.\n"
+            "This is advisory chat only: do NOT claim you executed tools, "
+            "changed bookings, sent emails, or modified systems.\n"
+            "Be concise, helpful, and professional. Answer greetings naturally.\n"
+            "If the user asks for real actions, remind them to create a Task "
+            "(consult or execute mode) so policy and tools can run."
+        )
+        if instructions:
+            system += f"\nAgent instructions:\n{instructions}"
+
+        resp = provider.chat(
+            [
+                LLMMessage(role="system", content=system),
+                LLMMessage(role="user", content=human_text),
+            ],
+            temperature=0.4,
+            tools=None,
+        )
+        content = (resp.content or "").strip()
+        if content:
+            return (
+                f"{content}\n\n"
+                "_(Chat mode: no tools executed. "
+                "Use “Create task” to run with policy & tools.)_"
+            )
+    except Exception:
+        # LLM offline / model missing — fall through to template
+        pass
+
+    # 2) Deterministic template fallback
+    try:
         task = Task(
             company_id=conv.company_id,
             agent_instance_id=conv.agent_instance_id,
@@ -132,7 +180,6 @@ def _agent_reply_text(db: Session, conv: Conversation, human_text: str) -> str:
             mode="consult",
             status=TaskStatus.PENDING.value,
         )
-        # Do not add to session permanently for pure chat
         result = build_consultation_result(db, task=task)
         rec = result.get("recommendation") or result.get("rationale") or ""
         if rec:
