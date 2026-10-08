@@ -986,6 +986,84 @@ class Message(Base):
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
 
+
+
+class Plan(Base):
+    """SaaS plan with quota limits (Job 22)."""
+
+    __tablename__ = "plans"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    max_agents: Mapped[int] = mapped_column(default=5, nullable=False)
+    max_tasks_day: Mapped[int] = mapped_column(default=100, nullable=False)
+    max_automations: Mapped[int] = mapped_column(default=10, nullable=False)
+    max_llm_calls_day: Mapped[int] = mapped_column(default=500, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+
+class CompanyPlanSubscription(Base):
+    """Company assigned to a Plan."""
+
+    __tablename__ = "company_plan_subscriptions"
+    __table_args__ = (
+        UniqueConstraint("company_id", name="uq_company_plan_sub"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    plan_id: Mapped[str] = mapped_column(
+        ForeignKey("plans.id"),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    ends_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    plan: Mapped[Plan] = relationship()
+    company: Mapped[Company] = relationship()
+
+
+class UsageCounter(Base):
+    """Daily usage counters per company (Job 22)."""
+
+    __tablename__ = "usage_counters"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id",
+            "metric",
+            "period_date",
+            name="uq_usage_company_metric_day",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    metric: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    period_date: Mapped[str] = mapped_column(String(10), nullable=False, index=True)  # YYYY-MM-DD
+    count: Mapped[int] = mapped_column(default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
 class Policy(Base):
     __tablename__ = "policies"
 

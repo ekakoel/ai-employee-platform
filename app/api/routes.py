@@ -285,6 +285,8 @@ def create_company(
 
     try:
         db.flush()
+        from app.services.quotas import get_or_assign_plan
+        get_or_assign_plan(db, company.id)
     except IntegrityError as exc:
         db.rollback()
 
@@ -490,6 +492,9 @@ def hire_agent(
         user,
         "agent.hire",
     )
+
+    from app.services.quotas import enforce_agent_quota
+    enforce_agent_quota(db, company_id)
 
     catalog = db.get(
         AgentCatalog,
@@ -2661,6 +2666,64 @@ def post_message_api(
         task_id=task.id if task else None,
     )
 
+
+@router.get("/plans")
+def list_plans(db: Session = Depends(get_db)):
+    from app.services.quotas import seed_default_plans
+    from app.models.entities import Plan
+    seed_default_plans(db)
+    db.commit()
+    plans = list(db.scalars(select(Plan).where(Plan.is_active.is_(True)).order_by(Plan.code)).all())
+    return [
+        {
+            "id": p.id,
+            "code": p.code,
+            "name": p.name,
+            "description": p.description,
+            "max_agents": p.max_agents,
+            "max_tasks_day": p.max_tasks_day,
+            "max_automations": p.max_automations,
+            "max_llm_calls_day": p.max_llm_calls_day,
+        }
+        for p in plans
+    ]
+
+
+@router.get("/companies/{company_id}/usage")
+def get_company_usage(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    from app.services.quotas import usage_summary
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    summary = usage_summary(db, company_id)
+    db.commit()
+    return summary
+
+
+@router.put("/companies/{company_id}/plan")
+def set_company_plan_api(
+    company_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """Assign plan by code (owner/admin). No payment gateway yet."""
+    from app.services.quotas import set_company_plan, usage_summary
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "team.manage")
+    code = str(payload.get("plan_code") or payload.get("code") or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="plan_code required")
+    try:
+        set_company_plan(db, company_id, code)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    db.commit()
+    return usage_summary(db, company_id)
+
 @router.get("/tools")
 def list_platform_tools():
     """Job 19 — global tool catalog (metadata: side_effect, risk)."""
@@ -2758,6 +2821,9 @@ def create_task(
         agent_instance_id=agent.id,
     )
 
+    from app.services.quotas import enforce_task_quota, record_task_created
+    enforce_task_quota(db, company_id)
+
     data = payload.model_dump()
     check_scope_flag = bool(data.pop("check_scope", False))
     auto_delegate_flag = bool(data.pop("auto_delegate", False))
@@ -2794,6 +2860,8 @@ def create_task(
             user_id=user.id,
             block_out_of_scope=block_oos,
         )
+
+    record_task_created(db, company_id)
 
     db.commit()
     db.refresh(task)
@@ -3228,6 +3296,9 @@ def create_automation_rule(
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.manage")
     agent = get_owned_agent_or_404(db, company_id, payload.agent_instance_id)
+
+    from app.services.quotas import enforce_automation_quota
+    enforce_automation_quota(db, company_id)
 
     if payload.trigger_type == "schedule":
         if not payload.interval_seconds:

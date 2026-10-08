@@ -1,4 +1,7 @@
 from app.models.entities import (
+    Plan,
+    CompanyPlanSubscription,
+    UsageCounter,
     Conversation,
     ConversationStatus,
     Message,
@@ -38,6 +41,9 @@ from app.models.entities import (
 )
 
 __all__ = [
+    "Plan",
+    "CompanyPlanSubscription",
+    "UsageCounter",
     "Conversation",
     "ConversationStatus",
     "Message",
