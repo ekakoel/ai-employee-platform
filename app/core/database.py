@@ -75,6 +75,25 @@ def migrate_sqlite_schema() -> None:
                         "ADD COLUMN password_hash VARCHAR(255)"
                     )
                 )
+        if "department_id" not in user_cols:
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "ALTER TABLE users "
+                        "ADD COLUMN department_id VARCHAR(36)"
+                    )
+                )
+
+    if "agent_instances" in table_names:
+        ai_cols = {c["name"] for c in inspector.get_columns("agent_instances")}
+        if "department_id" not in ai_cols:
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "ALTER TABLE agent_instances "
+                        "ADD COLUMN department_id VARCHAR(36)"
+                    )
+                )
 
 
 def get_db() -> Generator[Session, None, None]:

@@ -124,6 +124,106 @@ class RolePermission(Base):
     permission_id: Mapped[str] = mapped_column(ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True)
 
 
+
+class Department(Base):
+    """Company organizational unit (Job 18)."""
+
+    __tablename__ = "departments"
+    __table_args__ = (
+        UniqueConstraint("company_id", "name", name="uq_company_department_name"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+    company: Mapped[Company] = relationship()
+    users: Mapped[list["User"]] = relationship(back_populates="department")
+
+
+class AgentTeam(Base):
+    """Named group of AI employees within a company (Job 18)."""
+
+    __tablename__ = "agent_teams"
+    __table_args__ = (
+        UniqueConstraint("company_id", "name", name="uq_company_agent_team_name"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    department_id: Mapped[str | None] = mapped_column(
+        ForeignKey("departments.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+    company: Mapped[Company] = relationship()
+    members: Mapped[list["AgentTeamMember"]] = relationship(
+        back_populates="team",
+        cascade="all, delete-orphan",
+    )
+
+
+class AgentTeamMember(Base):
+    """Membership of an agent instance in an AI team."""
+
+    __tablename__ = "agent_team_members"
+    __table_args__ = (
+        UniqueConstraint(
+            "team_id",
+            "agent_instance_id",
+            name="uq_team_agent_member",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    team_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_teams.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    agent_instance_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_instances.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+    team: Mapped[AgentTeam] = relationship(back_populates="members")
+
+
 class User(Base):
     __tablename__ = "users"
     __table_args__ = (UniqueConstraint("company_id", "email", name="uq_company_user_email"),)
@@ -134,11 +234,17 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role_id: Mapped[str] = mapped_column(ForeignKey("roles.id"), nullable=False)
+    department_id: Mapped[str | None] = mapped_column(
+        ForeignKey("departments.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     status: Mapped[str] = mapped_column(String(20), default=UserStatus.ACTIVE.value, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     company: Mapped[Company] = relationship(back_populates="users")
     role: Mapped[Role] = relationship()
+    department: Mapped["Department | None"] = relationship(back_populates="users")
 
 
 class AgentCatalog(Base):
@@ -212,6 +318,13 @@ class AgentInstance(Base):
     # Phase 3 — primary human supervisor
     supervisor_user_id: Mapped[str | None] = mapped_column(
         ForeignKey("users.id"),
+        nullable=True,
+        index=True,
+    )
+
+    # Job 18 — optional department ownership
+    department_id: Mapped[str | None] = mapped_column(
+        ForeignKey("departments.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )

@@ -19,6 +19,7 @@ class UserCreate(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     role: str = Field(default="manager", min_length=2, max_length=100)
     password: str | None = Field(default=None, min_length=8, max_length=128)
+    department_id: str | None = None
 
 
 class UserRead(BaseModel):
@@ -28,6 +29,7 @@ class UserRead(BaseModel):
     name: str
     email: str
     role_id: str
+    department_id: str | None = None
     status: str
     created_at: datetime
 
@@ -67,6 +69,9 @@ class AgentInstanceUpdate(BaseModel):
     instructions: str | None = None
     autonomy: str | None = Field(default=None, pattern="^[0-3]$")
     policies: dict | None = None
+    department_id: str | None = None
+    supervisor_user_id: str | None = None
+    department_id: str | None = None
 
 
 class AgentSubscriptionRead(BaseModel):
@@ -97,6 +102,7 @@ class AgentInstanceRead(BaseModel):
     autonomy: str = "1"
     policies: dict = {}
     supervisor_user_id: str | None = None
+    department_id: str | None = None
 
 
 class AgentAccessCreate(BaseModel):
@@ -634,3 +640,66 @@ class PolicySimulateResponse(BaseModel):
     denied: bool = False
     arguments: dict = Field(default_factory=dict)
     context: dict = Field(default_factory=dict)
+
+
+class DepartmentCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str = ""
+    is_active: bool = True
+
+
+class DepartmentUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = None
+    is_active: bool | None = None
+
+
+class DepartmentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    company_id: str
+    name: str
+    description: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class AgentTeamCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str = ""
+    department_id: str | None = None
+    is_active: bool = True
+    agent_instance_ids: list[str] = Field(default_factory=list)
+
+
+class AgentTeamUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = None
+    department_id: str | None = None
+    is_active: bool | None = None
+
+
+class AgentTeamMemberRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    team_id: str
+    agent_instance_id: str
+    created_at: datetime
+
+
+class AgentTeamRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    company_id: str
+    department_id: str | None
+    name: str
+    description: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    member_agent_ids: list[str] = Field(default_factory=list)
+
+
+class AgentTeamAddMembers(BaseModel):
+    agent_instance_ids: list[str] = Field(min_length=1)

@@ -14,6 +14,9 @@ from app.knowledge.retrieval import (
     search_knowledge_items,
 )
 from app.models import (
+    Department,
+    AgentTeam,
+    AgentTeamMember,
     AgentAccess,
     AgentCatalog,
     AgentInstance,
@@ -45,6 +48,13 @@ from app.schemas.domain import (
     SkillCreate,
     SkillRead,
     PolicyCreate,
+    DepartmentCreate,
+    DepartmentUpdate,
+    DepartmentRead,
+    AgentTeamCreate,
+    AgentTeamUpdate,
+    AgentTeamRead,
+    AgentTeamAddMembers,
     PolicySimulateRequest,
     PolicyRead,
     PolicyUpdate,
@@ -380,12 +390,24 @@ def create_user(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    department_id = getattr(payload, "department_id", None)
+    if department_id:
+        dept = db.scalar(
+            select(Department).where(
+                Department.id == department_id,
+                Department.company_id == company.id,
+            )
+        )
+        if not dept:
+            raise HTTPException(status_code=400, detail="Department not found in company")
+
     user = User(
         company_id=company.id,
         name=payload.name,
         email=payload.email,
         role_id=role.id,
         password_hash=password_hash,
+        department_id=department_id,
     )
 
     db.add(user)
@@ -681,6 +703,7 @@ def list_company_agents(
     company_id: str,
     db: Session = Depends(get_db),
     x_user_id: str | None = Header(default=None),
+    department_id: str | None = None,
 ):
     user = require_company_user(
         db,
@@ -693,13 +716,11 @@ def list_company_agents(
         "agent.read",
     )
 
-    return list(
-        db.scalars(
-            select(AgentInstance).where(
-                AgentInstance.company_id == company_id
-            )
-        ).all()
-    )
+    q = select(AgentInstance).where(AgentInstance.company_id == company_id)
+    if department_id:
+        q = q.where(AgentInstance.department_id == department_id)
+
+    return list(db.scalars(q).all())
 
 
 @router.patch(
@@ -747,6 +768,24 @@ def update_company_agent(
         instance.autonomy = payload.autonomy
     if payload.policies is not None:
         instance.policies = dict(payload.policies)
+    if payload.department_id is not None:
+        if payload.department_id == "":
+            instance.department_id = None
+        else:
+            dept = db.scalar(
+                select(Department).where(
+                    Department.id == payload.department_id,
+                    Department.company_id == company_id,
+                )
+            )
+            if not dept:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Department not found in company",
+                )
+            instance.department_id = payload.department_id
+    if payload.supervisor_user_id is not None:
+        instance.supervisor_user_id = payload.supervisor_user_id or None
 
     record_audit(
         db,
@@ -2124,6 +2163,272 @@ def delete_knowledge(
     db.commit()
 
 
+
+
+
+@router.get(
+    "/companies/{company_id}/departments",
+    response_model=list[DepartmentRead],
+)
+def list_departments(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    return list(
+        db.scalars(
+            select(Department)
+            .where(Department.company_id == company_id)
+            .order_by(Department.name)
+        ).all()
+    )
+
+
+@router.post(
+    "/companies/{company_id}/departments",
+    response_model=DepartmentRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_department(
+    company_id: str,
+    payload: DepartmentCreate,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "team.manage")
+    existing = db.scalar(
+        select(Department).where(
+            Department.company_id == company_id,
+            Department.name == payload.name,
+        )
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="Department name already exists")
+    dept = Department(
+        company_id=company_id,
+        name=payload.name,
+        description=payload.description or "",
+        is_active=payload.is_active,
+    )
+    db.add(dept)
+    db.flush()
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        action="department.create",
+        resource_type="department",
+        resource_id=dept.id,
+        status="success",
+    )
+    db.commit()
+    db.refresh(dept)
+    return dept
+
+
+@router.patch(
+    "/companies/{company_id}/departments/{department_id}",
+    response_model=DepartmentRead,
+)
+def update_department(
+    company_id: str,
+    department_id: str,
+    payload: DepartmentUpdate,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "team.manage")
+    dept = db.scalar(
+        select(Department).where(
+            Department.id == department_id,
+            Department.company_id == company_id,
+        )
+    )
+    if not dept:
+        raise HTTPException(status_code=404, detail="Department not found")
+    data = payload.model_dump(exclude_unset=True)
+    for k, v in data.items():
+        setattr(dept, k, v)
+    db.commit()
+    db.refresh(dept)
+    return dept
+
+
+@router.get(
+    "/companies/{company_id}/teams",
+    response_model=list[AgentTeamRead],
+)
+def list_agent_teams(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+    department_id: str | None = None,
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    q = select(AgentTeam).where(AgentTeam.company_id == company_id)
+    if department_id:
+        q = q.where(AgentTeam.department_id == department_id)
+    teams = list(db.scalars(q.order_by(AgentTeam.name)).all())
+    result = []
+    for team in teams:
+        member_ids = [
+            m.agent_instance_id
+            for m in db.scalars(
+                select(AgentTeamMember).where(AgentTeamMember.team_id == team.id)
+            ).all()
+        ]
+        result.append(
+            AgentTeamRead(
+                id=team.id,
+                company_id=team.company_id,
+                department_id=team.department_id,
+                name=team.name,
+                description=team.description,
+                is_active=team.is_active,
+                created_at=team.created_at,
+                updated_at=team.updated_at,
+                member_agent_ids=member_ids,
+            )
+        )
+    return result
+
+
+@router.post(
+    "/companies/{company_id}/teams",
+    response_model=AgentTeamRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_agent_team(
+    company_id: str,
+    payload: AgentTeamCreate,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.manage")
+    if payload.department_id:
+        dept = db.scalar(
+            select(Department).where(
+                Department.id == payload.department_id,
+                Department.company_id == company_id,
+            )
+        )
+        if not dept:
+            raise HTTPException(status_code=400, detail="Department not found")
+    existing = db.scalar(
+        select(AgentTeam).where(
+            AgentTeam.company_id == company_id,
+            AgentTeam.name == payload.name,
+        )
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="Team name already exists")
+    team = AgentTeam(
+        company_id=company_id,
+        department_id=payload.department_id,
+        name=payload.name,
+        description=payload.description or "",
+        is_active=payload.is_active,
+    )
+    db.add(team)
+    db.flush()
+    member_ids = []
+    for aid in payload.agent_instance_ids or []:
+        agent = get_owned_agent_or_404(db, company_id, aid)
+        mem = AgentTeamMember(
+            company_id=company_id,
+            team_id=team.id,
+            agent_instance_id=agent.id,
+        )
+        db.add(mem)
+        member_ids.append(agent.id)
+    db.flush()
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        action="agent_team.create",
+        resource_type="agent_team",
+        resource_id=team.id,
+        status="success",
+        details={"members": member_ids},
+    )
+    db.commit()
+    db.refresh(team)
+    return AgentTeamRead(
+        id=team.id,
+        company_id=team.company_id,
+        department_id=team.department_id,
+        name=team.name,
+        description=team.description,
+        is_active=team.is_active,
+        created_at=team.created_at,
+        updated_at=team.updated_at,
+        member_agent_ids=member_ids,
+    )
+
+
+@router.post(
+    "/companies/{company_id}/teams/{team_id}/members",
+    response_model=AgentTeamRead,
+)
+def add_team_members(
+    company_id: str,
+    team_id: str,
+    payload: AgentTeamAddMembers,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.manage")
+    team = db.scalar(
+        select(AgentTeam).where(
+            AgentTeam.id == team_id,
+            AgentTeam.company_id == company_id,
+        )
+    )
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    for aid in payload.agent_instance_ids:
+        agent = get_owned_agent_or_404(db, company_id, aid)
+        exists = db.scalar(
+            select(AgentTeamMember).where(
+                AgentTeamMember.team_id == team.id,
+                AgentTeamMember.agent_instance_id == agent.id,
+            )
+        )
+        if exists:
+            continue
+        db.add(
+            AgentTeamMember(
+                company_id=company_id,
+                team_id=team.id,
+                agent_instance_id=agent.id,
+            )
+        )
+    db.commit()
+    member_ids = [
+        m.agent_instance_id
+        for m in db.scalars(
+            select(AgentTeamMember).where(AgentTeamMember.team_id == team.id)
+        ).all()
+    ]
+    return AgentTeamRead(
+        id=team.id,
+        company_id=team.company_id,
+        department_id=team.department_id,
+        name=team.name,
+        description=team.description,
+        is_active=team.is_active,
+        created_at=team.created_at,
+        updated_at=team.updated_at,
+        member_agent_ids=member_ids,
+    )
 
 
 @router.post(
