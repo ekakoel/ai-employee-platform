@@ -9,6 +9,8 @@
     userName: localStorage.getItem("ws_userName") || "",
   };
 
+  let selectedOutputTask = null;
+
   const titles = {
     home: ["Home", "Command center"],
     inbox: ["Inbox", "Needs your attention"],
@@ -34,6 +36,178 @@
     cost: ["LLM Cost", "Token usage and spend"],
     scopecheck: ["Scope Check", "Out-of-scope detection"],
   };
+
+  function showOutputCenter(task) {
+    selectedOutputTask = task;
+
+    const panel = $("outputCenter");
+    const content = $("outputContent");
+    const title = $("outputTitle");
+
+    if (!panel || !content) return;
+
+    panel.classList.remove("collapsed");
+
+    title.textContent = task.title || "AI Result";
+
+    let result = task.result;
+
+    if (!result) {
+      content.innerHTML = `
+        <div class="output-empty">
+          <div class="output-empty-icon">○</div>
+          <strong>No result yet</strong>
+          <p>This task has not produced an output.</p>
+        </div>
+      `;
+      return;
+    }
+
+    let parsed = null;
+
+    try {
+      parsed = typeof result === "string"
+        ? JSON.parse(result)
+        : result;
+    } catch (_) {
+      parsed = null;
+    }
+
+    if (parsed && typeof parsed === "object") {
+      renderStructuredOutput(task, parsed);
+    } else {
+      renderTextOutput(task, String(result));
+    }
+  }
+
+  function renderStructuredOutput(task, result) {
+    const content = $("outputContent");
+
+    content.innerHTML = `
+      <div class="output-task-meta">
+        <div class="output-task-title">
+          ${escapeHtml(task.title || "AI Result")}
+        </div>
+
+        <div class="meta">
+          ${escapeHtml(task.status || "")}
+          ·
+          ${escapeHtml(task.mode || "")}
+        </div>
+      </div>
+
+      ${result.recommendation
+        ? `
+            <div class="output-section">
+              <div class="output-section-title">Recommendation</div>
+              <div class="output-box">
+                ${escapeHtml(result.recommendation)}
+              </div>
+            </div>
+          `
+        : ""
+      }
+
+      ${result.rationale
+        ? `
+            <div class="output-section">
+              <div class="output-section-title">Rationale</div>
+              <div class="output-box">
+                ${escapeHtml(result.rationale)}
+              </div>
+            </div>
+          `
+        : ""
+      }
+
+      ${result.expected_impact
+        ? `
+            <div class="output-section">
+              <div class="output-section-title">Expected Impact</div>
+              <div class="output-box">
+                ${escapeHtml(result.expected_impact)}
+              </div>
+            </div>
+          `
+        : ""
+      }
+
+      ${Array.isArray(result.alternatives) && result.alternatives.length
+        ? `
+            <div class="output-section">
+              <div class="output-section-title">Alternatives</div>
+              <div class="output-box">
+                ${result.alternatives
+          .map((x) => `• ${escapeHtml(x)}`)
+          .join("<br>")}
+              </div>
+            </div>
+          `
+        : ""
+      }
+
+      ${result.confidence !== undefined
+        ? `
+            <div class="output-section">
+              <div class="output-section-title">Confidence</div>
+              <div class="output-box output-confidence">
+                ${Math.round(Number(result.confidence) * 100)}%
+              </div>
+            </div>
+          `
+        : ""
+      }
+
+      <div class="output-section">
+        <div class="output-section-title">Files / Artifacts</div>
+        <div class="output-artifacts">
+          <div class="output-artifact">
+            <div class="output-artifact-title">No files generated</div>
+            <div class="output-artifact-meta">
+              File generation will be available in the artifact phase.
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderTextOutput(task, result) {
+    $("outputContent").innerHTML = `
+      <div class="output-task-meta">
+        <div class="output-task-title">
+          ${escapeHtml(task.title || "AI Result")}
+        </div>
+
+        <div class="meta">
+          ${escapeHtml(task.status || "")}
+          ·
+          ${escapeHtml(task.mode || "")}
+        </div>
+      </div>
+
+      <div class="output-section">
+        <div class="output-section-title">Result</div>
+        <div class="output-box">
+          ${escapeHtml(result)}
+        </div>
+      </div>
+
+      <div class="output-section">
+        <div class="output-section-title">Files / Artifacts</div>
+        <div class="output-artifact">
+          <div class="output-artifact-title">No files generated</div>
+        </div>
+      </div>
+    `;
+  }
+
+  if ($("btnCloseOutput")) {
+    $("btnCloseOutput").onclick = () => {
+      $("outputCenter").classList.add("collapsed");
+      selectedOutputTask = null;
+    };
+  }
 
   function clearSession() {
     state.companyId = "";
@@ -373,7 +547,7 @@
           if (el) el.innerHTML = opts;
         }
       );
-    } catch (_) {}
+    } catch (_) { }
   }
 
   async function refreshInboxBadge() {
@@ -394,7 +568,7 @@
       ).length;
       setInboxBadge(pendingTasks + pendingAppr + openDel);
       setNotifBadge((notif && notif.count) || 0);
-    } catch (_) {}
+    } catch (_) { }
   }
 
   // ----- Home -----
@@ -472,11 +646,10 @@
             (n) => `<div class="item">
           <strong>${escapeHtml(n.type || "notification")}</strong>
           <div class="meta">${escapeHtml(JSON.stringify(n.payload || {}).slice(0, 120))} · ${n.read_at ? "read" : "unread"}</div>
-          ${
-            !n.read_at
-              ? `<div class="actions"><button class="secondary btn-read-one" data-id="${n.id}">Mark read</button></div>`
-              : ""
-          }
+          ${!n.read_at
+                ? `<div class="actions"><button class="secondary btn-read-one" data-id="${n.id}">Mark read</button></div>`
+                : ""
+              }
         </div>`
           )
           .join("") || `<div class="empty">No notifications.</div>`;
@@ -542,11 +715,10 @@
           <span class="type-tag task">task</span><strong>${escapeHtml(t.title || t.id)}</strong>
           <div class="meta">${escapeHtml(t.status)} · ${escapeHtml(t.mode || "")}</div>
           <div class="actions">
-            ${
-              t.mode === "consult" && t.status === "pending"
-                ? `<button class="primary btn-run-consult" data-id="${t.id}">Run consult</button>`
-                : ""
-            }
+            ${t.mode === "consult" && t.status === "pending"
+            ? `<button class="primary btn-run-consult" data-id="${t.id}">Run consult</button>`
+            : ""
+          }
           </div>
         </div>`);
       });
@@ -565,11 +737,10 @@
           <span class="type-tag delegation">delegation</span><strong>${escapeHtml(d.title || d.id)}</strong>
           <div class="meta">${escapeHtml(d.status)} · ${escapeHtml(d.capability || "")}</div>
           <div class="actions">
-            ${
-              d.status === "pending" || d.status === "accepted"
-                ? `<button class="primary btn-exec-del" data-id="${d.id}">Execute</button>`
-                : ""
-            }
+            ${d.status === "pending" || d.status === "accepted"
+            ? `<button class="primary btn-exec-del" data-id="${d.id}">Execute</button>`
+            : ""
+          }
           </div>
         </div>`);
       });
@@ -577,7 +748,7 @@
 
       document.querySelectorAll(".btn-run-consult").forEach((b) => {
         b.onclick = async () => {
-          await api(`/companies/${state.companyId}/tasks/${b.dataset.id}/run`, {
+          await api(`/companies/${state.companyId}/tasks/${b.dataset.id}/consult`, {
             method: "POST",
             body: "{}",
           });
@@ -675,11 +846,10 @@
           <p style="font-size:.85rem;color:var(--muted)">${escapeHtml((t.description || "").slice(0, 120))}</p>
           <div>${(t.skills || []).slice(0, 6).map((s) => `<span class="tag">${escapeHtml(s)}</span>`).join("")}</div>
           <div class="row">
-            ${
-              installed.has(t.id)
+            ${installed.has(t.id)
                 ? `<span class="pill ok">Installed</span>`
                 : `<button class="primary btn-install" data-id="${t.id}">Install</button>`
-            }
+              }
           </div>
         </div>`
           )
@@ -728,14 +898,39 @@
             (t) => `<div class="item">
           <strong>${escapeHtml(t.title || t.id)}</strong>
           <div class="meta">${escapeHtml(t.status)} · ${escapeHtml(t.mode || "")}</div>
-          ${
-            t.mode === "consult" && t.status === "pending"
-              ? `<div class="actions"><button class="primary btn-run-t" data-id="${t.id}">Run consult</button></div>`
-              : ""
-          }
+          ${t.mode === "consult" && t.status === "pending"
+                ? `<div class="actions">
+                  <button
+                    class="secondary btn-view-output"
+                    data-id="${t.id}"
+                  >
+                    View output
+                  </button>
+
+                  ${t.mode === "consult" && t.status === "pending"
+                  ? `<button
+                          class="primary btn-run-t"
+                          data-id="${t.id}"
+                        >
+                          Run consult
+                        </button>`
+                  : ""
+                }
+                </div>`
+                : ""
+              }
         </div>`
           )
           .join("") || `<div class="empty">No tasks.</div>`;
+      document.querySelectorAll(".btn-view-output").forEach((b) => {
+        b.onclick = () => {
+          const task = tasks.find((t) => t.id === b.dataset.id);
+
+          if (task) {
+            showOutputCenter(task);
+          }
+        };
+      });
       document.querySelectorAll(".btn-run-t").forEach((b) => {
         b.onclick = async () => {
           await api(`/companies/${state.companyId}/tasks/${b.dataset.id}/run`, {
@@ -782,14 +977,13 @@
             (a) => `<div class="item">
           <strong>${escapeHtml(a.action)}</strong>
           <div class="meta">${escapeHtml(a.status)} · ${escapeHtml(a.reason || "")}</div>
-          ${
-            a.status === "pending"
-              ? `<div class="actions">
+          ${a.status === "pending"
+                ? `<div class="actions">
             <button class="success btn-rev" data-id="${a.id}" data-d="approved">Approve</button>
             <button class="danger btn-rev" data-id="${a.id}" data-d="rejected">Reject</button>
           </div>`
-              : ""
-          }
+                : ""
+              }
         </div>`
           )
           .join("") || `<div class="empty">No approvals.</div>`;
@@ -822,7 +1016,7 @@
           mode: "consult",
         }),
       });
-      const ran = await api(`/companies/${state.companyId}/tasks/${task.id}/run`, {
+      const ran = await api(`/companies/${state.companyId}/tasks/${task.id}/consult`, {
         method: "POST",
         body: "{}",
       });
@@ -901,11 +1095,10 @@
             (d) => `<div class="item">
           <strong>${escapeHtml(d.title || d.id)}</strong>
           <div class="meta">${escapeHtml(d.status)} · ${escapeHtml(d.capability || "")}</div>
-          ${
-            d.status === "pending" || d.status === "accepted"
-              ? `<div class="actions"><button class="primary btn-exd" data-id="${d.id}">Execute</button></div>`
-              : ""
-          }
+          ${d.status === "pending" || d.status === "accepted"
+                ? `<div class="actions"><button class="primary btn-exd" data-id="${d.id}">Execute</button></div>`
+                : ""
+              }
         </div>`
           )
           .join("") || `<div class="empty">No delegations.</div>`;
@@ -1161,7 +1354,7 @@
       // Refresh to drop optimistic-only state if server rejected
       try {
         await refreshChatMessages();
-      } catch (_) {}
+      } catch (_) { }
     } finally {
       setChatBusy(false);
     }
