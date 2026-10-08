@@ -119,6 +119,22 @@ def migrate_sqlite_schema() -> None:
                     )
                 )
 
+    if "knowledge_chunks" in table_names:
+        kc_cols = {c["name"] for c in inspector.get_columns("knowledge_chunks")}
+        if "embedding" not in kc_cols:
+            with engine.begin() as connection:
+                connection.execute(
+                    text("ALTER TABLE knowledge_chunks ADD COLUMN embedding JSON")
+                )
+        if "embedding_model" not in kc_cols:
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "ALTER TABLE knowledge_chunks "
+                        "ADD COLUMN embedding_model VARCHAR(100)"
+                    )
+                )
+
 
 def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()

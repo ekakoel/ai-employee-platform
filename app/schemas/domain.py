@@ -347,6 +347,10 @@ class KnowledgeSearchHit(BaseModel):
     title: str | None = None
     category: str | None = None
     chunk_index: int | None = None
+    # Job 26 hybrid search metadata
+    search_mode: str | None = None
+    keyword_score: float | None = None
+    vector_score: float | None = None
 
 
 class AgentMemoryCreate(BaseModel):

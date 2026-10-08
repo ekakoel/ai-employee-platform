@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen3:1.7b"
 
+    # Job 26 — vector knowledge retrieval
+    knowledge_vector: bool = False
+    embedding_provider: str = "fake"  # fake | hash
+    embedding_dims: int = 64
+    hybrid_keyword_weight: float = 0.4
+    hybrid_vector_weight: float = 0.6
+
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",

@@ -568,6 +568,9 @@ class KnowledgeChunk(Base):
     chunk_index: Mapped[int] = mapped_column(default=0, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     token_estimate: Mapped[int] = mapped_column(default=0, nullable=False)
+    # Job 26 — vector embedding (JSON list[float]; SQLite-safe, pgvector optional later)
+    embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
