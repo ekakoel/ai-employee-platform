@@ -1,0 +1,974 @@
+diff --git a/app/api/routes.py b/app/api/routes.py
+index e47d94d..cf51f4e 100644
+--- a/app/api/routes.py
++++ b/app/api/routes.py
+@@ -2724,6 +2724,219 @@ def set_company_plan_api(
+     db.commit()
+     return usage_summary(db, company_id)
+ 
++
++@router.get("/companies/{company_id}/workflows")
++def list_workflows(
++    company_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    from app.models.entities import WorkflowDefinition
++
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "agent.read")
++    rows = list(
++        db.scalars(
++            select(WorkflowDefinition)
++            .where(WorkflowDefinition.company_id == company_id)
++            .order_by(WorkflowDefinition.created_at.desc())
++        ).all()
++    )
++    return [
++        {
++            "id": w.id,
++            "company_id": w.company_id,
++            "name": w.name,
++            "description": w.description,
++            "steps": w.steps,
++            "is_active": w.is_active,
++            "created_at": w.created_at.isoformat() if w.created_at else None,
++        }
++        for w in rows
++    ]
++
++
++@router.post("/companies/{company_id}/workflows", status_code=status.HTTP_201_CREATED)
++def create_workflow(
++    company_id: str,
++    payload: dict,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    from app.services.workflow import create_definition
++
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "agent.manage")
++    name = str(payload.get("name") or "").strip()
++    steps = payload.get("steps") or []
++    if not name:
++        raise HTTPException(status_code=400, detail="name required")
++    try:
++        wf = create_definition(
++            db,
++            company_id=company_id,
++            name=name,
++            steps=steps,
++            description=str(payload.get("description") or ""),
++        )
++    except ValueError as exc:
++        raise HTTPException(status_code=400, detail=str(exc)) from exc
++    db.commit()
++    db.refresh(wf)
++    return {
++        "id": wf.id,
++        "name": wf.name,
++        "steps": wf.steps,
++        "is_active": wf.is_active,
++    }
++
++
++@router.post(
++    "/companies/{company_id}/workflows/{workflow_id}/runs",
++    status_code=status.HTTP_201_CREATED,
++)
++def start_workflow_run(
++    company_id: str,
++    workflow_id: str,
++    payload: dict | None = None,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    from app.models.entities import WorkflowDefinition
++    from app.services.workflow import start_run
++
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "task.create")
++    wf = db.scalar(
++        select(WorkflowDefinition).where(
++            WorkflowDefinition.id == workflow_id,
++            WorkflowDefinition.company_id == company_id,
++        )
++    )
++    if not wf:
++        raise HTTPException(status_code=404, detail="Workflow not found")
++    body = payload or {}
++    try:
++        run = start_run(
++            db,
++            definition=wf,
++            context=dict(body.get("context") or {}),
++            user_id=user.id,
++        )
++    except ValueError as exc:
++        raise HTTPException(status_code=400, detail=str(exc)) from exc
++    db.commit()
++    db.refresh(run)
++    return {
++        "id": run.id,
++        "definition_id": run.definition_id,
++        "status": run.status,
++        "current_step": run.current_step,
++        "context": run.context,
++        "step_results": run.step_results,
++        "error_message": run.error_message,
++    }
++
++
++@router.get("/companies/{company_id}/workflow-runs/{run_id}")
++def get_workflow_run(
++    company_id: str,
++    run_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    from app.models.entities import WorkflowRun
++
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "agent.read")
++    run = db.scalar(
++        select(WorkflowRun).where(
++            WorkflowRun.id == run_id,
++            WorkflowRun.company_id == company_id,
++        )
++    )
++    if not run:
++        raise HTTPException(status_code=404, detail="Workflow run not found")
++    return {
++        "id": run.id,
++        "definition_id": run.definition_id,
++        "status": run.status,
++        "current_step": run.current_step,
++        "context": run.context,
++        "step_results": run.step_results,
++        "error_message": run.error_message,
++        "started_at": run.started_at.isoformat() if run.started_at else None,
++        "completed_at": run.completed_at.isoformat() if run.completed_at else None,
++    }
++
++
++@router.post("/companies/{company_id}/workflow-runs/{run_id}/resume")
++def resume_workflow_run(
++    company_id: str,
++    run_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    from app.models.entities import WorkflowRun
++    from app.services.workflow import resume_run
++
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "task.create")
++    run = db.scalar(
++        select(WorkflowRun).where(
++            WorkflowRun.id == run_id,
++            WorkflowRun.company_id == company_id,
++        )
++    )
++    if not run:
++        raise HTTPException(status_code=404, detail="Workflow run not found")
++    try:
++        run = resume_run(db, run=run, user_id=user.id)
++    except ValueError as exc:
++        raise HTTPException(status_code=400, detail=str(exc)) from exc
++    db.commit()
++    db.refresh(run)
++    return {
++        "id": run.id,
++        "status": run.status,
++        "current_step": run.current_step,
++        "context": run.context,
++        "step_results": run.step_results,
++        "error_message": run.error_message,
++    }
++
++
++@router.post("/companies/{company_id}/workflow-runs/{run_id}/advance")
++def advance_workflow_run(
++    company_id: str,
++    run_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    from app.models.entities import WorkflowRun
++    from app.services.workflow import advance_run
++
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "task.create")
++    run = db.scalar(
++        select(WorkflowRun).where(
++            WorkflowRun.id == run_id,
++            WorkflowRun.company_id == company_id,
++        )
++    )
++    if not run:
++        raise HTTPException(status_code=404, detail="Workflow run not found")
++    run = advance_run(db, run=run, user_id=user.id)
++    db.commit()
++    db.refresh(run)
++    return {
++        "id": run.id,
++        "status": run.status,
++        "current_step": run.current_step,
++        "step_results": run.step_results,
++        "error_message": run.error_message,
++    }
++
+ @router.get("/tools")
+ def list_platform_tools():
+     """Job 19 — global tool catalog (metadata: side_effect, risk)."""
+diff --git a/app/models/__init__.py b/app/models/__init__.py
+index 98bb69b..25b2053 100644
+--- a/app/models/__init__.py
++++ b/app/models/__init__.py
+@@ -1,4 +1,7 @@
+ from app.models.entities import (
++    WorkflowDefinition,
++    WorkflowRun,
++    WorkflowRunStatus,
+     Plan,
+     CompanyPlanSubscription,
+     UsageCounter,
+@@ -41,6 +44,9 @@ from app.models.entities import (
+ )
+ 
+ __all__ = [
++    "WorkflowDefinition",
++    "WorkflowRun",
++    "WorkflowRunStatus",
+     "Plan",
+     "CompanyPlanSubscription",
+     "UsageCounter",
+diff --git a/app/models/entities.py b/app/models/entities.py
+index dbf66d4..6d18e79 100644
+--- a/app/models/entities.py
++++ b/app/models/entities.py
+@@ -1069,6 +1069,77 @@ class UsageCounter(Base):
+         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+     )
+ 
++
++
++class WorkflowRunStatus(str, Enum):
++    PENDING = "pending"
++    RUNNING = "running"
++    PAUSED_APPROVAL = "paused_approval"
++    COMPLETED = "completed"
++    FAILED = "failed"
++    CANCELLED = "cancelled"
++
++
++class WorkflowDefinition(Base):
++    """Ordered multi-step automation workflow (Job 27)."""
++
++    __tablename__ = "workflow_definitions"
++
++    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
++    company_id: Mapped[str] = mapped_column(
++        ForeignKey("companies.id", ondelete="CASCADE"),
++        nullable=False,
++        index=True,
++    )
++    name: Mapped[str] = mapped_column(String(200), nullable=False)
++    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
++    # ordered list of steps: {type, ...params}
++    steps: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
++    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), default=utcnow, nullable=False
++    )
++    updated_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
++    )
++
++
++class WorkflowRun(Base):
++    """One execution of a WorkflowDefinition."""
++
++    __tablename__ = "workflow_runs"
++
++    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
++    company_id: Mapped[str] = mapped_column(
++        ForeignKey("companies.id", ondelete="CASCADE"),
++        nullable=False,
++        index=True,
++    )
++    definition_id: Mapped[str] = mapped_column(
++        ForeignKey("workflow_definitions.id", ondelete="CASCADE"),
++        nullable=False,
++        index=True,
++    )
++    status: Mapped[str] = mapped_column(
++        String(30),
++        default=WorkflowRunStatus.PENDING.value,
++        nullable=False,
++        index=True,
++    )
++    current_step: Mapped[int] = mapped_column(default=0, nullable=False)
++    context: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
++    step_results: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
++    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
++    started_at: Mapped[datetime | None] = mapped_column(
++        DateTime(timezone=True), nullable=True
++    )
++    completed_at: Mapped[datetime | None] = mapped_column(
++        DateTime(timezone=True), nullable=True
++    )
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), default=utcnow, nullable=False
++    )
++
+ class Policy(Base):
+     __tablename__ = "policies"
+ 
+diff --git a/app/services/workflow.py b/app/services/workflow.py
+new file mode 100644
+index 0000000..b028601
+--- /dev/null
++++ b/app/services/workflow.py
+@@ -0,0 +1,414 @@
++"""Job 27 — Multi-step automation workflows (simple ordered DAG / state machine)."""
++
++from __future__ import annotations
++
++from datetime import datetime, timezone
++from typing import Any
++
++from sqlalchemy import select
++from sqlalchemy.orm import Session
++
++from app.models.entities import (
++    AgentInstance,
++    AgentStatus,
++    Approval,
++    ApprovalStatus,
++    DelegationRequest,
++    Task,
++    TaskStatus,
++    WorkflowDefinition,
++    WorkflowRun,
++    WorkflowRunStatus,
++)
++from app.services.audit import record_audit
++from app.services.consultation import run_consultation
++from app.services.notifications import notify_users
++from app.models.entities import NotificationType
++
++ALLOWED_STEP_TYPES = {
++    "create_task",
++    "wait_approval",
++    "delegate",
++    "emit_event",
++    "complete",
++}
++
++
++def _now() -> datetime:
++    return datetime.now(timezone.utc)
++
++
++def validate_steps(steps: list[dict[str, Any]]) -> None:
++    if not steps or not isinstance(steps, list):
++        raise ValueError("steps must be a non-empty list")
++    for i, step in enumerate(steps):
++        if not isinstance(step, dict):
++            raise ValueError(f"step {i} must be an object")
++        st = step.get("type")
++        if st not in ALLOWED_STEP_TYPES:
++            raise ValueError(
++                f"step {i}: type must be one of {sorted(ALLOWED_STEP_TYPES)}"
++            )
++
++
++def create_definition(
++    db: Session,
++    *,
++    company_id: str,
++    name: str,
++    steps: list[dict[str, Any]],
++    description: str = "",
++) -> WorkflowDefinition:
++    validate_steps(steps)
++    wf = WorkflowDefinition(
++        company_id=company_id,
++        name=name[:200],
++        description=description or "",
++        steps=list(steps),
++        is_active=True,
++    )
++    db.add(wf)
++    db.flush()
++    return wf
++
++
++def start_run(
++    db: Session,
++    *,
++    definition: WorkflowDefinition,
++    context: dict[str, Any] | None = None,
++    user_id: str | None = None,
++) -> WorkflowRun:
++    if not definition.is_active:
++        raise ValueError("Workflow definition is inactive")
++    run = WorkflowRun(
++        company_id=definition.company_id,
++        definition_id=definition.id,
++        status=WorkflowRunStatus.PENDING.value,
++        current_step=0,
++        context=dict(context or {}),
++        step_results=[],
++        started_at=_now(),
++    )
++    db.add(run)
++    db.flush()
++    record_audit(
++        db,
++        company_id=definition.company_id,
++        user_id=user_id,
++        action="workflow.run.start",
++        resource_type="workflow_run",
++        resource_id=run.id,
++        status="success",
++        details={"definition_id": definition.id},
++    )
++    return advance_run(db, run=run, definition=definition, user_id=user_id)
++
++
++def _append_result(run: WorkflowRun, step_index: int, result: dict[str, Any]) -> None:
++    results = list(run.step_results or [])
++    results.append({"step": step_index, **result})
++    run.step_results = results
++
++
++def _fail(run: WorkflowRun, message: str) -> WorkflowRun:
++    run.status = WorkflowRunStatus.FAILED.value
++    run.error_message = message
++    run.completed_at = _now()
++    return run
++
++
++def advance_run(
++    db: Session,
++    *,
++    run: WorkflowRun,
++    definition: WorkflowDefinition | None = None,
++    user_id: str | None = None,
++) -> WorkflowRun:
++    """
++    Execute steps from current_step until pause, complete, or fail.
++    """
++    if run.status in (
++        WorkflowRunStatus.COMPLETED.value,
++        WorkflowRunStatus.FAILED.value,
++        WorkflowRunStatus.CANCELLED.value,
++    ):
++        return run
++
++    definition = definition or db.get(WorkflowDefinition, run.definition_id)
++    if not definition:
++        return _fail(run, "Workflow definition not found")
++
++    steps = list(definition.steps or [])
++    run.status = WorkflowRunStatus.RUNNING.value
++    db.flush()
++
++    # Max iterations to avoid infinite loops
++    guard = 0
++    while run.current_step < len(steps) and guard < 50:
++        guard += 1
++        idx = run.current_step
++        step = steps[idx]
++        stype = step.get("type")
++
++        try:
++            if stype == "create_task":
++                outcome = _step_create_task(db, run=run, step=step)
++            elif stype == "wait_approval":
++                outcome = _step_wait_approval(db, run=run, step=step)
++            elif stype == "delegate":
++                outcome = _step_delegate(db, run=run, step=step, user_id=user_id)
++            elif stype == "emit_event":
++                outcome = _step_emit_event(db, run=run, step=step)
++            elif stype == "complete":
++                outcome = {"status": "ok", "action": "complete"}
++            else:
++                return _fail(run, f"Unknown step type: {stype}")
++        except Exception as exc:
++            _append_result(run, idx, {"status": "error", "error": str(exc)})
++            return _fail(run, str(exc))
++
++        _append_result(run, idx, outcome)
++
++        if outcome.get("pause"):
++            run.status = WorkflowRunStatus.PAUSED_APPROVAL.value
++            db.flush()
++            return run
++
++        if outcome.get("fail"):
++            return _fail(run, outcome.get("error") or "Step failed")
++
++        run.current_step = idx + 1
++        db.flush()
++
++        if stype == "complete":
++            break
++
++    run.status = WorkflowRunStatus.COMPLETED.value
++    run.completed_at = _now()
++    db.flush()
++    record_audit(
++        db,
++        company_id=run.company_id,
++        user_id=user_id,
++        action="workflow.run.completed",
++        resource_type="workflow_run",
++        resource_id=run.id,
++        status="success",
++    )
++    return run
++
++
++def resume_run(
++    db: Session,
++    *,
++    run: WorkflowRun,
++    user_id: str | None = None,
++) -> WorkflowRun:
++    """Resume a paused workflow (e.g. after approval)."""
++    if run.status not in (
++        WorkflowRunStatus.PAUSED_APPROVAL.value,
++        WorkflowRunStatus.PENDING.value,
++        WorkflowRunStatus.RUNNING.value,
++    ):
++        raise ValueError(f"Cannot resume run in status={run.status}")
++    # Move past wait_approval if approval satisfied
++    definition = db.get(WorkflowDefinition, run.definition_id)
++    if not definition:
++        return _fail(run, "Workflow definition not found")
++    steps = list(definition.steps or [])
++    if run.current_step < len(steps):
++        step = steps[run.current_step]
++        if step.get("type") == "wait_approval":
++            outcome = _step_wait_approval(db, run=run, step=step)
++            if outcome.get("pause"):
++                run.status = WorkflowRunStatus.PAUSED_APPROVAL.value
++                db.flush()
++                return run
++            _append_result(run, run.current_step, outcome)
++            run.current_step += 1
++            db.flush()
++    return advance_run(db, run=run, definition=definition, user_id=user_id)
++
++
++def _step_create_task(
++    db: Session, *, run: WorkflowRun, step: dict[str, Any]
++) -> dict[str, Any]:
++    agent_id = step.get("agent_instance_id") or run.context.get("agent_instance_id")
++    if not agent_id:
++        return {"fail": True, "error": "create_task requires agent_instance_id"}
++    agent = db.get(AgentInstance, agent_id)
++    if not agent or agent.company_id != run.company_id:
++        return {"fail": True, "error": "Agent not found"}
++    if agent.status != AgentStatus.ACTIVE.value:
++        return {"fail": True, "error": f"Agent not active ({agent.status})"}
++
++    title = str(step.get("title") or run.context.get("title") or "Workflow task")[:300]
++    instruction = str(
++        step.get("instruction") or run.context.get("instruction") or title
++    )
++    mode = step.get("mode") or "consult"
++    if mode not in ("consult", "execute"):
++        mode = "consult"
++
++    task = Task(
++        company_id=run.company_id,
++        agent_instance_id=agent_id,
++        title=title,
++        instruction=instruction,
++        mode=mode,
++        status=TaskStatus.PENDING.value,
++    )
++    db.add(task)
++    db.flush()
++
++    ctx = dict(run.context or {})
++    ctx["last_task_id"] = task.id
++    run.context = ctx
++
++    # Auto-run consult when requested
++    if mode == "consult" and step.get("auto_run", True):
++        try:
++            run_consultation(db, task=task)
++            db.refresh(task)
++        except Exception as exc:
++            return {
++                "status": "task_created",
++                "task_id": task.id,
++                "consult_error": str(exc),
++            }
++
++    if task.status == TaskStatus.WAITING_APPROVAL.value:
++        return {
++            "status": "paused",
++            "pause": True,
++            "task_id": task.id,
++            "reason": "waiting_approval",
++        }
++
++    return {
++        "status": "ok",
++        "task_id": task.id,
++        "task_status": task.status,
++    }
++
++
++def _step_wait_approval(
++    db: Session, *, run: WorkflowRun, step: dict[str, Any]
++) -> dict[str, Any]:
++    task_id = step.get("task_id") or run.context.get("last_task_id")
++    approval_id = step.get("approval_id") or run.context.get("last_approval_id")
++
++    if approval_id:
++        approval = db.get(Approval, approval_id)
++        if not approval or approval.company_id != run.company_id:
++            return {"fail": True, "error": "Approval not found"}
++        if approval.status == ApprovalStatus.PENDING.value:
++            return {"status": "waiting", "pause": True, "approval_id": approval_id}
++        if approval.status == ApprovalStatus.REJECTED.value:
++            return {
++                "fail": True,
++                "error": "Approval rejected",
++                "approval_id": approval_id,
++            }
++        return {"status": "ok", "approval_id": approval_id, "approval_status": approval.status}
++
++    if task_id:
++        task = db.get(Task, task_id)
++        if not task or task.company_id != run.company_id:
++            return {"fail": True, "error": "Task not found for wait_approval"}
++        if task.status == TaskStatus.WAITING_APPROVAL.value:
++            return {"status": "waiting", "pause": True, "task_id": task_id}
++        if task.status == TaskStatus.FAILED.value:
++            return {"fail": True, "error": "Linked task failed", "task_id": task_id}
++        # also check pending approvals for this task
++        pending = db.scalar(
++            select(Approval).where(
++                Approval.company_id == run.company_id,
++                Approval.task_id == task_id,
++                Approval.status == ApprovalStatus.PENDING.value,
++            )
++        )
++        if pending:
++            ctx = dict(run.context or {})
++            ctx["last_approval_id"] = pending.id
++            run.context = ctx
++            return {
++                "status": "waiting",
++                "pause": True,
++                "approval_id": pending.id,
++                "task_id": task_id,
++            }
++        return {"status": "ok", "task_id": task_id, "task_status": task.status}
++
++    return {"fail": True, "error": "wait_approval needs task_id or approval_id"}
++
++
++def _step_delegate(
++    db: Session,
++    *,
++    run: WorkflowRun,
++    step: dict[str, Any],
++    user_id: str | None,
++) -> dict[str, Any]:
++    source = step.get("source_agent_instance_id") or run.context.get("agent_instance_id")
++    target = step.get("target_agent_instance_id")
++    if not source or not target:
++        return {
++            "fail": True,
++            "error": "delegate requires source_agent_instance_id and target_agent_instance_id",
++        }
++    title = str(step.get("title") or "Workflow delegation")[:300]
++    instruction = str(step.get("instruction") or title)
++    capability = str(step.get("capability") or "general")
++    req = DelegationRequest(
++        company_id=run.company_id,
++        source_agent_instance_id=source,
++        target_agent_instance_id=target,
++        requested_by_user_id=user_id,
++        capability=capability,
++        title=title,
++        instruction=instruction,
++        status="pending",
++        validation_notes="workflow step",
++        timeout_seconds=int(step.get("timeout_seconds") or 300),
++    )
++    db.add(req)
++    db.flush()
++    ctx = dict(run.context or {})
++    ctx["last_delegation_id"] = req.id
++    run.context = ctx
++    return {"status": "ok", "delegation_request_id": req.id}
++
++
++def _step_emit_event(
++    db: Session, *, run: WorkflowRun, step: dict[str, Any]
++) -> dict[str, Any]:
++    event_type = str(step.get("event_type") or "workflow.event")
++    payload = dict(step.get("payload") or {})
++    payload["workflow_run_id"] = run.id
++    # Optional: notify supervisor from context
++    supervisor_id = run.context.get("notify_user_id")
++    if supervisor_id:
++        try:
++            notify_users(
++                db,
++                company_id=run.company_id,
++                user_ids=[supervisor_id],
++                type=NotificationType.SYSTEM.value,
++                title=f"Workflow event: {event_type}",
++                body=str(payload)[:500],
++                payload=payload,
++            )
++        except Exception:
++            pass
++    record_audit(
++        db,
++        company_id=run.company_id,
++        action="workflow.event",
++        resource_type="workflow_run",
++        resource_id=run.id,
++        status="success",
++        details={"event_type": event_type, "payload": payload},
++    )
++    return {"status": "ok", "event_type": event_type}
+diff --git a/tests/test_workflow_job27.py b/tests/test_workflow_job27.py
+new file mode 100644
+index 0000000..a8db8e4
+--- /dev/null
++++ b/tests/test_workflow_job27.py
+@@ -0,0 +1,220 @@
++"""Job 27 — Multi-step automation workflow tests."""
++
++import pytest
++from fastapi.testclient import TestClient
++from sqlalchemy import create_engine
++from sqlalchemy.orm import sessionmaker
++
++from app.core.database import Base, get_db
++from app.main import app
++from app.models.entities import Approval, ApprovalStatus, Task, TaskStatus, WorkflowRunStatus
++from app.services.seed import seed_catalog
++from app.services.workflow import advance_run, resume_run
++
++engine = create_engine(
++    "sqlite:///./test_workflow_job27.db",
++    connect_args={"check_same_thread": False},
++)
++SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
++
++
++@pytest.fixture()
++def client():
++    Base.metadata.drop_all(bind=engine)
++    Base.metadata.create_all(bind=engine)
++    with SessionLocal() as db:
++        seed_catalog(db)
++
++    def override():
++        db = SessionLocal()
++        try:
++            yield db
++        finally:
++            db.close()
++
++    prev = app.dependency_overrides.get(get_db)
++    app.dependency_overrides[get_db] = override
++    with TestClient(app) as c:
++        yield c
++    if prev is None:
++        app.dependency_overrides.pop(get_db, None)
++    else:
++        app.dependency_overrides[get_db] = prev
++
++
++def setup(client):
++    co = client.post("/api/v1/companies", json={"name": "WF Co"}).json()
++    owner = client.post(
++        f"/api/v1/companies/{co['id']}/users",
++        json={
++            "name": "Owner",
++            "email": "wf@test.local",
++            "role": "owner",
++            "password": "secret123",
++        },
++    ).json()
++    headers = {"X-User-ID": owner["id"]}
++    catalog = client.get("/api/v1/agent-catalog").json()
++    res = next(i for i in catalog if i["slug"] == "reservation")
++    hire = client.post(
++        f"/api/v1/companies/{co['id']}/agents/{res['id']}/hire",
++        json={"name": "Desk AI"},
++        headers=headers,
++    )
++    assert hire.status_code == 201
++    return co["id"], headers, hire.json()["id"]
++
++
++def test_workflow_happy_path(client):
++    company_id, headers, agent_id = setup(client)
++    wf = client.post(
++        f"/api/v1/companies/{company_id}/workflows",
++        headers=headers,
++        json={
++            "name": "Daily briefing",
++            "steps": [
++                {
++                    "type": "create_task",
++                    "agent_instance_id": agent_id,
++                    "title": "Briefing",
++                    "instruction": "Summarize open items",
++                    "mode": "consult",
++                    "auto_run": False,
++                },
++                {"type": "emit_event", "event_type": "briefing.done"},
++                {"type": "complete"},
++            ],
++        },
++    )
++    assert wf.status_code == 201, wf.text
++    wid = wf.json()["id"]
++
++    run = client.post(
++        f"/api/v1/companies/{company_id}/workflows/{wid}/runs",
++        headers=headers,
++        json={"context": {}},
++    )
++    assert run.status_code == 201, run.text
++    body = run.json()
++    assert body["status"] == WorkflowRunStatus.COMPLETED.value
++    assert body["current_step"] >= 2
++    assert any(r.get("task_id") for r in body["step_results"])
++
++
++def test_workflow_pause_on_approval_and_resume(client):
++    company_id, headers, agent_id = setup(client)
++    wf = client.post(
++        f"/api/v1/companies/{company_id}/workflows",
++        headers=headers,
++        json={
++            "name": "Approve path",
++            "steps": [
++                {
++                    "type": "create_task",
++                    "agent_instance_id": agent_id,
++                    "title": "Needs approval later",
++                    "instruction": "hold",
++                    "mode": "consult",
++                    "auto_run": False,
++                },
++                {"type": "wait_approval"},
++                {"type": "emit_event", "event_type": "approved.done"},
++                {"type": "complete"},
++            ],
++        },
++    )
++    wid = wf.json()["id"]
++    run = client.post(
++        f"/api/v1/companies/{company_id}/workflows/{wid}/runs",
++        headers=headers,
++        json={},
++    )
++    assert run.status_code == 201, run.text
++    # Force task into waiting_approval + pending approval
++    run_id = run.json()["id"]
++    task_id = None
++    for r in run.json()["step_results"]:
++        if r.get("task_id"):
++            task_id = r["task_id"]
++            break
++    assert task_id
++
++    with SessionLocal() as db:
++        task = db.get(Task, task_id)
++        task.status = TaskStatus.WAITING_APPROVAL.value
++        approval = Approval(
++            company_id=company_id,
++            task_id=task_id,
++            agent_instance_id=agent_id,
++            action="tool.x",
++            reason="test",
++            payload={},
++            status=ApprovalStatus.PENDING.value,
++        )
++        db.add(approval)
++        db.commit()
++        approval_id = approval.id
++
++        run_row = db.get(
++            __import__("app.models.entities", fromlist=["WorkflowRun"]).WorkflowRun,
++            run_id,
++        )
++        # advance into wait_approval pause
++        run_row.current_step = 1
++        run_row.status = WorkflowRunStatus.RUNNING.value
++        db.commit()
++        run_row = resume_run(db, run=run_row)
++        db.commit()
++        assert run_row.status == WorkflowRunStatus.PAUSED_APPROVAL.value
++
++        # approve
++        approval = db.get(Approval, approval_id)
++        approval.status = ApprovalStatus.APPROVED.value
++        task = db.get(Task, task_id)
++        task.status = TaskStatus.COMPLETED.value
++        db.commit()
++
++        run_row = resume_run(db, run=run_row)
++        db.commit()
++        assert run_row.status == WorkflowRunStatus.COMPLETED.value
++
++
++def test_workflow_fail_missing_agent(client):
++    company_id, headers, agent_id = setup(client)
++    wf = client.post(
++        f"/api/v1/companies/{company_id}/workflows",
++        headers=headers,
++        json={
++            "name": "Bad agent",
++            "steps": [
++                {
++                    "type": "create_task",
++                    "agent_instance_id": "00000000-0000-0000-0000-000000000000",
++                    "title": "x",
++                    "instruction": "y",
++                    "auto_run": False,
++                },
++                {"type": "complete"},
++            ],
++        },
++    )
++    run = client.post(
++        f"/api/v1/companies/{company_id}/workflows/{wf.json()['id']}/runs",
++        headers=headers,
++        json={},
++    )
++    assert run.status_code == 201
++    assert run.json()["status"] == WorkflowRunStatus.FAILED.value
++
++
++def test_invalid_step_type(client):
++    company_id, headers, agent_id = setup(client)
++    bad = client.post(
++        f"/api/v1/companies/{company_id}/workflows",
++        headers=headers,
++        json={
++            "name": "Bad",
++            "steps": [{"type": "explode"}],
++        },
++    )
++    assert bad.status_code == 400

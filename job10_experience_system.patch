@@ -1,0 +1,504 @@
+diff --git a/app/api/routes.py b/app/api/routes.py
+index 14469b6..28a8c1d 100644
+--- a/app/api/routes.py
++++ b/app/api/routes.py
+@@ -60,6 +60,7 @@ from app.schemas.domain import (
+     ExperienceSearchHit,
+     ExperienceSearchRequest,
+     ExperienceValidateRequest,
++    ExperienceFeedbackRequest,
+     KnowledgeSearchRequest,
+     KnowledgeSearchHit,
+     AgentCatalogRead,
+@@ -109,8 +110,12 @@ from app.services.directory import (
+     validate_delegation_target,
+ )
+ from app.services.experience import (
++    archive_experience,
+     create_candidate_from_task,
++    get_experience_for_company,
++    record_successful_reuse,
+     search_validated_experiences,
++    submit_feedback,
+     validate_experience,
+ )
+ from app.services.audit import record_audit
+@@ -1476,12 +1481,6 @@ def list_company_experiences(
+ def create_experience_candidate(
+     company_id: str,
+     payload: ExperienceCreate,
+-    AgentDirectoryEntry,
+-    TargetValidationRequest,
+-    TargetValidationResult,
+-    DelegationRequestCreate,
+-    DelegationRequestRead,
+-    DelegationExecuteRequest,
+     db: Session = Depends(get_db),
+     x_user_id: str | None = Header(default=None),
+ ):
+@@ -1653,6 +1652,154 @@ def validate_company_experience(
+     return exp
+ 
+ 
++
++
++@router.get(
++    "/companies/{company_id}/experiences/{experience_id}",
++    response_model=ExperienceRead,
++)
++def get_company_experience(
++    company_id: str,
++    experience_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "agent.read")
++    exp = get_experience_for_company(
++        db, company_id=company_id, experience_id=experience_id
++    )
++    if not exp:
++        raise HTTPException(status_code=404, detail="Experience not found")
++    return exp
++
++
++@router.post(
++    "/companies/{company_id}/experiences/{experience_id}/feedback",
++    response_model=ExperienceRead,
++)
++def feedback_company_experience(
++    company_id: str,
++    experience_id: str,
++    payload: ExperienceFeedbackRequest,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    """Job 10 — human feedback on a validated experience (confidence + correction)."""
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "agent.manage")
++    exp = get_experience_for_company(
++        db, company_id=company_id, experience_id=experience_id
++    )
++    if not exp:
++        raise HTTPException(status_code=404, detail="Experience not found")
++    try:
++        submit_feedback(
++            db,
++            experience=exp,
++            user_id=user.id,
++            helpful=payload.helpful,
++            human_correction=payload.human_correction,
++            lesson=payload.lesson,
++            confidence_delta=payload.confidence_delta,
++        )
++    except ValueError as exc:
++        raise HTTPException(status_code=409, detail=str(exc)) from exc
++
++    record_audit(
++        db,
++        company_id=company_id,
++        user_id=user.id,
++        agent_instance_id=exp.agent_instance_id,
++        task_id=exp.source_task_id,
++        action="experience.feedback",
++        resource_type="experience",
++        resource_id=exp.id,
++        status="success",
++        details={
++            "helpful": payload.helpful,
++            "confidence": exp.confidence,
++            "success_count": exp.success_count,
++        },
++    )
++    db.commit()
++    db.refresh(exp)
++    return exp
++
++
++@router.post(
++    "/companies/{company_id}/experiences/{experience_id}/reuse",
++    response_model=ExperienceRead,
++)
++def reuse_company_experience(
++    company_id: str,
++    experience_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    """Record that a validated experience was reused successfully (confidence nudge)."""
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "task.create")
++    exp = get_experience_for_company(
++        db, company_id=company_id, experience_id=experience_id
++    )
++    if not exp:
++        raise HTTPException(status_code=404, detail="Experience not found")
++    if exp.validation_status != "validated":
++        raise HTTPException(
++            status_code=409,
++            detail="Only validated experiences can be marked reused",
++        )
++    record_successful_reuse(db, exp.id)
++    record_audit(
++        db,
++        company_id=company_id,
++        user_id=user.id,
++        agent_instance_id=exp.agent_instance_id,
++        action="experience.reuse",
++        resource_type="experience",
++        resource_id=exp.id,
++        status="success",
++        details={"success_count": exp.success_count, "confidence": exp.confidence},
++    )
++    db.commit()
++    db.refresh(exp)
++    return exp
++
++
++@router.post(
++    "/companies/{company_id}/experiences/{experience_id}/archive",
++    response_model=ExperienceRead,
++)
++def archive_company_experience(
++    company_id: str,
++    experience_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "agent.manage")
++    exp = get_experience_for_company(
++        db, company_id=company_id, experience_id=experience_id
++    )
++    if not exp:
++        raise HTTPException(status_code=404, detail="Experience not found")
++    archive_experience(db, experience=exp)
++    record_audit(
++        db,
++        company_id=company_id,
++        user_id=user.id,
++        agent_instance_id=exp.agent_instance_id,
++        action="experience.archive",
++        resource_type="experience",
++        resource_id=exp.id,
++        status="success",
++    )
++    db.commit()
++    db.refresh(exp)
++    return exp
++
++
+ @router.post(
+     "/companies/{company_id}/experiences/search",
+     response_model=list[ExperienceSearchHit],
+diff --git a/app/schemas/domain.py b/app/schemas/domain.py
+index 2b8b8e8..82f41a8 100644
+--- a/app/schemas/domain.py
++++ b/app/schemas/domain.py
+@@ -505,3 +505,12 @@ class DelegationExecuteRequest(BaseModel):
+     """Optional overrides when executing a pending/accepted delegation."""
+     mode: str = Field(default="consult", pattern="^(execute|consult)$")
+     force: bool = False  # ignore soft timeout check only for status transitions
++
++
++class ExperienceFeedbackRequest(BaseModel):
++    """Human feedback after an experience was used or reviewed."""
++
++    helpful: bool
++    human_correction: str = ""
++    lesson: str | None = None
++    confidence_delta: float = Field(default=0.0, ge=-0.5, le=0.5)
+diff --git a/app/services/experience.py b/app/services/experience.py
+index f9a13fe..df66a6f 100644
+--- a/app/services/experience.py
++++ b/app/services/experience.py
+@@ -143,3 +143,74 @@ def record_successful_reuse(db: Session, experience_id: str) -> None:
+     # small confidence nudge, capped
+     exp.confidence = min(1.0, float(exp.confidence or 0) + 0.02)
+     db.flush()
++
++
++
++def submit_feedback(
++    db: Session,
++    *,
++    experience: Experience,
++    user_id: str,
++    helpful: bool,
++    human_correction: str = "",
++    lesson: str | None = None,
++    confidence_delta: float = 0.0,
++) -> Experience:
++    """
++    Post-validation human feedback (Job 10).
++
++    - helpful=True: bump success_count and confidence
++    - helpful=False: apply correction, lower confidence (does not auto-unvalidate)
++    """
++    if experience.validation_status != ExperienceStatus.VALIDATED.value:
++        raise ValueError(
++            "Feedback is only allowed on validated experiences."
++        )
++
++    if human_correction:
++        prev = experience.human_correction or ""
++        experience.human_correction = (
++            ((prev + "\n") if prev else "") + human_correction.strip()
++        )
++    if lesson is not None:
++        experience.lesson = lesson
++
++    if helpful:
++        experience.success_count = int(experience.success_count or 0) + 1
++        delta = confidence_delta if confidence_delta else 0.05
++        experience.confidence = min(
++            1.0, float(experience.confidence or 0) + abs(delta)
++        )
++    else:
++        delta = confidence_delta if confidence_delta else -0.1
++        experience.confidence = max(
++            0.0, float(experience.confidence or 0) + delta
++        )
++
++    db.flush()
++    return experience
++
++
++def archive_experience(
++    db: Session,
++    *,
++    experience: Experience,
++) -> Experience:
++    experience.validation_status = ExperienceStatus.ARCHIVED.value
++    experience.is_active = False
++    db.flush()
++    return experience
++
++
++def get_experience_for_company(
++    db: Session,
++    *,
++    company_id: str,
++    experience_id: str,
++) -> Experience | None:
++    return db.scalar(
++        select(Experience).where(
++            Experience.id == experience_id,
++            Experience.company_id == company_id,
++        )
++    )
+diff --git a/tests/test_experience_job10.py b/tests/test_experience_job10.py
+new file mode 100644
+index 0000000..53443cf
+--- /dev/null
++++ b/tests/test_experience_job10.py
+@@ -0,0 +1,209 @@
++"""Job 10 — Experience system completion (feedback, confidence, reuse)."""
++
++import pytest
++from fastapi.testclient import TestClient
++from sqlalchemy import create_engine
++from sqlalchemy.orm import sessionmaker
++
++from app.core.database import Base, get_db
++from app.main import app
++from app.services.seed import seed_catalog
++
++engine = create_engine(
++    "sqlite:///./test_experience_job10.db",
++    connect_args={"check_same_thread": False},
++)
++SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
++
++
++@pytest.fixture()
++def client():
++    Base.metadata.drop_all(bind=engine)
++    Base.metadata.create_all(bind=engine)
++    with SessionLocal() as db:
++        seed_catalog(db)
++
++    def override():
++        db = SessionLocal()
++        try:
++            yield db
++        finally:
++            db.close()
++
++    prev = app.dependency_overrides.get(get_db)
++    app.dependency_overrides[get_db] = override
++    with TestClient(app) as c:
++        yield c
++    if prev is None:
++        app.dependency_overrides.pop(get_db, None)
++    else:
++        app.dependency_overrides[get_db] = prev
++
++
++def setup(client):
++    co = client.post("/api/v1/companies", json={"name": "Job10 Co"}).json()
++    owner = client.post(
++        f"/api/v1/companies/{co['id']}/users",
++        json={"name": "Owner", "email": "o@j10.test", "role": "owner"},
++    ).json()
++    catalog = client.get("/api/v1/agent-catalog").json()
++    res = next(i for i in catalog if i["slug"] == "reservation")
++    hire = client.post(
++        f"/api/v1/companies/{co['id']}/agents/{res['id']}/hire",
++        json={"name": "J10 AI"},
++        headers={"X-User-ID": owner["id"]},
++    )
++    task = client.post(
++        f"/api/v1/companies/{co['id']}/tasks",
++        headers={"X-User-ID": owner["id"]},
++        json={
++            "agent_instance_id": hire.json()["id"],
++            "title": "Refund case",
++            "instruction": "Customer wants refund after late cancel",
++        },
++    )
++    return co["id"], owner["id"], hire.json()["id"], task.json()["id"]
++
++
++def validated_experience(client, company_id, owner_id, task_id):
++    cand = client.post(
++        f"/api/v1/companies/{company_id}/tasks/{task_id}/experiences",
++        headers={"X-User-ID": owner_id},
++        json={
++            "decision": "Escalate refund",
++            "lesson": "Late cancel needs manager",
++            "confidence": 0.5,
++        },
++    ).json()
++    val = client.post(
++        f"/api/v1/companies/{company_id}/experiences/{cand['id']}/validate",
++        headers={"X-User-ID": owner_id},
++        json={"approve": True, "confidence": 0.8, "lesson": "Late cancel needs manager"},
++    )
++    assert val.status_code == 200
++    return val.json()
++
++
++def test_job10_matrix_candidate_validate_retrieve_confidence_feedback(client):
++    company_id, owner_id, agent_id, task_id = setup(client)
++    exp = validated_experience(client, company_id, owner_id, task_id)
++    assert exp["validation_status"] == "validated"
++    assert exp["confidence"] == 0.8
++
++    # retrieval
++    hits = client.post(
++        f"/api/v1/companies/{company_id}/experiences/search",
++        headers={"X-User-ID": owner_id},
++        json={"query": "refund late cancel manager", "limit": 5},
++    )
++    assert hits.status_code == 200
++    assert any(h["id"] == exp["id"] for h in hits.json())
++
++    # helpful feedback raises confidence + success_count
++    fb = client.post(
++        f"/api/v1/companies/{company_id}/experiences/{exp['id']}/feedback",
++        headers={"X-User-ID": owner_id},
++        json={
++            "helpful": True,
++            "human_correction": "Also document policy id REF-1",
++            "confidence_delta": 0.05,
++        },
++    )
++    assert fb.status_code == 200, fb.text
++    assert fb.json()["success_count"] >= 1
++    assert fb.json()["confidence"] >= 0.85
++    assert "REF-1" in fb.json()["human_correction"]
++
++
++def test_unhelpful_feedback_lowers_confidence(client):
++    company_id, owner_id, agent_id, task_id = setup(client)
++    exp = validated_experience(client, company_id, owner_id, task_id)
++    before = exp["confidence"]
++    fb = client.post(
++        f"/api/v1/companies/{company_id}/experiences/{exp['id']}/feedback",
++        headers={"X-User-ID": owner_id},
++        json={"helpful": False, "human_correction": "Lesson was incomplete"},
++    )
++    assert fb.status_code == 200
++    assert fb.json()["confidence"] < before
++
++
++def test_feedback_only_on_validated(client):
++    company_id, owner_id, agent_id, task_id = setup(client)
++    cand = client.post(
++        f"/api/v1/companies/{company_id}/tasks/{task_id}/experiences",
++        headers={"X-User-ID": owner_id},
++        json={"decision": "x", "lesson": "y"},
++    ).json()
++    fb = client.post(
++        f"/api/v1/companies/{company_id}/experiences/{cand['id']}/feedback",
++        headers={"X-User-ID": owner_id},
++        json={"helpful": True},
++    )
++    assert fb.status_code == 409
++
++
++def test_reuse_bumps_success_count(client):
++    company_id, owner_id, agent_id, task_id = setup(client)
++    exp = validated_experience(client, company_id, owner_id, task_id)
++    r1 = client.post(
++        f"/api/v1/companies/{company_id}/experiences/{exp['id']}/reuse",
++        headers={"X-User-ID": owner_id},
++    )
++    assert r1.status_code == 200
++    assert r1.json()["success_count"] >= 1
++    conf1 = r1.json()["confidence"]
++    r2 = client.post(
++        f"/api/v1/companies/{company_id}/experiences/{exp['id']}/reuse",
++        headers={"X-User-ID": owner_id},
++    )
++    assert r2.json()["success_count"] >= 2
++    assert r2.json()["confidence"] >= conf1
++
++
++def test_archive_hides_from_search(client):
++    company_id, owner_id, agent_id, task_id = setup(client)
++    exp = validated_experience(client, company_id, owner_id, task_id)
++    arch = client.post(
++        f"/api/v1/companies/{company_id}/experiences/{exp['id']}/archive",
++        headers={"X-User-ID": owner_id},
++    )
++    assert arch.status_code == 200
++    assert arch.json()["validation_status"] == "archived"
++    assert arch.json()["is_active"] is False
++
++    hits = client.post(
++        f"/api/v1/companies/{company_id}/experiences/search",
++        headers={"X-User-ID": owner_id},
++        json={"query": "refund late cancel manager", "limit": 5},
++    )
++    assert all(h["id"] != exp["id"] for h in hits.json())
++
++
++def test_get_experience(client):
++    company_id, owner_id, agent_id, task_id = setup(client)
++    exp = validated_experience(client, company_id, owner_id, task_id)
++    got = client.get(
++        f"/api/v1/companies/{company_id}/experiences/{exp['id']}",
++        headers={"X-User-ID": owner_id},
++    )
++    assert got.status_code == 200
++    assert got.json()["id"] == exp["id"]
++
++
++def test_manual_candidate_create_fixed(client):
++    """Regression: POST /experiences must not crash (signature fix)."""
++    company_id, owner_id, agent_id, task_id = setup(client)
++    resp = client.post(
++        f"/api/v1/companies/{company_id}/experiences",
++        headers={"X-User-ID": owner_id},
++        json={
++            "agent_instance_id": agent_id,
++            "problem": "Manual candidate problem",
++            "decision": "Do X",
++            "lesson": "Learn Y",
++            "confidence": 0.4,
++        },
++    )
++    assert resp.status_code == 201, resp.text
++    assert resp.json()["validation_status"] == "candidate"

@@ -7,135 +7,198 @@
   <link rel="stylesheet" href="/workspace/assets/styles.css" />
 </head>
 <body>
-  <div id="app">
+  <!-- ========== LOGIN GATE ========== -->
+  <div id="loginGate" class="login-gate">
+    <div class="login-card">
+      <div class="login-brand">
+        <div class="logo lg">AI</div>
+        <div>
+          <h1>AI Employee Platform</h1>
+          <p>Modern enterprise workspace for human + AI collaboration</p>
+        </div>
+      </div>
+
+      <div class="login-tabs">
+        <button type="button" class="tab active" data-tab="quick">Quick start</button>
+        <button type="button" class="tab" data-tab="login">Login</button>
+        <button type="button" class="tab" data-tab="connect">Connect IDs</button>
+      </div>
+
+      <div id="tab-quick" class="tab-panel active">
+        <p class="muted">Create a demo company, owner account, and hire sample AI employees in one click.</p>
+        <button id="btnQuickStart" class="primary block">Launch demo workspace</button>
+        <pre id="quickLog" class="log"></pre>
+      </div>
+
+      <div id="tab-login" class="tab-panel">
+        <label>Company ID
+          <input id="loginCompanyId" placeholder="uuid from quick start or admin" />
+        </label>
+        <label>Email
+          <input id="loginEmail" placeholder="owner@demo.local" />
+        </label>
+        <label>Password
+          <input id="loginPassword" type="password" placeholder="min 8 characters" />
+        </label>
+        <div class="row">
+          <button id="btnLogin" class="primary">Sign in</button>
+          <button id="btnRegister" class="secondary">Register</button>
+        </div>
+        <pre id="loginLog" class="log"></pre>
+      </div>
+
+      <div id="tab-connect" class="tab-panel">
+        <p class="muted">Dev mode: paste existing company + user IDs (X-User-ID).</p>
+        <label>API base
+          <input id="apiBase" value="/api/v1" />
+        </label>
+        <label>Company ID
+          <input id="companyId" placeholder="uuid" />
+        </label>
+        <label>User ID
+          <input id="userId" placeholder="uuid" />
+        </label>
+        <div class="row">
+          <button id="btnConnect" class="primary">Connect</button>
+          <button id="btnClearSession" class="secondary">Clear session</button>
+        </div>
+        <pre id="setupLog" class="log"></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== APP SHELL ========== -->
+  <div id="app" class="hidden">
     <aside class="sidebar">
       <div class="brand">
         <span class="logo">AI</span>
         <div>
           <strong>Employee Platform</strong>
-          <small>Human + AI Workspace</small>
+          <small id="brandSub">Workspace</small>
         </div>
       </div>
+
       <nav id="nav">
-        <button data-view="setup" class="nav-btn active">Setup</button>
-        <button data-view="workforce" class="nav-btn" disabled>Workforce Overview</button>
-        <button data-view="inbox" class="nav-btn" disabled>AI Inbox</button>
-        <button data-view="notifications" class="nav-btn" disabled>Notifications</button>
-        <button data-view="tasks" class="nav-btn" disabled>Task Center</button>
-        <button data-view="approvals" class="nav-btn" disabled>Approval Center</button>
-        <button data-view="agents" class="nav-btn" disabled>Agent Dashboard</button>
-        <button data-view="consult" class="nav-btn" disabled>Consultation</button>
-        <button data-view="chat" class="nav-btn" disabled>Agent Chat</button>
-        <button data-view="directory" class="nav-btn" disabled>Directory</button>
-        <button data-view="knowledge" class="nav-btn" disabled>Knowledge</button>
-        <button data-view="delegation" class="nav-btn" disabled>Delegation</button>
-        <button data-view="automation" class="nav-btn" disabled>Automation</button>
-        <button data-view="governance" class="nav-btn" disabled>Governance</button>
+        <div class="nav-group">Work</div>
+        <button data-view="home" class="nav-btn active">Home</button>
+        <button data-view="inbox" class="nav-btn">Inbox <span id="navInboxCount" class="nav-count hidden">0</span></button>
+        <button data-view="chat" class="nav-btn">Chat</button>
+        <button data-view="tasks" class="nav-btn">Tasks</button>
+        <button data-view="approvals" class="nav-btn">Approvals</button>
+
+        <div class="nav-group">Workforce</div>
+        <button data-view="agents" class="nav-btn">AI Employees</button>
+        <button data-view="directory" class="nav-btn">Directory</button>
+        <button data-view="marketplace" class="nav-btn">Marketplace</button>
+
+        <div class="nav-group">Collaborate</div>
+        <button data-view="consult" class="nav-btn">Consult</button>
+        <button data-view="knowledge" class="nav-btn">Knowledge</button>
+        <button data-view="delegation" class="nav-btn">Delegation</button>
+        <button data-view="automation" class="nav-btn">Automation</button>
+
+        <div class="nav-group">Company</div>
+        <button data-view="notifications" class="nav-btn">Notifications</button>
+        <button data-view="governance" class="nav-btn">Governance</button>
       </nav>
+
       <div class="session" id="sessionBox">
         <small>Not connected</small>
       </div>
+      <button id="btnLogout" class="secondary block logout-btn">Sign out</button>
     </aside>
 
     <main class="main">
       <header class="topbar">
-        <h1 id="viewTitle">Setup</h1>
+        <div>
+          <h1 id="viewTitle">Home</h1>
+          <p id="viewSubtitle" class="muted top-sub">Command center</p>
+        </div>
         <div class="top-actions">
+          <button id="btnTopNotif" class="icon-btn" title="Notifications">🔔 <span id="notifBadge" class="badge hidden">0</span></button>
           <span id="inboxBadge" class="badge hidden">0</span>
-          <span id="statusPill" class="pill muted">Offline</span>
+          <span id="statusPill" class="pill ok">Online</span>
         </div>
       </header>
 
-      <!-- SETUP -->
-      <section id="view-setup" class="view active">
-        <div class="card">
-          <h2>Connect to company</h2>
-          <p class="muted">Workspace uses API header <code>X-User-ID</code>. Create a demo company or paste existing IDs.</p>
-          <div class="grid-2">
-            <label>API base
-              <input id="apiBase" value="/api/v1" />
-            </label>
-            <label>Company ID
-              <input id="companyId" placeholder="uuid" />
-            </label>
-            <label>User ID
-              <input id="userId" placeholder="uuid" />
-            </label>
-          </div>
-          <div class="row">
-            <button id="btnConnect" class="primary">Connect</button>
-            <button id="btnQuickStart" class="secondary">Quick start (demo company)</button>
-            <button id="btnClearSession" class="secondary">Clear session</button>
-          </div>
-          
-          <hr />
-          <h3>Login with password (Job 15)</h3>
-          <p class="muted">After Quick start, set a password via Register or use Login.</p>
-          <div class="grid-2">
-            <label>Email
-              <input id="loginEmail" placeholder="owner@demo.local" />
-            </label>
-            <label>Password
-              <input id="loginPassword" type="password" placeholder="min 8 chars" />
-            </label>
-          </div>
-          <div class="row">
-            <button id="btnLogin" class="primary">Login</button>
-            <button id="btnRegister" class="secondary">Register on company</button>
-          </div>
-
-          <pre id="setupLog" class="log"></pre>
-        </div>
-      </section>
-
-      <!-- WORKFORCE OVERVIEW -->
-      <section id="view-workforce" class="view">
-        <div class="stats" id="wfStats"></div>
+      <!-- HOME -->
+      <section id="view-home" class="view active">
+        <div class="stats" id="homeStats"></div>
         <div class="grid-2">
           <div class="card">
-            <h3>Workforce by status</h3>
-            <div id="wfStatusBreakdown" class="list"></div>
+            <div class="row between">
+              <h3>Needs attention</h3>
+              <button data-jump="inbox" class="link-btn">Open inbox →</button>
+            </div>
+            <div id="homeInbox" class="list"></div>
           </div>
           <div class="card">
-            <h3>Recent activity</h3>
-            <div id="wfActivity" class="list"></div>
+            <div class="row between">
+              <h3>Your AI employees</h3>
+              <button data-jump="agents" class="link-btn">Manage →</button>
+            </div>
+            <div id="homeAgents" class="cards compact"></div>
           </div>
         </div>
         <div class="card">
-          <h3>AI Employees snapshot</h3>
-          <div id="wfAgentGrid" class="cards"></div>
-        </div>
-      </section>
-
-      <!-- AI INBOX -->
-      
-      <section id="view-notifications" class="view">
-        <div class="card">
-          <h2>Notifications</h2>
-          <p class="muted">Approvals, delegations, and task failures routed to you.</p>
+          <h3>Quick actions</h3>
           <div class="row">
-            <button id="btnNotifRefresh" class="secondary">Refresh</button>
-            <button id="btnNotifReadAll" class="secondary">Mark all read</button>
+            <button data-jump="chat" class="primary">Open chat</button>
+            <button data-jump="tasks" class="secondary">Create task</button>
+            <button data-jump="marketplace" class="secondary">Browse marketplace</button>
+            <button data-jump="approvals" class="secondary">Review approvals</button>
           </div>
-          <div id="notifStats" class="stats"></div>
-          <div id="notifList" class="list"></div>
         </div>
       </section>
 
+      <!-- INBOX -->
       <section id="view-inbox" class="view">
         <div class="card">
           <div class="row between">
-            <h2>AI Inbox</h2>
+            <div>
+              <h2>AI Inbox</h2>
+              <p class="muted">Pending tasks, approvals, and open delegations.</p>
+            </div>
             <button id="btnRefreshInbox" class="secondary">Refresh</button>
           </div>
-          <p class="muted">Unified queue: pending tasks, approvals, and open delegations that need human attention.</p>
           <div class="stats" id="inboxStats"></div>
-          <h3>Needs attention</h3>
           <div id="inboxList" class="list"></div>
         </div>
       </section>
 
-      <!-- TASK CENTER -->
+      <!-- CHAT -->
+      <section id="view-chat" class="view">
+        <div class="chat-layout">
+          <div class="card chat-side">
+            <h3>Conversation</h3>
+            <label>Agent
+              <select id="chatAgent"></select>
+            </label>
+            <label>Title
+              <input id="chatTitle" value="Workspace chat" />
+            </label>
+            <button id="btnChatStart" class="primary block">Start / switch</button>
+            <div id="chatMeta" class="muted meta-box"></div>
+            <label class="check-row">
+              <input type="checkbox" id="chatCreateTask" /> Create task from message
+            </label>
+            <select id="chatTaskMode">
+              <option value="consult">consult</option>
+              <option value="execute">execute</option>
+            </select>
+          </div>
+          <div class="card chat-main">
+            <div id="chatThread" class="chat-thread"></div>
+            <div class="chat-composer">
+              <textarea id="chatInput" rows="2" placeholder="Message your AI employee…"></textarea>
+              <button id="btnChatSend" class="primary">Send</button>
+            </div>
+            <pre id="chatLog" class="log hidden-log"></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- TASKS -->
       <section id="view-tasks" class="view">
         <div class="card">
           <h2>Create task</h2>
@@ -160,14 +223,14 @@
         </div>
         <div class="card">
           <div class="row between">
-            <h3>Task Center</h3>
+            <h3>Task center</h3>
             <div class="row">
               <select id="taskFilter">
                 <option value="all">All</option>
                 <option value="pending">Pending</option>
                 <option value="completed">Completed</option>
-                <option value="consult">Consult mode</option>
-                <option value="execute">Execute mode</option>
+                <option value="consult">Consult</option>
+                <option value="execute">Execute</option>
               </select>
               <button id="btnRefreshTasks" class="secondary">Refresh</button>
             </div>
@@ -176,23 +239,25 @@
         </div>
       </section>
 
-      <!-- APPROVAL CENTER -->
+      <!-- APPROVALS -->
       <section id="view-approvals" class="view">
         <div class="card">
           <div class="row between">
-            <h2>Approval Center</h2>
+            <div>
+              <h2>Approval center</h2>
+              <p class="muted">Human authority for restricted AI actions.</p>
+            </div>
             <button id="btnRefreshApprovals" class="secondary">Refresh</button>
           </div>
-          <p class="muted">Review and decide on actions that require human authority.</p>
           <div id="approvalList" class="list"></div>
         </div>
       </section>
 
-      <!-- AGENT DASHBOARD -->
+      <!-- AGENTS -->
       <section id="view-agents" class="view">
         <div class="card">
           <div class="row between">
-            <h2>Agent Dashboard</h2>
+            <h2>AI Employees</h2>
             <button id="btnRefreshAgents" class="secondary">Refresh</button>
           </div>
           <div id="agentList" class="cards"></div>
@@ -208,47 +273,29 @@
         </div>
       </section>
 
-      <!-- CONSULT -->
-      
-      <section id="view-chat" class="view">
+      <!-- MARKETPLACE -->
+      <section id="view-marketplace" class="view">
         <div class="card">
-          <h2>Agent Chat</h2>
-          <p class="muted">Advisory transcript only. Tools require creating a Task.</p>
-          <div class="grid-2">
-            <label>Agent
-              <select id="chatAgent"></select>
-            </label>
-            <label>Conversation title
-              <input id="chatTitle" value="Workspace chat" />
-            </label>
+          <div class="row between">
+            <div>
+              <h2>Marketplace</h2>
+              <p class="muted">Public agent templates. Install copies skills into your company catalog.</p>
+            </div>
+            <button id="btnRefreshMarket" class="secondary">Refresh</button>
           </div>
-          <div class="row">
-            <button id="btnChatStart" class="primary">Start conversation</button>
-            <button id="btnChatRefresh" class="secondary">Refresh messages</button>
-          </div>
-          <div id="chatMeta" class="muted"></div>
-          <div id="chatThread" class="list" style="max-height:360px;overflow:auto"></div>
-          <label>Message
-            <textarea id="chatInput" rows="3" placeholder="Ask the agent..."></textarea>
-          </label>
-          <div class="row">
-            <button id="btnChatSend" class="primary">Send</button>
-            <label style="display:flex;align-items:center;gap:6px">
-              <input type="checkbox" id="chatCreateTask" /> Create Task
-            </label>
-            <select id="chatTaskMode">
-              <option value="consult">consult</option>
-              <option value="execute">execute</option>
-            </select>
-          </div>
-          <pre id="chatLog" class="log"></pre>
+          <div id="marketList" class="cards"></div>
+        </div>
+        <div class="card">
+          <h3>Installed templates</h3>
+          <div id="installList" class="list"></div>
         </div>
       </section>
 
+      <!-- CONSULT -->
       <section id="view-consult" class="view">
         <div class="card">
           <h2>Consultation</h2>
-          <p class="muted">Ask for a recommendation without side-effect tools.</p>
+          <p class="muted">Recommendation without side-effect tools.</p>
           <div class="grid-2">
             <label>Agent
               <select id="consultAgent"></select>
@@ -268,7 +315,7 @@
       <!-- DIRECTORY -->
       <section id="view-directory" class="view">
         <div class="card">
-          <h2>Agent Directory</h2>
+          <h2>Agent directory</h2>
           <div class="row">
             <input id="dirSkill" placeholder="skill filter e.g. contract_analysis" />
             <button id="btnSearchDir" class="primary">Search</button>
@@ -293,7 +340,7 @@
           <button id="btnAddKnowledge" class="primary">Add knowledge</button>
           <hr />
           <div class="row">
-            <input id="knowQuery" placeholder="Search knowledge..." />
+            <input id="knowQuery" placeholder="Search knowledge…" class="grow" />
             <button id="btnSearchKnow" class="secondary">Search</button>
           </div>
           <div id="knowResults" class="list"></div>
@@ -342,69 +389,76 @@
             </label>
             <label>Trigger
               <select id="autoTrigger">
-                <option value="event">Event</option>
-                <option value="schedule">Schedule</option>
+                <option value="schedule">schedule</option>
+                <option value="event">event</option>
               </select>
             </label>
             <label>Name
-              <input id="autoName" placeholder="On booking created" />
+              <input id="autoName" placeholder="Nightly report" />
             </label>
-            <label>Event type
-              <input id="autoEvent" placeholder="booking.created" />
+            <label>Cron / event type
+              <input id="autoExpr" placeholder="0 8 * * * or booking.created" />
             </label>
-            <label>Title template
-              <input id="autoTitle" placeholder="Booking {booking_id}" />
+            <label class="full">Task title template
+              <input id="autoTitleTpl" placeholder="Daily summary" />
             </label>
             <label class="full">Instruction template
-              <textarea id="autoInstruction" rows="2" placeholder="Handle booking {booking_id}"></textarea>
+              <textarea id="autoInstrTpl" rows="2"></textarea>
             </label>
           </div>
-          <button id="btnCreateAuto" class="primary">Create rule</button>
           <div class="row">
-            <button id="btnTickAuto" class="secondary">Run schedule tick</button>
-            <button id="btnFireEvent" class="secondary">Fire sample event</button>
+            <button id="btnCreateAuto" class="primary">Create rule</button>
+            <button id="btnTickAuto" class="secondary">Tick schedules</button>
+            <button id="btnFireEvent" class="secondary">Fire demo event</button>
           </div>
-          <pre id="autoLog" class="log"></pre>
         </div>
         <div class="card">
           <div class="row between">
-            <h3>Rules & runs</h3>
+            <h3>Rules</h3>
             <button id="btnRefreshAuto" class="secondary">Refresh</button>
           </div>
-          <div id="autoRules" class="list"></div>
-          <hr />
-          <div id="autoRuns" class="list"></div>
+          <div id="autoList" class="list"></div>
         </div>
       </section>
-    
+
+      <!-- NOTIFICATIONS -->
+      <section id="view-notifications" class="view">
+        <div class="card">
+          <div class="row between">
+            <h2>Notifications</h2>
+            <div class="row">
+              <button id="btnNotifRefresh" class="secondary">Refresh</button>
+              <button id="btnNotifReadAll" class="secondary">Mark all read</button>
+            </div>
+          </div>
+          <div id="notifStats" class="stats"></div>
+          <div id="notifList" class="list"></div>
+        </div>
+      </section>
+
       <!-- GOVERNANCE -->
       <section id="view-governance" class="view">
         <div class="card">
           <div class="row between">
-            <h2>Performance & Governance</h2>
+            <h2>Governance</h2>
             <button id="btnRefreshGov" class="secondary">Refresh</button>
           </div>
-          <p class="muted">Read-only metrics: workforce, tasks, approvals, experience quality, audit.</p>
-          <div class="stats" id="govStats"></div>
-        </div>
-        <div class="grid-2">
-          <div class="card">
-            <h3>Agent performance</h3>
-            <div id="govAgents" class="list"></div>
+          <div id="govStats" class="stats"></div>
+          <div class="grid-2">
+            <div>
+              <h3>Agents</h3>
+              <div id="govAgents" class="list"></div>
+            </div>
+            <div>
+              <h3>Recent audit</h3>
+              <div id="govAudit" class="list"></div>
+            </div>
           </div>
-          <div class="card">
-            <h3>Experience quality</h3>
-            <pre id="govExp" class="log"></pre>
-          </div>
-        </div>
-        <div class="card">
-          <h3>Audit analytics (recent)</h3>
-          <pre id="govAudit" class="log"></pre>
         </div>
       </section>
-
     </main>
   </div>
+
   <script src="/workspace/assets/app.js"></script>
 </body>
 </html>

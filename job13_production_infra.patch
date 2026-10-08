@@ -1,0 +1,1204 @@
+diff --git a/.env.example b/.env.example
+index 6534ef7..9da9f99 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1,2 +1,33 @@
+ APP_NAME=AI Employee Platform
++APP_ENV=development
++DEBUG=true
++
++# SQLite (local / tests)
+ DATABASE_URL=sqlite:///./ai_employee.db
++
++# PostgreSQL (production)
++# DATABASE_URL=postgresql+psycopg://aiep:aiep@localhost:5432/aiep
++DB_POOL_SIZE=5
++DB_MAX_OVERFLOW=10
++
++# Auth
++AUTH_ENABLED=false
++JWT_SECRET=dev-change-me-in-production
++JWT_ALGORITHM=HS256
++JWT_EXPIRE_MINUTES=720
++
++# Storage
++STORAGE_BACKEND=local
++STORAGE_LOCAL_PATH=./storage
++
++# Workers
++WORKER_POLL_SECONDS=30
++
++# Observability
++LOG_LEVEL=INFO
++LOG_JSON=false
++
++# LLM
++LLM_PROVIDER=ollama
++OLLAMA_BASE_URL=http://127.0.0.1:11434
++OLLAMA_MODEL=qwen3:1.7b
+diff --git a/Dockerfile b/Dockerfile
+new file mode 100644
+index 0000000..baf65a1
+--- /dev/null
++++ b/Dockerfile
+@@ -0,0 +1,19 @@
++FROM python:3.12-slim
++
++WORKDIR /app
++
++ENV PYTHONDONTWRITEBYTECODE=1 \
++    PYTHONUNBUFFERED=1
++
++RUN apt-get update && apt-get install -y --no-install-recommends \
++    build-essential libpq-dev \
++    && rm -rf /var/lib/apt/lists/*
++
++COPY requirements.txt .
++RUN pip install --no-cache-dir -r requirements.txt
++
++COPY . .
++
++EXPOSE 8000
++
++CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+diff --git a/alembic.ini b/alembic.ini
+new file mode 100644
+index 0000000..bac4e98
+--- /dev/null
++++ b/alembic.ini
+@@ -0,0 +1,40 @@
++[alembic]
++script_location = alembic
++prepend_sys_path = .
++version_path_separator = os
++
++sqlalchemy.url = driver://user:pass@localhost/dbname
++
++[loggers]
++keys = root,sqlalchemy,alembic
++
++[handlers]
++keys = console
++
++[formatters]
++keys = generic
++
++[logger_root]
++level = WARN
++handlers = console
++qualname =
++
++[logger_sqlalchemy]
++level = WARN
++handlers =
++qualname = sqlalchemy.engine
++
++[logger_alembic]
++level = INFO
++handlers =
++qualname = alembic
++
++[handler_console]
++class = StreamHandler
++args = (sys.stderr,)
++level = NOTSET
++formatter = generic
++
++[formatter_generic]
++format = %(levelname)-5.5s [%(name)s] %(message)s
++datefmt = %H:%M:%S
+diff --git a/alembic/env.py b/alembic/env.py
+new file mode 100644
+index 0000000..b0194f9
+--- /dev/null
++++ b/alembic/env.py
+@@ -0,0 +1,50 @@
++from logging.config import fileConfig
++
++from alembic import context
++from sqlalchemy import engine_from_config, pool
++
++from app.core.config import settings
++from app.core.database import Base
++import app.models  # noqa: F401
++
++config = context.config
++if config.config_file_name is not None:
++    fileConfig(config.config_file_name)
++
++config.set_main_option("sqlalchemy.url", settings.database_url)
++target_metadata = Base.metadata
++
++
++def run_migrations_offline() -> None:
++    url = config.get_main_option("sqlalchemy.url")
++    context.configure(
++        url=url,
++        target_metadata=target_metadata,
++        literal_binds=True,
++        dialect_opts={"paramstyle": "named"},
++        compare_type=True,
++    )
++    with context.begin_transaction():
++        context.run_migrations()
++
++
++def run_migrations_online() -> None:
++    connectable = engine_from_config(
++        config.get_section(config.config_ini_section, {}),
++        prefix="sqlalchemy.",
++        poolclass=pool.NullPool,
++    )
++    with connectable.connect() as connection:
++        context.configure(
++            connection=connection,
++            target_metadata=target_metadata,
++            compare_type=True,
++        )
++        with context.begin_transaction():
++            context.run_migrations()
++
++
++if context.is_offline_mode():
++    run_migrations_offline()
++else:
++    run_migrations_online()
+diff --git a/alembic/script.py.mako b/alembic/script.py.mako
+new file mode 100644
+index 0000000..fbc4b07
+--- /dev/null
++++ b/alembic/script.py.mako
+@@ -0,0 +1,26 @@
++"""${message}
++
++Revision ID: ${up_revision}
++Revises: ${down_revision | comma,n}
++Create Date: ${create_date}
++
++"""
++from typing import Sequence, Union
++
++from alembic import op
++import sqlalchemy as sa
++${imports if imports else ""}
++
++# revision identifiers, used by Alembic.
++revision: str = ${repr(up_revision)}
++down_revision: Union[str, None] = ${repr(down_revision)}
++branch_labels: Union[str, Sequence[str], None] = ${repr(branch_labels)}
++depends_on: Union[str, Sequence[str], None] = ${repr(depends_on)}
++
++
++def upgrade() -> None:
++    ${upgrades if upgrades else "pass"}
++
++
++def downgrade() -> None:
++    ${downgrades if downgrades else "pass"}
+diff --git a/alembic/versions/0001_initial_schema.py b/alembic/versions/0001_initial_schema.py
+new file mode 100644
+index 0000000..ec9e2df
+--- /dev/null
++++ b/alembic/versions/0001_initial_schema.py
+@@ -0,0 +1,42 @@
++"""initial schema baseline
++
++Revision ID: 0001_initial
++Revises:
++Create Date: 2026-10-07
++
++Baseline revision for production. For greenfield Postgres:
++
++  alembic upgrade head
++
++For existing SQLite MVP databases, continue using create_all +
++migrate_sqlite_schema until you cut over.
++"""
++
++from typing import Sequence, Union
++
++from alembic import op
++import sqlalchemy as sa
++
++revision: str = "0001_initial"
++down_revision: Union[str, None] = None
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    # Tables are managed via SQLAlchemy metadata for MVP.
++    # Operators should run: Base.metadata.create_all or alembic with autogenerate
++    # after pointing DATABASE_URL at Postgres.
++    bind = op.get_bind()
++    from app.core.database import Base
++    import app.models  # noqa: F401
++
++    Base.metadata.create_all(bind=bind)
++
++
++def downgrade() -> None:
++    bind = op.get_bind()
++    from app.core.database import Base
++    import app.models  # noqa: F401
++
++    Base.metadata.drop_all(bind=bind)
+diff --git a/app/api/auth_routes.py b/app/api/auth_routes.py
+new file mode 100644
+index 0000000..165d242
+--- /dev/null
++++ b/app/api/auth_routes.py
+@@ -0,0 +1,58 @@
++"""Production auth endpoints (JWT)."""
++
++from fastapi import APIRouter, Depends, HTTPException, status
++from pydantic import BaseModel, Field
++from sqlalchemy import select
++from sqlalchemy.orm import Session
++
++from app.core.database import get_db
++from app.core.security import create_access_token
++from app.models.entities import User
++
++router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
++
++
++class TokenRequest(BaseModel):
++    company_id: str
++    email: str = Field(min_length=3)
++    # MVP: no password store yet — token issuance is gated by active user match
++    # Production should verify password/OIDC before calling this.
++
++
++class TokenResponse(BaseModel):
++    access_token: str
++    token_type: str = "bearer"
++    user_id: str
++    company_id: str
++
++
++@router.post("/token", response_model=TokenResponse)
++def issue_token(payload: TokenRequest, db: Session = Depends(get_db)):
++    """
++    Issue a JWT for an active user in a company.
++
++    Note: MVP has no password hash; this endpoint identifies the user by
++    company_id + email. Wire SSO/password before enabling AUTH_ENABLED=true
++    in production.
++    """
++    user = db.scalar(
++        select(User).where(
++            User.company_id == payload.company_id,
++            User.email == payload.email,
++        )
++    )
++    if not user or getattr(user, "status", "active") != "active":
++        raise HTTPException(
++            status_code=status.HTTP_401_UNAUTHORIZED,
++            detail="Invalid credentials",
++        )
++    token = create_access_token(
++        subject=user.id,
++        company_id=user.company_id,
++        extra={"email": user.email, "role_id": user.role_id},
++    )
++    return TokenResponse(
++        access_token=token,
++        user_id=user.id,
++        company_id=user.company_id,
++    )
+diff --git a/app/core/auth.py b/app/core/auth.py
+index d647aa9..0f1e94f 100644
+--- a/app/core/auth.py
++++ b/app/core/auth.py
+@@ -1,13 +1,54 @@
+-from fastapi import Header, HTTPException
++"""Authentication dependencies — JWT Bearer + legacy X-User-ID."""
++
++from __future__ import annotations
++
++from fastapi import Depends, Header, HTTPException
+ from sqlalchemy.orm import Session
+ 
++from app.core.config import settings
++from app.core.database import get_db
++from app.core.security import decode_access_token
+ from app.models import User
+ 
+ 
+-def get_current_user(x_user_id: str | None = Header(default=None), db: Session | None = None):
+-    if not x_user_id or db is None:
+-        raise HTTPException(status_code=401, detail="X-User-ID header is required")
+-    user = db.get(User, x_user_id)
+-    if not user or user.status != "active":
++def _load_user(db: Session, user_id: str) -> User:
++    user = db.get(User, user_id)
++    if not user or getattr(user, "status", "active") != "active":
+         raise HTTPException(status_code=401, detail="Invalid or inactive user")
+     return user
++
++
++def get_current_user(
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++    authorization: str | None = Header(default=None),
++) -> User:
++    """
++    Resolve current user from:
++    1. Authorization: Bearer <jwt>
++    2. X-User-ID header (MVP / workspace compatibility)
++
++    When auth_enabled=True in production, missing credentials → 401.
++    """
++    # Bearer JWT
++    if authorization and authorization.lower().startswith("bearer "):
++        token = authorization.split(" ", 1)[1].strip()
++        try:
++            payload = decode_access_token(token)
++        except ValueError as exc:
++            raise HTTPException(status_code=401, detail=str(exc)) from exc
++        user_id = payload.get("sub")
++        if not user_id:
++            raise HTTPException(status_code=401, detail="Token missing subject")
++        return _load_user(db, user_id)
++
++    # Legacy header
++    if x_user_id:
++        return _load_user(db, x_user_id)
++
++    if settings.auth_enabled:
++        raise HTTPException(
++            status_code=401,
++            detail="Authentication required (Bearer token or X-User-ID)",
++        )
++    raise HTTPException(status_code=401, detail="X-User-ID header is required")
+diff --git a/app/core/config.py b/app/core/config.py
+index 7d2a74e..7912170 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -3,8 +3,35 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
+ 
+ class Settings(BaseSettings):
+     app_name: str = "AI Employee Platform"
++    app_env: str = "development"  # development | staging | production
++    debug: bool = True
++
++    # Database (sqlite for local/tests, postgresql+psycopg for production)
+     database_url: str = "sqlite:///./ai_employee.db"
++    db_pool_size: int = 5
++    db_max_overflow: int = 10
++
++    # Auth
++    auth_enabled: bool = False  # when True, Bearer JWT preferred; X-User-ID still accepted in non-prod
++    jwt_secret: str = "dev-change-me-in-production"
++    jwt_algorithm: str = "HS256"
++    jwt_expire_minutes: int = 60 * 12
++
++    # Object storage
++    storage_backend: str = "local"  # local | s3 (s3 stub)
++    storage_local_path: str = "./storage"
++    s3_bucket: str = ""
++    s3_region: str = "us-east-1"
++    s3_endpoint_url: str = ""
++
++    # Workers
++    worker_poll_seconds: int = 30
+ 
++    # Observability
++    log_level: str = "INFO"
++    log_json: bool = False
++
++    # LLM
+     llm_provider: str = "ollama"
+     ollama_base_url: str = "http://127.0.0.1:11434"
+     ollama_model: str = "qwen3:1.7b"
+@@ -14,5 +41,13 @@ class Settings(BaseSettings):
+         extra="ignore",
+     )
+ 
++    @property
++    def is_sqlite(self) -> bool:
++        return self.database_url.startswith("sqlite")
++
++    @property
++    def is_postgres(self) -> bool:
++        return self.database_url.startswith("postgresql")
++
+ 
+-settings = Settings()
+\ No newline at end of file
++settings = Settings()
+diff --git a/app/core/database.py b/app/core/database.py
+index f4a022b..44aab24 100644
+--- a/app/core/database.py
++++ b/app/core/database.py
+@@ -6,41 +6,29 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+ from app.core.config import settings
+ 
+ 
+-# ============================================================
+-# Base
+-# ============================================================
+-
+ class Base(DeclarativeBase):
+-    """
+-    Base class untuk seluruh SQLAlchemy models.
+-    """
+     pass
+ 
+ 
+-# ============================================================
+-# Database Engine
+-# ============================================================
+-
+ DATABASE_URL = settings.database_url
+ 
+-connect_args: dict[str, object] = {}
++connect_args: dict = {}
++engine_kwargs: dict = {
++    "pool_pre_ping": True,
++}
+ 
+-if DATABASE_URL.startswith("sqlite"):
+-    # SQLite membutuhkan flag ini ketika digunakan oleh
+-    # FastAPI dengan beberapa thread.
++if settings.is_sqlite:
+     connect_args["check_same_thread"] = False
+-
++else:
++    engine_kwargs["pool_size"] = settings.db_pool_size
++    engine_kwargs["max_overflow"] = settings.db_max_overflow
+ 
+ engine = create_engine(
+     DATABASE_URL,
+     connect_args=connect_args,
++    **engine_kwargs,
+ )
+ 
+-
+-# ============================================================
+-# Session Factory
+-# ============================================================
+-
+ SessionLocal = sessionmaker(
+     bind=engine,
+     autoflush=False,
+@@ -49,113 +37,38 @@ SessionLocal = sessionmaker(
+ )
+ 
+ 
+-# ============================================================
+-# Database Initialization
+-# ============================================================
+-
+ def init_db() -> None:
+-    """
+-    Initialize database schema.
+-
+-    create_all():
+-        - Membuat tabel yang belum ada.
+-        - Tidak mengubah tabel yang sudah ada.
+-
+-    migrate_sqlite_schema():
+-        - Menangani perubahan schema sederhana untuk SQLite
+-          pada database MVP yang sudah pernah dibuat.
+-    """
+-
+-    # Pastikan semua model sudah di-import sebelum create_all()
+-    #
+-    # Import model di sini membantu memastikan SQLAlchemy
+-    # mengetahui seluruh table/model yang harus dibuat.
+-    #
+-    # Jangan hapus import ini walaupun terlihat tidak digunakan.
+-    from app.models import (  # noqa: F401
+-        agent_instance,
+-        # Tambahkan module model lain di sini jika project Anda
+-        # menggunakan import eksplisit.
+-    )
++    """Create tables and run lightweight SQLite column migrations."""
++    import app.models  # noqa: F401
+ 
+     Base.metadata.create_all(bind=engine)
+-
+     migrate_sqlite_schema()
+ 
+ 
+-# ============================================================
+-# Lightweight SQLite Migration
+-# ============================================================
+-
+ def migrate_sqlite_schema() -> None:
+-    """
+-    Lightweight schema migration untuk MVP.
+-
+-    SQLAlchemy create_all() hanya membuat table yang belum ada.
+-    Ia tidak menambahkan column baru ke table yang sudah ada.
+-
+-    Fungsi ini menangani perubahan schema SQLite sederhana
+-    tanpa menghapus data existing.
+-
+-    IMPORTANT:
+-    - Tidak digunakan untuk PostgreSQL.
+-    - Untuk production nanti sebaiknya diganti dengan Alembic.
+-    """
+-
+-    # Migration ini hanya untuk SQLite.
+-    if not DATABASE_URL.startswith("sqlite"):
++    """Lightweight SQLite column adds for MVP; production should use Alembic."""
++    if not settings.is_sqlite:
+         return
+ 
+     inspector = inspect(engine)
+-
+     table_names = inspector.get_table_names()
+-
+-    # --------------------------------------------------------
+-    # agent_instances
+-    # --------------------------------------------------------
+-
+     if "agent_instances" not in table_names:
+         return
+ 
+-    columns = {
+-        column["name"]
+-        for column in inspector.get_columns("agent_instances")
+-    }
+-
+-    # --------------------------------------------------------
+-    # subscription_id
+-    # --------------------------------------------------------
+-
++    columns = {c["name"] for c in inspector.get_columns("agent_instances")}
+     if "subscription_id" not in columns:
+         with engine.begin() as connection:
+             connection.execute(
+                 text(
+-                    """
+-                    ALTER TABLE agent_instances
+-                    ADD COLUMN subscription_id VARCHAR(36)
+-                    """
++                    "ALTER TABLE agent_instances "
++                    "ADD COLUMN subscription_id VARCHAR(36)"
+                 )
+             )
+ 
+ 
+-# ============================================================
+-# FastAPI Database Dependency
+-# ============================================================
+-
+ def get_db() -> Generator[Session, None, None]:
+-    """
+-    FastAPI dependency untuk mendapatkan database session.
+-
+-    Contoh:
+-
+-        @router.get("/example")
+-        def example(db: Session = Depends(get_db)):
+-            ...
+-    """
+-
+     db = SessionLocal()
+-
+     try:
+         yield db
+     finally:
+-        db.close()
+\ No newline at end of file
++        db.close()
+diff --git a/app/core/logging.py b/app/core/logging.py
+new file mode 100644
+index 0000000..4aee1c9
+--- /dev/null
++++ b/app/core/logging.py
+@@ -0,0 +1,41 @@
++"""Structured logging setup."""
++
++from __future__ import annotations
++
++import json
++import logging
++import sys
++from datetime import datetime, timezone
++
++from app.core.config import settings
++
++
++class JsonFormatter(logging.Formatter):
++    def format(self, record: logging.LogRecord) -> str:
++        payload = {
++            "ts": datetime.now(timezone.utc).isoformat(),
++            "level": record.levelname,
++            "logger": record.name,
++            "msg": record.getMessage(),
++        }
++        if hasattr(record, "request_id"):
++            payload["request_id"] = record.request_id
++        if record.exc_info:
++            payload["exc_info"] = self.formatException(record.exc_info)
++        return json.dumps(payload, ensure_ascii=False)
++
++
++def setup_logging() -> None:
++    root = logging.getLogger()
++    if root.handlers:
++        return
++    level = getattr(logging, settings.log_level.upper(), logging.INFO)
++    root.setLevel(level)
++    handler = logging.StreamHandler(sys.stdout)
++    if settings.log_json:
++        handler.setFormatter(JsonFormatter())
++    else:
++        handler.setFormatter(
++            logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
++        )
++    root.addHandler(handler)
+diff --git a/app/core/middleware.py b/app/core/middleware.py
+new file mode 100644
+index 0000000..8b375f0
+--- /dev/null
++++ b/app/core/middleware.py
+@@ -0,0 +1,32 @@
++"""HTTP middleware: request ID + basic access log."""
++
++from __future__ import annotations
++
++import logging
++import time
++import uuid
++
++from starlette.middleware.base import BaseHTTPMiddleware
++from starlette.requests import Request
++from starlette.responses import Response
++
++logger = logging.getLogger("app.access")
++
++
++class RequestIdMiddleware(BaseHTTPMiddleware):
++    async def dispatch(self, request: Request, call_next) -> Response:
++        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
++        request.state.request_id = request_id
++        started = time.perf_counter()
++        response = await call_next(request)
++        duration_ms = (time.perf_counter() - started) * 1000
++        response.headers["X-Request-ID"] = request_id
++        logger.info(
++            "%s %s -> %s (%.1fms)",
++            request.method,
++            request.url.path,
++            response.status_code,
++            duration_ms,
++            extra={"request_id": request_id},
++        )
++        return response
+diff --git a/app/core/security.py b/app/core/security.py
+new file mode 100644
+index 0000000..91cde10
+--- /dev/null
++++ b/app/core/security.py
+@@ -0,0 +1,47 @@
++"""JWT helpers for production authentication."""
++
++from __future__ import annotations
++
++from datetime import datetime, timedelta, timezone
++from typing import Any
++
++from jose import JWTError, jwt
++
++from app.core.config import settings
++
++
++def create_access_token(
++    *,
++    subject: str,
++    company_id: str,
++    extra: dict[str, Any] | None = None,
++    expires_minutes: int | None = None,
++) -> str:
++    expire = datetime.now(timezone.utc) + timedelta(
++        minutes=expires_minutes or settings.jwt_expire_minutes
++    )
++    payload: dict[str, Any] = {
++        "sub": subject,
++        "company_id": company_id,
++        "exp": expire,
++        "iat": datetime.now(timezone.utc),
++        "type": "access",
++    }
++    if extra:
++        payload.update(extra)
++    return jwt.encode(
++        payload,
++        settings.jwt_secret,
++        algorithm=settings.jwt_algorithm,
++    )
++
++
++def decode_access_token(token: str) -> dict[str, Any]:
++    try:
++        return jwt.decode(
++            token,
++            settings.jwt_secret,
++            algorithms=[settings.jwt_algorithm],
++        )
++    except JWTError as exc:
++        raise ValueError("Invalid or expired token") from exc
+diff --git a/app/main.py b/app/main.py
+index 694381f..2856658 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -5,6 +5,7 @@ from fastapi import FastAPI
+ from fastapi.responses import FileResponse
+ from fastapi.staticfiles import StaticFiles
+ 
++from app.api.auth_routes import router as auth_router
+ from app.api.routes import router
+ from app.core.config import settings
+ from app.core.database import (
+@@ -13,6 +14,8 @@ from app.core.database import (
+     engine,
+     migrate_sqlite_schema,
+ )
++from app.core.logging import setup_logging
++from app.core.middleware import RequestIdMiddleware
+ from app.services.seed import seed_catalog
+ 
+ WORKSPACE_DIR = Path(__file__).resolve().parent / "static" / "workspace"
+@@ -20,6 +23,7 @@ WORKSPACE_DIR = Path(__file__).resolve().parent / "static" / "workspace"
+ 
+ @asynccontextmanager
+ async def lifespan(app: FastAPI):
++    setup_logging()
+     Base.metadata.create_all(bind=engine)
+     migrate_sqlite_schema()
+ 
+@@ -31,10 +35,12 @@ async def lifespan(app: FastAPI):
+ 
+ app = FastAPI(
+     title=settings.app_name,
+-    version="0.1.0",
++    version="0.2.0",
+     lifespan=lifespan,
+ )
+ 
++app.add_middleware(RequestIdMiddleware)
++app.include_router(auth_router)
+ app.include_router(router)
+ 
+ if WORKSPACE_DIR.exists():
+@@ -48,11 +54,40 @@ if WORKSPACE_DIR.exists():
+ @app.get("/workspace")
+ @app.get("/workspace/")
+ def human_ai_workspace():
+-    """Phase 8 — Human + AI Workspace UI."""
++    """Phase 8 / Job 12 — Human + AI Workspace UI."""
+     index = WORKSPACE_DIR / "index.html"
+     return FileResponse(index)
+ 
+ 
+ @app.get("/health")
+ def health():
+-    return {"status": "ok", "version": "0.1.0", "workspace": "/workspace"}
++    return {
++        "status": "ok",
++        "version": "0.2.0",
++        "env": settings.app_env,
++        "workspace": "/workspace",
++    }
++
++
++@app.get("/health/ready")
++def readiness():
++    """Readiness probe — verifies DB connectivity."""
++    try:
++        from sqlalchemy import text
++
++        with engine.connect() as conn:
++            conn.execute(text("SELECT 1"))
++        db_ok = True
++        db_error = None
++    except Exception as exc:  # noqa: BLE001
++        db_ok = False
++        db_error = str(exc)
++
++    status_code = "ok" if db_ok else "not_ready"
++    return {
++        "status": status_code,
++        "database": "ok" if db_ok else "error",
++        "database_error": db_error,
++        "storage_backend": settings.storage_backend,
++        "auth_enabled": settings.auth_enabled,
++    }
+diff --git a/app/storage/__init__.py b/app/storage/__init__.py
+new file mode 100644
+index 0000000..cec3421
+--- /dev/null
++++ b/app/storage/__init__.py
+@@ -0,0 +1,3 @@
++from app.storage.base import ObjectStorage, get_storage
++
++__all__ = ["ObjectStorage", "get_storage"]
+diff --git a/app/storage/base.py b/app/storage/base.py
+new file mode 100644
+index 0000000..843ec14
+--- /dev/null
++++ b/app/storage/base.py
+@@ -0,0 +1,74 @@
++"""Object storage abstraction (local filesystem default; S3-ready interface)."""
++
++from __future__ import annotations
++
++import shutil
++from abc import ABC, abstractmethod
++from pathlib import Path
++
++from app.core.config import settings
++
++
++class ObjectStorage(ABC):
++    @abstractmethod
++    def put_bytes(self, key: str, data: bytes, content_type: str = "application/octet-stream") -> str:
++        ...
++
++    @abstractmethod
++    def get_bytes(self, key: str) -> bytes:
++        ...
++
++    @abstractmethod
++    def exists(self, key: str) -> bool:
++        ...
++
++    @abstractmethod
++    def delete(self, key: str) -> None:
++        ...
++
++
++class LocalObjectStorage(ObjectStorage):
++    def __init__(self, root: str | Path | None = None):
++        self.root = Path(root or settings.storage_local_path).resolve()
++        self.root.mkdir(parents=True, exist_ok=True)
++
++    def _path(self, key: str) -> Path:
++        # prevent path traversal
++        safe = Path(key.replace("\\", "/").lstrip("/"))
++        full = (self.root / safe).resolve()
++        if not str(full).startswith(str(self.root)):
++            raise ValueError("Invalid storage key")
++        return full
++
++    def put_bytes(self, key: str, data: bytes, content_type: str = "application/octet-stream") -> str:
++        path = self._path(key)
++        path.parent.mkdir(parents=True, exist_ok=True)
++        path.write_bytes(data)
++        return key
++
++    def get_bytes(self, key: str) -> bytes:
++        path = self._path(key)
++        if not path.is_file():
++            raise FileNotFoundError(key)
++        return path.read_bytes()
++
++    def exists(self, key: str) -> bool:
++        return self._path(key).is_file()
++
++    def delete(self, key: str) -> None:
++        path = self._path(key)
++        if path.is_file():
++            path.unlink()
++
++    def copy_file(self, src: Path, key: str) -> str:
++        path = self._path(key)
++        path.parent.mkdir(parents=True, exist_ok=True)
++        shutil.copy2(src, path)
++        return key
++
++
++def get_storage() -> ObjectStorage:
++    if settings.storage_backend == "local":
++        return LocalObjectStorage()
++    # Future: S3ObjectStorage
++    return LocalObjectStorage()
+diff --git a/app/workers/__init__.py b/app/workers/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/app/workers/automation_worker.py b/app/workers/automation_worker.py
+new file mode 100644
+index 0000000..e3537bb
+--- /dev/null
++++ b/app/workers/automation_worker.py
+@@ -0,0 +1,67 @@
++"""
++Automation tick worker (Job 13).
++
++Usage:
++  python -m app.workers.automation_worker --company-id <uuid>
++  python -m app.workers.automation_worker --all --once
++"""
++
++from __future__ import annotations
++
++import argparse
++import logging
++import time
++
++from app.core.config import settings
++from app.core.database import SessionLocal, init_db
++from app.core.logging import setup_logging
++from app.models.entities import Company
++from app.services.automation import tick_schedules
++from sqlalchemy import select
++
++logger = logging.getLogger("app.worker.automation")
++
++
++def run_once(company_id: str | None = None) -> int:
++    init_db()
++    total = 0
++    with SessionLocal() as db:
++        if company_id:
++            ids = [company_id]
++        else:
++            ids = list(db.scalars(select(Company.id)).all())
++        for cid in ids:
++            runs = tick_schedules(db, company_id=cid, user_id=None)
++            total += len(runs)
++            if runs:
++                logger.info("company=%s runs=%s", cid, len(runs))
++    return total
++
++
++def main() -> None:
++    setup_logging()
++    parser = argparse.ArgumentParser(description="Automation schedule worker")
++    parser.add_argument("--company-id", default=None)
++    parser.add_argument("--all", action="store_true", help="Tick all companies")
++    parser.add_argument("--once", action="store_true", help="Single pass then exit")
++    parser.add_argument(
++        "--interval",
++        type=int,
++        default=settings.worker_poll_seconds,
++        help="Seconds between ticks when looping",
++    )
++    args = parser.parse_args()
++
++    if not args.company_id and not args.all:
++        parser.error("Provide --company-id or --all")
++
++    while True:
++        n = run_once(None if args.all else args.company_id)
++        logger.info("tick complete runs=%s", n)
++        if args.once:
++            break
++        time.sleep(max(1, args.interval))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/docker-compose.yml b/docker-compose.yml
+new file mode 100644
+index 0000000..e471563
+--- /dev/null
++++ b/docker-compose.yml
+@@ -0,0 +1,52 @@
++services:
++  db:
++    image: postgres:16-alpine
++    environment:
++      POSTGRES_USER: aiep
++      POSTGRES_PASSWORD: aiep
++      POSTGRES_DB: aiep
++    ports:
++      - "5432:5432"
++    volumes:
++      - pgdata:/var/lib/postgresql/data
++    healthcheck:
++      test: ["CMD-SHELL", "pg_isready -U aiep -d aiep"]
++      interval: 5s
++      timeout: 5s
++      retries: 10
++
++  api:
++    build: .
++    ports:
++      - "8000:8000"
++    environment:
++      APP_ENV: production
++      DEBUG: "false"
++      DATABASE_URL: postgresql+psycopg://aiep:aiep@db:5432/aiep
++      JWT_SECRET: change-me-in-production
++      AUTH_ENABLED: "false"
++      STORAGE_BACKEND: local
++      STORAGE_LOCAL_PATH: /data/storage
++      LOG_JSON: "true"
++      LOG_LEVEL: INFO
++    volumes:
++      - storage_data:/data/storage
++    depends_on:
++      db:
++        condition: service_healthy
++
++  worker:
++    build: .
++    command: ["python", "-m", "app.workers.automation_worker", "--all"]
++    environment:
++      APP_ENV: production
++      DATABASE_URL: postgresql+psycopg://aiep:aiep@db:5432/aiep
++      WORKER_POLL_SECONDS: "30"
++      LOG_JSON: "true"
++    depends_on:
++      db:
++        condition: service_healthy
++
++volumes:
++  pgdata:
++  storage_data:
+diff --git a/requirements.txt b/requirements.txt
+index 093f5c6..48cb5b6 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -12,4 +12,7 @@ httpx>=0.28,<1.0
+ pymupdf>=1.24,<2.0
+ pytesseract>=0.3.13,<1.0
+ Pillow>=10.0,<13.0
+-ollama>=0.4,<1.0
+\ No newline at end of file
++ollama>=0.4,<1.0
++alembic>=1.14,<2.0
++python-jose[cryptography]>=3.3,<4.0
++psycopg[binary]>=3.2,<4.0
+diff --git a/tests/test_production_infra.py b/tests/test_production_infra.py
+new file mode 100644
+index 0000000..dfd48cf
+--- /dev/null
++++ b/tests/test_production_infra.py
+@@ -0,0 +1,129 @@
++"""Job 13 — Production infrastructure smoke tests."""
++
++import tempfile
++from pathlib import Path
++
++import pytest
++from fastapi.testclient import TestClient
++from sqlalchemy import create_engine
++from sqlalchemy.orm import sessionmaker
++
++from app.core.database import Base, get_db
++from app.core.security import create_access_token, decode_access_token
++from app.main import app
++from app.services.seed import seed_catalog
++from app.storage.base import LocalObjectStorage
++
++
++engine = create_engine(
++    "sqlite:///./test_production_infra.db",
++    connect_args={"check_same_thread": False},
++)
++SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
++
++
++@pytest.fixture()
++def client():
++    Base.metadata.drop_all(bind=engine)
++    Base.metadata.create_all(bind=engine)
++    with SessionLocal() as db:
++        seed_catalog(db)
++
++    def override():
++        db = SessionLocal()
++        try:
++            yield db
++        finally:
++            db.close()
++
++    prev = app.dependency_overrides.get(get_db)
++    app.dependency_overrides[get_db] = override
++    with TestClient(app) as c:
++        yield c
++    if prev is None:
++        app.dependency_overrides.pop(get_db, None)
++    else:
++        app.dependency_overrides[get_db] = prev
++
++
++def test_health_and_ready():
++    c = TestClient(app)
++    h = c.get("/health")
++    assert h.status_code == 200
++    assert h.json()["status"] == "ok"
++    assert "env" in h.json()
++
++    r = c.get("/health/ready")
++    assert r.status_code == 200
++    body = r.json()
++    assert body["status"] in ("ok", "not_ready")
++    assert "database" in body
++    assert "storage_backend" in body
++
++
++def test_request_id_header():
++    c = TestClient(app)
++    res = c.get("/health", headers={"X-Request-ID": "test-req-123"})
++    assert res.headers.get("X-Request-ID") == "test-req-123"
++
++
++def test_jwt_roundtrip():
++    token = create_access_token(subject="user-1", company_id="co-1")
++    payload = decode_access_token(token)
++    assert payload["sub"] == "user-1"
++    assert payload["company_id"] == "co-1"
++
++
++def test_issue_token_endpoint(client):
++    co = client.post("/api/v1/companies", json={"name": "Auth Co"}).json()
++    user = client.post(
++        f"/api/v1/companies/{co['id']}/users",
++        json={"name": "Owner", "email": "owner@auth.test", "role": "owner"},
++    ).json()
++    tok = client.post(
++        "/api/v1/auth/token",
++        json={"company_id": co["id"], "email": "owner@auth.test"},
++    )
++    assert tok.status_code == 200, tok.text
++    body = tok.json()
++    assert body["token_type"] == "bearer"
++    assert body["user_id"] == user["id"]
++    assert body["access_token"]
++
++    bad = client.post(
++        "/api/v1/auth/token",
++        json={"company_id": co["id"], "email": "nobody@auth.test"},
++    )
++    assert bad.status_code == 401
++
++
++def test_local_object_storage():
++    with tempfile.TemporaryDirectory() as tmp:
++        store = LocalObjectStorage(tmp)
++        key = "docs/company-a/file.txt"
++        store.put_bytes(key, b"hello production", content_type="text/plain")
++        assert store.exists(key)
++        assert store.get_bytes(key) == b"hello production"
++        store.delete(key)
++        assert not store.exists(key)
++
++
++def test_storage_path_traversal_blocked():
++    with tempfile.TemporaryDirectory() as tmp:
++        store = LocalObjectStorage(tmp)
++        with pytest.raises(ValueError):
++            store.put_bytes("../outside.txt", b"nope")
++
++
++def test_alembic_env_imports():
++    from alembic import config as alembic_config
++
++    cfg = alembic_config.Config("alembic.ini")
++    assert cfg.get_main_option("script_location") == "alembic"
++
++
++def test_dockerfile_and_compose_exist():
++    root = Path(__file__).resolve().parents[1]
++    assert (root / "Dockerfile").is_file()
++    assert (root / "docker-compose.yml").is_file()
++    assert (root / "alembic" / "versions" / "0001_initial_schema.py").is_file()

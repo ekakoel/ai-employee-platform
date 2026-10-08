@@ -1,0 +1,3333 @@
+diff --git a/app/static/workspace/app.js b/app/static/workspace/app.js
+index ffafc53..d471cf9 100644
+--- a/app/static/workspace/app.js
++++ b/app/static/workspace/app.js
+@@ -1,114 +1,139 @@
+-/* Job 12 — Human workspace client */
+ (function () {
++  const $ = (id) => document.getElementById(id);
++
+   const state = {
+     apiBase: localStorage.getItem("ws_apiBase") || "/api/v1",
+     companyId: localStorage.getItem("ws_companyId") || "",
+     userId: localStorage.getItem("ws_userId") || "",
+     accessToken: localStorage.getItem("ws_accessToken") || "",
+-    connected: false,
+-    tasks: [],
+-    agents: [],
++    userName: localStorage.getItem("ws_userName") || "",
+   };
+ 
+-  const $ = (id) => document.getElementById(id);
++  const titles = {
++    home: ["Home", "Command center"],
++    inbox: ["Inbox", "Needs your attention"],
++    chat: ["Chat", "Talk with AI employees"],
++    tasks: ["Tasks", "Create and track work"],
++    approvals: ["Approvals", "Human authority queue"],
++    agents: ["AI Employees", "Hire and manage workforce"],
++    marketplace: ["Marketplace", "Install public templates"],
++    consult: ["Consult", "Recommendations without side effects"],
++    directory: ["Directory", "Find capability across agents"],
++    knowledge: ["Knowledge", "Company memory and search"],
++    delegation: ["Delegation", "AI-to-AI handoff"],
++    automation: ["Automation", "Rules and triggers"],
++    notifications: ["Notifications", "Alerts and updates"],
++    governance: ["Governance", "Metrics and audit"],
++    policies: ["Policy Simulator", "Dry-run ALLOW / APPROVAL / DENY"],
++    departments: ["Departments", "Org structure for agents and users"],
++    skills: ["Skills", "Platform and company capabilities"],
++    usage: ["Plan & Usage", "Quotas and metering"],
++    tools: ["Tools", "Catalog side-effect and risk"],
++    integrations: ["Integrations", "Webhooks, email, calendar"],
++    workflows: ["Workflows", "Multi-step automation"],
++    cost: ["LLM Cost", "Token usage and spend"],
++    scopecheck: ["Scope Check", "Out-of-scope detection"],
++  };
+ 
+   function clearSession() {
+     state.companyId = "";
+     state.userId = "";
+     state.accessToken = "";
+-    state.connected = false;
+-    localStorage.removeItem("ws_companyId");
+-    localStorage.removeItem("ws_userId");
+-    localStorage.removeItem("ws_accessToken");
+-    localStorage.removeItem("ws_refreshToken");
+-    if ($("companyId")) $("companyId").value = "";
+-    if ($("userId")) $("userId").value = "";
+-    setConnected(false);
++    state.userName = "";
++    ["ws_companyId", "ws_userId", "ws_accessToken", "ws_refreshToken", "ws_userName"].forEach((k) =>
++      localStorage.removeItem(k)
++    );
++    showGate(true);
+   }
+ 
+   function headers(json = true, skipAuth = false) {
+     const h = {};
+     if (json) h["Content-Type"] = "application/json";
+     if (!skipAuth) {
+-      if (state.userId) h["X-User-ID"] = state.userId;
+       if (state.accessToken) h["Authorization"] = "Bearer " + state.accessToken;
++      if (state.userId) h["X-User-ID"] = state.userId;
+     }
+     return h;
+   }
+ 
+   async function api(path, opts = {}) {
+-    const skipAuth = !!opts.skipAuth;
+-    const fetchOpts = { ...opts };
+-    delete fetchOpts.skipAuth;
+-    const url = state.apiBase.replace(/\/$/, "") + path;
++    const base = (state.apiBase || "/api/v1").replace(/\/$/, "");
++    const url = path.startsWith("http") ? path : base + path;
+     const res = await fetch(url, {
+-      ...fetchOpts,
+-      headers: {
+-        ...headers(!(opts.body instanceof FormData), skipAuth),
+-        ...(opts.headers || {}),
+-      },
++      ...opts,
++      headers: { ...headers(true, opts.skipAuth), ...(opts.headers || {}) },
+     });
+-    let data = null;
+     const text = await res.text();
++    let data = null;
+     try {
+       data = text ? JSON.parse(text) : null;
+     } catch {
+       data = text;
+     }
+     if (!res.ok) {
+-      const detail = data && data.detail ? data.detail : text || res.statusText;
++      const detail =
++        data && typeof data === "object"
++          ? data.detail || JSON.stringify(data)
++          : text || res.statusText;
+       throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+     }
+     return data;
+   }
+ 
+   function escapeHtml(s) {
+-    return String(s)
++    return String(s ?? "")
+       .replace(/&/g, "&amp;")
+       .replace(/</g, "&lt;")
+       .replace(/>/g, "&gt;")
+       .replace(/"/g, "&quot;");
+   }
+ 
++  function showGate(show) {
++    const gate = $("loginGate");
++    const app = $("app");
++    if (gate) gate.classList.toggle("hidden", !show);
++    if (app) app.classList.toggle("hidden", show);
++  }
++
+   function setConnected(ok) {
+-    state.connected = ok;
+-    $("statusPill").textContent = ok ? "Connected" : "Offline";
+-    $("statusPill").className = "pill " + (ok ? "ok" : "muted");
+-    $("sessionBox").innerHTML = ok
+-      ? `<div><strong>Company</strong><br>${state.companyId}</div>
+-         <div style="margin-top:0.4rem"><strong>User</strong><br>${state.userId}</div>`
+-      : "<small>Not connected</small>";
+-    document.querySelectorAll(".nav-btn").forEach((btn) => {
+-      if (btn.dataset.view === "setup") return;
+-      btn.disabled = !ok;
+-    });
++    showGate(!ok);
++    const box = $("sessionBox");
++    const pill = $("statusPill");
++    if (box) {
++      box.innerHTML = ok
++        ? `<div><strong>${escapeHtml(state.userName || "User")}</strong></div>
++           <small>${escapeHtml(state.userId.slice(0, 8))}…</small><br/>
++           <small>co ${escapeHtml(state.companyId.slice(0, 8))}…</small>`
++        : "<small>Not connected</small>";
++    }
++    if (pill) {
++      pill.textContent = ok ? "Online" : "Offline";
++      pill.className = ok ? "pill ok" : "pill muted";
++    }
++    const sub = $("brandSub");
++    if (sub) sub.textContent = ok ? "Workspace" : "Offline";
+   }
+ 
+   function setInboxBadge(n) {
+-    const el = $("inboxBadge");
+-    if (n > 0) {
+-      el.textContent = String(n);
+-      el.classList.remove("hidden");
+-    } else {
+-      el.classList.add("hidden");
++    const b = $("inboxBadge");
++    const nav = $("navInboxCount");
++    if (b) {
++      b.textContent = String(n);
++      b.classList.toggle("hidden", !n);
++    }
++    if (nav) {
++      nav.textContent = String(n);
++      nav.classList.toggle("hidden", !n);
+     }
+   }
+ 
+-  const titles = {
+-    setup: "Setup",
+-    workforce: "Workforce Overview",
+-    inbox: "AI Inbox",
+-    tasks: "Task Center",
+-    approvals: "Approval Center",
+-    agents: "Agent Dashboard",
+-    consult: "Consultation",
+-    chat: "Agent Chat",
+-    directory: "Agent Directory",
+-    knowledge: "Knowledge",
+-    delegation: "Delegation",
+-    automation: "Automation",
+-    governance: "Governance",
+-  };
++  function setNotifBadge(n) {
++    const b = $("notifBadge");
++    if (b) {
++      b.textContent = String(n);
++      b.classList.toggle("hidden", !n);
++    }
++  }
+ 
+   function showView(name) {
+     document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
+@@ -117,9 +142,11 @@
+     if (view) view.classList.add("active");
+     const btn = document.querySelector(`.nav-btn[data-view="${name}"]`);
+     if (btn) btn.classList.add("active");
+-    $("viewTitle").textContent = titles[name] || name;
+-    if (!state.connected) return;
+-    if (name === "workforce") loadWorkforce();
++    const t = titles[name] || [name, ""];
++    if ($("viewTitle")) $("viewTitle").textContent = t[0];
++    if ($("viewSubtitle")) $("viewSubtitle").textContent = t[1];
++
++    if (name === "home") loadHome();
+     if (name === "inbox") loadInbox();
+     if (name === "agents") loadAgents();
+     if (name === "tasks") {
+@@ -129,7 +156,7 @@
+     if (name === "approvals") loadApprovals();
+     if (name === "chat") loadChat();
+     if (name === "consult") loadAgentOptions();
+-    if (name === "directory") listDirectory();
++    if (name === "marketplace") loadMarketplace();
+     if (name === "delegation") {
+       loadAgentOptions();
+       loadDelegations();
+@@ -138,302 +165,370 @@
+       loadAgentOptions();
+       loadAutomations();
+     }
++    if (name === "notifications") loadNotifications();
+     if (name === "governance") loadGovernance();
++    if (name === "directory") listDirectory();
++    if (name === "policies") { loadAgentOptions(); }
++    if (name === "departments") loadDepartments();
++    if (name === "skills") loadSkills();
++    if (name === "usage") loadUsage();
++    if (name === "tools") loadTools();
++    if (name === "integrations") loadIntegrations();
++    if (name === "workflows") { loadAgentOptions(); loadWorkflows(); }
++    if (name === "cost") loadCost();
++    if (name === "scopecheck") loadAgentOptions();
+   }
+ 
+-  document.getElementById("nav").addEventListener("click", (e) => {
+-    const btn = e.target.closest(".nav-btn");
+-    if (!btn || btn.disabled) return;
+-    showView(btn.dataset.view);
++  document.querySelectorAll(".nav-btn").forEach((btn) => {
++    btn.addEventListener("click", () => showView(btn.dataset.view));
+   });
+ 
+-  // ---- Setup ----
+-  $("apiBase").value = state.apiBase;
+-  $("companyId").value = state.companyId;
+-  $("userId").value = state.userId;
++  document.querySelectorAll("[data-jump]").forEach((btn) => {
++    btn.addEventListener("click", () => showView(btn.dataset.jump));
++  });
+ 
+-  $("btnConnect").onclick = async () => {
+-    state.apiBase = $("apiBase").value.trim() || "/api/v1";
+-    state.companyId = $("companyId").value.trim();
+-    state.userId = $("userId").value.trim();
+-    localStorage.setItem("ws_apiBase", state.apiBase);
++  // Login tabs
++  document.querySelectorAll(".login-tabs .tab").forEach((tab) => {
++    tab.addEventListener("click", () => {
++      document.querySelectorAll(".login-tabs .tab").forEach((t) => t.classList.remove("active"));
++      document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("active"));
++      tab.classList.add("active");
++      const panel = $("tab-" + tab.dataset.tab);
++      if (panel) panel.classList.add("active");
++    });
++  });
++
++  async function applyAuthSession(body) {
++    state.companyId = body.company_id;
++    state.userId = body.user_id;
++    state.accessToken = body.access_token || "";
++    state.userName = body.name || body.email || "";
+     localStorage.setItem("ws_companyId", state.companyId);
+     localStorage.setItem("ws_userId", state.userId);
+-    try {
+-      await api(`/companies/${state.companyId}/agents`);
+-      setConnected(true);
+-      $("setupLog").textContent = "Connected.";
+-      await refreshInboxBadge();
+-      showView("workforce");
+-    } catch (err) {
+-      $("setupLog").textContent =
+-        "Connect failed: " + err.message +
+-        "\nSession cleared. Use Quick start or create a new company, then Register/Login.";
+-      clearSession();
+-    }
+-  };
+-
+-  const btnClear = $("btnClearSession");
+-  if (btnClear) {
+-    btnClear.onclick = () => {
+-      clearSession();
+-      $("setupLog").textContent = "Session cleared. Use Quick start or fill company/user IDs.";
+-    };
++    localStorage.setItem("ws_accessToken", state.accessToken);
++    localStorage.setItem("ws_userName", state.userName);
++    if (body.refresh_token) localStorage.setItem("ws_refreshToken", body.refresh_token);
++    if ($("companyId")) $("companyId").value = state.companyId;
++    if ($("userId")) $("userId").value = state.userId;
++    if ($("loginCompanyId")) $("loginCompanyId").value = state.companyId;
++    setConnected(true);
++    await refreshInboxBadge();
++    showView("home");
+   }
+ 
++  // ----- Quick start -----
+   $("btnQuickStart").onclick = async () => {
+-
+-    state.apiBase = $("apiBase").value.trim() || "/api/v1";
+-    localStorage.setItem("ws_apiBase", state.apiBase);
+-    const log = $("setupLog");
+-    // Drop stale credentials so bootstrap is not blocked by old JWT/user
+-    clearSession();
+-    state.apiBase = $("apiBase").value.trim() || "/api/v1";
++    const log = $("quickLog");
+     try {
+-      log.textContent = "Creating company...";
++      log.textContent = "Creating company…";
+       const co = await api("/companies", {
+         method: "POST",
+-        body: JSON.stringify({
+-          name: "Workspace Demo Co " + new Date().toISOString().slice(0, 19),
+-        }),
++        body: JSON.stringify({ name: "Demo Co " + Date.now().toString(36) }),
+         skipAuth: true,
+       });
++      log.textContent += "\nCompany " + co.id;
+       const user = await api(`/companies/${co.id}/users`, {
+         method: "POST",
+         body: JSON.stringify({
+-          name: "Workspace Owner",
+-          email: `owner-${Date.now()}@demo.local`,
++          name: "Demo Owner",
++          email: "owner@demo.local",
+           role: "owner",
+-          password: "demo-pass-123",
++          password: "demo12345",
+         }),
+         skipAuth: true,
+       });
++      log.textContent += "\nUser " + user.id;
+       state.companyId = co.id;
+       state.userId = user.id;
+-      state.accessToken = "";
+-      $("companyId").value = co.id;
+-      $("userId").value = user.id;
+-      if ($("loginEmail")) $("loginEmail").value = user.email || "";
+-      if ($("loginPassword")) $("loginPassword").value = "demo-pass-123";
+-      localStorage.setItem("ws_companyId", co.id);
+-      localStorage.setItem("ws_userId", user.id);
++      state.userName = user.name || "Demo Owner";
++      localStorage.setItem("ws_companyId", state.companyId);
++      localStorage.setItem("ws_userId", state.userId);
++      localStorage.setItem("ws_userName", state.userName);
+ 
+-      // Login to obtain JWT for subsequent calls
++      // Try password login for JWT
+       try {
+         const tok = await api("/auth/login", {
+           method: "POST",
+           body: JSON.stringify({
+             company_id: co.id,
+-            email: user.email,
+-            password: "demo-pass-123",
++            email: "owner@demo.local",
++            password: "demo12345",
+           }),
+           skipAuth: true,
+         });
+         state.accessToken = tok.access_token || "";
+         localStorage.setItem("ws_accessToken", state.accessToken);
+-        if (tok.refresh_token) {
+-          localStorage.setItem("ws_refreshToken", tok.refresh_token);
+-        }
+-      } catch (loginErr) {
+-        log.textContent += "\nLogin after create skipped: " + loginErr.message;
++        if (tok.refresh_token) localStorage.setItem("ws_refreshToken", tok.refresh_token);
++        log.textContent += "\nJWT session OK";
++      } catch (e) {
++        log.textContent += "\nJWT optional: " + e.message;
+       }
+ 
+-      const catalog = await api("/agent-catalog", { skipAuth: true });
+-      const res = catalog.find((c) => c.slug === "reservation") || catalog[0];
+-      if (res) {
+-        await api(`/companies/${co.id}/agents/${res.id}/hire`, {
+-          method: "POST",
+-          body: JSON.stringify({ name: "Desk AI" }),
+-        });
+-      }
+-      const contract = catalog.find((c) => c.slug === "contract-manager");
+-      if (contract) {
+-        await api(`/companies/${co.id}/agents/${contract.id}/hire`, {
+-          method: "POST",
+-          body: JSON.stringify({ name: "Contract AI" }),
+-        });
++      // Hire from catalog
++      try {
++        const catalog = await api("/agent-catalog", { skipAuth: true });
++        for (const c of (catalog || []).slice(0, 2)) {
++          await api(`/companies/${co.id}/agents/${c.id}/hire`, {
++            method: "POST",
++            body: JSON.stringify({ name: c.name.replace(/ AI Employee$/, "") + " (Demo)" }),
++          });
++          log.textContent += "\nHired " + c.slug;
++        }
++      } catch (e) {
++        log.textContent += "\nHire: " + e.message;
+       }
++
++      if ($("loginCompanyId")) $("loginCompanyId").value = co.id;
++      if ($("loginEmail")) $("loginEmail").value = "owner@demo.local";
++      if ($("loginPassword")) $("loginPassword").value = "demo12345";
++      if ($("companyId")) $("companyId").value = co.id;
++      if ($("userId")) $("userId").value = user.id;
++
+       setConnected(true);
+-      log.textContent =
+-        `Company ${co.id}\nUser ${user.id}\nEmail ${user.email}\nPassword demo-pass-123\nAgents hired.\nReady.`;
+       await refreshInboxBadge();
+-      showView("workforce");
++      showView("home");
++      log.textContent += "\n\nWorkspace ready. Password: demo12345";
+     } catch (err) {
+-      log.textContent += "\nError: " + err.message;
++      log.textContent = "Quick start failed: " + err.message;
++    }
++  };
++
++  $("btnConnect").onclick = async () => {
++    const log = $("setupLog");
++    try {
++      state.apiBase = ($("apiBase") && $("apiBase").value.trim()) || "/api/v1";
++      state.companyId = $("companyId").value.trim();
++      state.userId = $("userId").value.trim();
++      if (!state.companyId || !state.userId) throw new Error("Company ID and User ID required");
++      localStorage.setItem("ws_apiBase", state.apiBase);
++      localStorage.setItem("ws_companyId", state.companyId);
++      localStorage.setItem("ws_userId", state.userId);
++      await api(`/companies/${state.companyId}`);
++      setConnected(true);
++      await refreshInboxBadge();
++      showView("home");
++      log.textContent = "Connected.";
++    } catch (err) {
++      log.textContent = "Connect failed: " + err.message;
+       setConnected(false);
+     }
+   };
+ 
+-  // ---- Shared data ----
+-  async function loadAgentOptions() {
+-    const agents = await api(`/companies/${state.companyId}/agents`);
+-    state.agents = agents;
+-    const opts = agents
+-      .map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`)
+-      .join("");
+-    ["taskAgent", "consultAgent", "delSource", "delTarget", "autoAgent"].forEach((id) => {
+-      const el = $(id);
+-      if (el) el.innerHTML = opts;
+-    });
+-  }
++  $("btnClearSession").onclick = clearSession;
++  if ($("btnLogout")) $("btnLogout").onclick = clearSession;
+ 
+-  async function refreshInboxBadge() {
++  $("btnLogin").onclick = async () => {
++    const log = $("loginLog");
+     try {
+-      const [tasks, approvals, dels, notif] = await Promise.all([
+-        api(`/companies/${state.companyId}/tasks`),
+-        api(`/companies/${state.companyId}/approvals`).catch(() => []),
+-        api(`/companies/${state.companyId}/delegation-requests`).catch(() => []),
+-        api(`/companies/${state.companyId}/notifications/unread-count`).catch(() => ({
+-          count: 0,
+-        })),
+-      ]);
+-      const n =
+-        tasks.filter((t) => t.status === "pending").length +
+-        (approvals || []).filter((a) => a.status === "pending").length +
+-        (dels || []).filter((d) => d.status === "pending" || d.status === "accepted")
+-          .length +
+-        (notif && notif.count ? notif.count : 0);
+-      setInboxBadge(n);
+-    } catch {
+-      setInboxBadge(0);
++      const companyId = ($("loginCompanyId").value || $("companyId").value || "").trim();
++      const body = await api("/auth/login", {
++        method: "POST",
++        body: JSON.stringify({
++          company_id: companyId,
++          email: $("loginEmail").value.trim(),
++          password: $("loginPassword").value,
++        }),
++        skipAuth: true,
++      });
++      log.textContent = "Signed in as " + (body.email || body.user_id);
++      await applyAuthSession(body);
++    } catch (err) {
++      log.textContent = "Login failed: " + err.message;
+     }
+-  }
++  };
+ 
+-  async function loadNotifications() {
++  $("btnRegister").onclick = async () => {
++    const log = $("loginLog");
+     try {
+-      const [notes, count] = await Promise.all([
+-        api(`/companies/${state.companyId}/notifications?limit=50`),
+-        api(`/companies/${state.companyId}/notifications/unread-count`),
+-      ]);
+-      $("notifStats").innerHTML = [
+-        `<span class="stat"><strong>${count.count}</strong> unread</span>`,
+-        `<span class="stat"><strong>${notes.length}</strong> shown</span>`,
+-      ].join("");
+-      if (!notes.length) {
+-        $("notifList").innerHTML = '<p class="muted">No notifications yet.</p>';
+-        return;
+-      }
+-      $("notifList").innerHTML = notes
+-        .map(
+-          (n) => `
+-        <div class="list-item ${n.read_at ? "muted" : ""}">
+-          <div>
+-            <strong>${n.title}</strong>
+-            <div class="muted">${n.type} · ${n.created_at || ""}</div>
+-            <div>${(n.body || "").slice(0, 200)}</div>
+-          </div>
+-          <div class="row">
+-            ${
+-              n.read_at
+-                ? "<span class=\"muted\">Read</span>"
+-                : `<button class="secondary" data-notif-read="${n.id}">Mark read</button>`
+-            }
+-          </div>
+-        </div>`
+-        )
+-        .join("");
+-      $("notifList").querySelectorAll("[data-notif-read]").forEach((btn) => {
+-        btn.onclick = async () => {
+-          await api(
+-            `/companies/${state.companyId}/notifications/${btn.dataset.notifRead}/read`,
+-            { method: "POST", body: "{}" }
+-          );
+-          await loadNotifications();
+-          await refreshInboxBadge();
+-        };
++      const companyId = ($("loginCompanyId").value || $("companyId").value || "").trim();
++      const email = $("loginEmail").value.trim();
++      const body = await api("/auth/register", {
++        method: "POST",
++        body: JSON.stringify({
++          company_id: companyId,
++          email,
++          name: email.split("@")[0] || "User",
++          password: $("loginPassword").value,
++          role: "member",
++        }),
++        skipAuth: true,
+       });
++      log.textContent = "Registered " + (body.email || body.user_id);
++      await applyAuthSession(body);
+     } catch (err) {
+-      $("notifList").innerHTML = `<p class="danger">${err.message}</p>`;
++      log.textContent = "Register failed: " + err.message;
+     }
++  };
++
++  async function loadAgentOptions() {
++    if (!state.companyId) return;
++    try {
++      const agents = await api(`/companies/${state.companyId}/agents`);
++      const opts = (agents || [])
++        .map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`)
++        .join("");
++      ["taskAgent", "consultAgent", "chatAgent", "delSource", "delTarget", "autoAgent", "simAgent", "scopeAgent", "wfAgent"].forEach(
++        (id) => {
++          const el = $(id);
++          if (el) el.innerHTML = opts;
++        }
++      );
++    } catch (_) {}
+   }
+ 
+-  // ---- Workforce Overview ----
+-  async function loadWorkforce() {
++  async function refreshInboxBadge() {
++    if (!state.companyId) return;
++    try {
++      const [tasks, approvals, dels, notif] = await Promise.all([
++        api(`/companies/${state.companyId}/tasks`).catch(() => []),
++        api(`/companies/${state.companyId}/approvals`).catch(() => []),
++        api(`/companies/${state.companyId}/delegations`).catch(() => []),
++        api(`/companies/${state.companyId}/notifications/unread-count`).catch(() => ({ count: 0 })),
++      ]);
++      const pendingTasks = (tasks || []).filter((t) =>
++        ["pending", "waiting_approval", "planning"].includes(t.status)
++      ).length;
++      const pendingAppr = (approvals || []).filter((a) => a.status === "pending").length;
++      const openDel = (dels || []).filter((d) =>
++        ["pending", "accepted"].includes(d.status)
++      ).length;
++      setInboxBadge(pendingTasks + pendingAppr + openDel);
++      setNotifBadge((notif && notif.count) || 0);
++    } catch (_) {}
++  }
++
++  // ----- Home -----
++  async function loadHome() {
++    if (!state.companyId) return;
+     try {
+       const [agents, tasks, approvals] = await Promise.all([
+         api(`/companies/${state.companyId}/agents`),
+         api(`/companies/${state.companyId}/tasks`),
+-        api(`/companies/${state.companyId}/approvals`).catch(() => []),
++        api(`/companies/${state.companyId}/approvals`),
+       ]);
+-      state.agents = agents;
+-      state.tasks = tasks;
+-      const pendingAppr = (approvals || []).filter((a) => a.status === "pending");
+-      const active = agents.filter((a) => a.status === "active").length;
+-      $("wfStats").innerHTML = [
++      const active = (agents || []).filter((a) => a.status === "active").length;
++      const openTasks = (tasks || []).filter((t) =>
++        !["completed", "failed", "cancelled"].includes(t.status)
++      ).length;
++      const pendingAppr = (approvals || []).filter((a) => a.status === "pending").length;
++      $("homeStats").innerHTML = [
+         ["AI Employees", agents.length],
+         ["Active", active],
+-        ["Open tasks", tasks.filter((t) => t.status !== "completed").length],
+-        ["Pending approvals", pendingAppr.length],
++        ["Open tasks", openTasks],
++        ["Pending approvals", pendingAppr],
+       ]
+         .map(
+           ([l, n]) =>
+-            `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`
++            `<div class="stat"><div class="n">${n}</div><div class="l">${escapeHtml(l)}</div></div>`
+         )
+         .join("");
+ 
+-      const byStatus = {};
+-      agents.forEach((a) => {
+-        byStatus[a.status] = (byStatus[a.status] || 0) + 1;
+-      });
+-      $("wfStatusBreakdown").innerHTML =
+-        Object.entries(byStatus)
+-          .map(
+-            ([s, n]) =>
+-              `<div class="item"><strong>${escapeHtml(s)}</strong><div class="meta">${n} agent(s)</div></div>`
++      const attention = [];
++      (tasks || [])
++        .filter((t) => ["pending", "waiting_approval"].includes(t.status))
++        .slice(0, 4)
++        .forEach((t) =>
++          attention.push(
++            `<div class="item"><span class="type-tag task">task</span>${escapeHtml(t.title || t.id)}<div class="meta">${escapeHtml(t.status)} · ${escapeHtml(t.mode || "")}</div></div>`
+           )
+-          .join("") || '<div class="muted">No agents</div>';
+-
+-      $("wfActivity").innerHTML =
+-        tasks
+-          .slice(0, 8)
+-          .map(
+-            (t) =>
+-              `<div class="item"><strong>${escapeHtml(t.title)}</strong>
+-               <div class="meta">${t.mode || "execute"} · ${t.status}</div></div>`
++        );
++      (approvals || [])
++        .filter((a) => a.status === "pending")
++        .slice(0, 4)
++        .forEach((a) =>
++          attention.push(
++            `<div class="item"><span class="type-tag approval">approval</span>${escapeHtml(a.action)}<div class="meta">${escapeHtml(a.reason || "")}</div></div>`
+           )
+-          .join("") || '<div class="muted">No recent tasks</div>';
++        );
++      $("homeInbox").innerHTML =
++        attention.join("") || `<div class="empty">Nothing pending — you're clear.</div>`;
+ 
+-      $("wfAgentGrid").innerHTML =
+-        agents
++      $("homeAgents").innerHTML =
++        (agents || [])
++          .slice(0, 6)
+           .map(
+             (a) => `<div class="agent-card">
+-            <h4>${escapeHtml(a.name)}</h4>
+-            <div class="meta">${a.status} · autonomy ${a.autonomy ?? "-"}</div>
+-            <div style="margin-top:0.4rem">
+-              ${(a.skills || [])
+-                .slice(0, 5)
+-                .map((s) => `<span class="tag">${escapeHtml(s)}</span>`)
+-                .join("")}
+-            </div>
+-          </div>`
++          <h4><span class="status-dot ${a.status !== "active" ? "inactive" : ""}"></span>${escapeHtml(a.name)}</h4>
++          <div class="meta muted">${escapeHtml(a.status)} · v${escapeHtml(a.template_version || "")}</div>
++        </div>`
+           )
+-          .join("") || '<div class="muted">Hire agents from Agent Dashboard</div>';
++          .join("") || `<div class="empty">No agents yet. Hire from Marketplace.</div>`;
++    } catch (err) {
++      $("homeStats").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
++    }
++  }
+ 
+-      await refreshInboxBadge();
++  // ----- Notifications -----
++  async function loadNotifications() {
++    if (!state.companyId) return;
++    try {
++      const list = await api(`/companies/${state.companyId}/notifications`);
++      const unread = (list || []).filter((n) => !n.read_at).length;
++      $("notifStats").innerHTML = `<div class="stat"><div class="n">${unread}</div><div class="l">Unread</div></div>
++        <div class="stat"><div class="n">${(list || []).length}</div><div class="l">Total</div></div>`;
++      $("notifList").innerHTML =
++        (list || [])
++          .map(
++            (n) => `<div class="item">
++          <strong>${escapeHtml(n.type || "notification")}</strong>
++          <div class="meta">${escapeHtml(JSON.stringify(n.payload || {}).slice(0, 120))} · ${n.read_at ? "read" : "unread"}</div>
++          ${
++            !n.read_at
++              ? `<div class="actions"><button class="secondary btn-read-one" data-id="${n.id}">Mark read</button></div>`
++              : ""
++          }
++        </div>`
++          )
++          .join("") || `<div class="empty">No notifications.</div>`;
++      document.querySelectorAll(".btn-read-one").forEach((b) => {
++        b.onclick = async () => {
++          await api(`/companies/${state.companyId}/notifications/${b.dataset.id}/read`, {
++            method: "POST",
++            body: "{}",
++          });
++          await loadNotifications();
++          await refreshInboxBadge();
++        };
++      });
++      setNotifBadge(unread);
+     } catch (err) {
+-      $("wfStats").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
++      $("notifList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+     }
+   }
+ 
+-  // ---- AI Inbox ----
++  if ($("btnNotifRefresh")) $("btnNotifRefresh").onclick = loadNotifications;
++  if ($("btnNotifReadAll"))
++    $("btnNotifReadAll").onclick = async () => {
++      await api(`/companies/${state.companyId}/notifications/read-all`, {
++        method: "POST",
++        body: "{}",
++      });
++      await loadNotifications();
++      await refreshInboxBadge();
++    };
++  if ($("btnTopNotif")) $("btnTopNotif").onclick = () => showView("notifications");
++
++  // ----- Inbox -----
+   async function loadInbox() {
++    if (!state.companyId) return;
+     try {
+       const [tasks, approvals, dels] = await Promise.all([
+         api(`/companies/${state.companyId}/tasks`),
+-        api(`/companies/${state.companyId}/approvals`).catch(() => []),
+-        api(`/companies/${state.companyId}/delegation-requests`).catch(() => []),
++        api(`/companies/${state.companyId}/approvals`),
++        api(`/companies/${state.companyId}/delegations`),
+       ]);
+-      const pendingTasks = tasks.filter((t) => t.status === "pending");
++      const pendingTasks = (tasks || []).filter((t) =>
++        ["pending", "waiting_approval", "planning", "running"].includes(t.status)
++      );
+       const pendingAppr = (approvals || []).filter((a) => a.status === "pending");
+-      const openDels = (dels || []).filter(
+-        (d) => d.status === "pending" || d.status === "accepted"
++      const openDel = (dels || []).filter((d) =>
++        ["pending", "accepted"].includes(d.status)
+       );
+-
+       $("inboxStats").innerHTML = [
+-        ["Pending tasks", pendingTasks.length],
++        ["Tasks", pendingTasks.length],
+         ["Approvals", pendingAppr.length],
+-        ["Delegations", openDels.length],
+-        ["Total", pendingTasks.length + pendingAppr.length + openDels.length],
++        ["Delegations", openDel.length],
++        ["Total", pendingTasks.length + pendingAppr.length + openDel.length],
+       ]
+         .map(
+           ([l, n]) =>
+@@ -441,215 +536,215 @@
+         )
+         .join("");
+ 
+-      const items = [];
+-      pendingTasks.forEach((t) =>
+-        items.push({
+-          type: "task",
+-          title: t.title,
+-          meta: `${t.mode || "execute"} · ${t.id}`,
+-          action:
+-            t.mode === "consult"
+-              ? `<button class="secondary" data-inbox-consult="${t.id}">Run consult</button>`
+-              : "",
+-        })
+-      );
+-      pendingAppr.forEach((a) =>
+-        items.push({
+-          type: "approval",
+-          title: a.action,
+-          meta: a.reason || a.id,
+-          action: `<button class="success" data-inbox-approve="${a.id}">Approve</button>
+-                   <button class="danger" data-inbox-reject="${a.id}">Reject</button>`,
+-        })
+-      );
+-      openDels.forEach((d) =>
+-        items.push({
+-          type: "delegation",
+-          title: d.title,
+-          meta: `${d.status} · ${d.capability}`,
+-          action:
+-            d.status === "pending" || d.status === "accepted"
+-              ? `<button class="secondary" data-inbox-exec-del="${d.id}">Execute</button>`
+-              : "",
+-        })
+-      );
+-
+-      $("inboxList").innerHTML =
+-        items
+-          .map(
+-            (i) => `<div class="item">
+-            <div class="row between">
+-              <div>
+-                <span class="inbox-item-type ${i.type}">${i.type}</span>
+-                <strong>${escapeHtml(i.title)}</strong>
+-                <div class="meta">${escapeHtml(i.meta)}</div>
+-              </div>
+-              <div class="row">${i.action}</div>
+-            </div>
+-          </div>`
+-          )
+-          .join("") || '<div class="muted">Inbox is clear</div>';
+-
+-      setInboxBadge(items.length);
+-
+-      $("inboxList").querySelectorAll("[data-inbox-consult]").forEach((btn) => {
+-        btn.onclick = async () => {
+-          try {
+-            await api(
+-              `/companies/${state.companyId}/tasks/${btn.dataset.inboxConsult}/consult`,
+-              { method: "POST" }
+-            );
+-            loadInbox();
+-          } catch (err) {
+-            alert(err.message);
+-          }
+-        };
++      const rows = [];
++      pendingTasks.forEach((t) => {
++        rows.push(`<div class="item">
++          <span class="type-tag task">task</span><strong>${escapeHtml(t.title || t.id)}</strong>
++          <div class="meta">${escapeHtml(t.status)} · ${escapeHtml(t.mode || "")}</div>
++          <div class="actions">
++            ${
++              t.mode === "consult" && t.status === "pending"
++                ? `<button class="primary btn-run-consult" data-id="${t.id}">Run consult</button>`
++                : ""
++            }
++          </div>
++        </div>`);
+       });
+-      $("inboxList").querySelectorAll("[data-inbox-approve]").forEach((btn) => {
+-        btn.onclick = async () => {
+-          try {
+-            await api(
+-              `/companies/${state.companyId}/approvals/${btn.dataset.inboxApprove}/approve`,
+-              { method: "POST", body: JSON.stringify({ comment: "Approved from inbox" }) }
+-            );
+-            loadInbox();
+-          } catch (err) {
+-            alert(err.message);
+-          }
++      pendingAppr.forEach((a) => {
++        rows.push(`<div class="item">
++          <span class="type-tag approval">approval</span><strong>${escapeHtml(a.action)}</strong>
++          <div class="meta">${escapeHtml(a.reason || "")}</div>
++          <div class="actions">
++            <button class="success btn-appr" data-id="${a.id}" data-d="approved">Approve</button>
++            <button class="danger btn-appr" data-id="${a.id}" data-d="rejected">Reject</button>
++          </div>
++        </div>`);
++      });
++      openDel.forEach((d) => {
++        rows.push(`<div class="item">
++          <span class="type-tag delegation">delegation</span><strong>${escapeHtml(d.title || d.id)}</strong>
++          <div class="meta">${escapeHtml(d.status)} · ${escapeHtml(d.capability || "")}</div>
++          <div class="actions">
++            ${
++              d.status === "pending" || d.status === "accepted"
++                ? `<button class="primary btn-exec-del" data-id="${d.id}">Execute</button>`
++                : ""
++            }
++          </div>
++        </div>`);
++      });
++      $("inboxList").innerHTML = rows.join("") || `<div class="empty">Inbox zero. Nice work.</div>`;
++
++      document.querySelectorAll(".btn-run-consult").forEach((b) => {
++        b.onclick = async () => {
++          await api(`/companies/${state.companyId}/tasks/${b.dataset.id}/run`, {
++            method: "POST",
++            body: "{}",
++          });
++          loadInbox();
++          refreshInboxBadge();
+         };
+       });
+-      $("inboxList").querySelectorAll("[data-inbox-reject]").forEach((btn) => {
+-        btn.onclick = async () => {
+-          try {
+-            await api(
+-              `/companies/${state.companyId}/approvals/${btn.dataset.inboxReject}/reject`,
+-              { method: "POST", body: JSON.stringify({ comment: "Rejected from inbox" }) }
+-            );
+-            loadInbox();
+-          } catch (err) {
+-            alert(err.message);
+-          }
++      document.querySelectorAll(".btn-appr").forEach((b) => {
++        b.onclick = async () => {
++          await api(`/companies/${state.companyId}/approvals/${b.dataset.id}/review`, {
++            method: "POST",
++            body: JSON.stringify({ status: b.dataset.d, comment: "workspace" }),
++          });
++          loadInbox();
++          refreshInboxBadge();
+         };
+       });
+-      $("inboxList").querySelectorAll("[data-inbox-exec-del]").forEach((btn) => {
+-        btn.onclick = async () => {
+-          try {
+-            await api(
+-              `/companies/${state.companyId}/delegation-requests/${btn.dataset.inboxExecDel}/execute`,
+-              { method: "POST", body: JSON.stringify({ mode: "consult" }) }
+-            );
+-            loadInbox();
+-          } catch (err) {
+-            alert(err.message);
+-          }
++      document.querySelectorAll(".btn-exec-del").forEach((b) => {
++        b.onclick = async () => {
++          await api(`/companies/${state.companyId}/delegations/${b.dataset.id}/execute`, {
++            method: "POST",
++            body: "{}",
++          });
++          loadInbox();
++          refreshInboxBadge();
+         };
+       });
++      setInboxBadge(pendingTasks.length + pendingAppr.length + openDel.length);
+     } catch (err) {
+       $("inboxList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+     }
+   }
+   $("btnRefreshInbox").onclick = loadInbox;
+ 
+-  // ---- Agents ----
++  // ----- Agents -----
+   async function loadAgents() {
++    if (!state.companyId) return;
+     try {
+-      const agents = await api(`/companies/${state.companyId}/agents`);
+-      state.agents = agents;
++      const [agents, catalog] = await Promise.all([
++        api(`/companies/${state.companyId}/agents`),
++        api("/agent-catalog"),
++      ]);
+       $("agentList").innerHTML =
+-        agents
++        (agents || [])
+           .map(
+             (a) => `<div class="agent-card">
+-            <h4>${escapeHtml(a.name)}</h4>
+-            <div class="meta">${a.status} · autonomy ${a.autonomy ?? "-"}</div>
+-            <div style="margin-top:0.4rem">
+-              ${(a.skills || [])
+-                .slice(0, 6)
+-                .map((s) => `<span class="tag">${escapeHtml(s)}</span>`)
+-                .join("")}
+-            </div>
+-            <div class="meta" style="margin-top:0.35rem">${a.id}</div>
+-          </div>`
++          <h4><span class="status-dot ${a.status !== "active" ? "inactive" : ""}"></span>${escapeHtml(a.name)}</h4>
++          <div class="muted" style="font-size:.8rem">${escapeHtml(a.status)} · autonomy ${escapeHtml(a.autonomy || "")}</div>
++          <div style="margin-top:.4rem">${(a.skills || []).slice(0, 5).map((s) => `<span class="tag">${escapeHtml(s)}</span>`).join("")}</div>
++        </div>`
+           )
+-          .join("") || '<div class="muted">No agents hired</div>';
+-
+-      const catalog = await api("/agent-catalog");
+-      $("catalogSelect").innerHTML = catalog
+-        .map((c) => `<option value="${c.id}">${escapeHtml(c.name)} (${c.slug})</option>`)
+-        .join("");
++          .join("") || `<div class="empty">No agents hired yet.</div>`;
++      const sel = $("catalogSelect");
++      if (sel)
++        sel.innerHTML = (catalog || [])
++          .map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`)
++          .join("");
+     } catch (err) {
+       $("agentList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+     }
+   }
+   $("btnRefreshAgents").onclick = loadAgents;
+   $("btnHire").onclick = async () => {
++    const log = $("hireLog");
+     try {
+-      const inst = await api(
+-        `/companies/${state.companyId}/agents/${$("catalogSelect").value}/hire`,
+-        {
+-          method: "POST",
+-          body: JSON.stringify({ name: $("hireName").value.trim() || "New AI" }),
+-        }
+-      );
+-      $("hireLog").textContent = "Hired: " + JSON.stringify(inst, null, 2);
++      const catalogId = $("catalogSelect").value;
++      const name = $("hireName").value.trim() || "New AI Employee";
++      const inst = await api(`/companies/${state.companyId}/agents/${catalogId}/hire`, {
++        method: "POST",
++        body: JSON.stringify({ name }),
++      });
++      log.textContent = "Hired " + inst.name + " (" + inst.id + ")";
+       loadAgents();
++      loadHome();
+     } catch (err) {
+-      $("hireLog").textContent = err.message;
++      log.textContent = err.message;
+     }
+   };
+ 
+-  // ---- Tasks ----
+-  async function loadTasks() {
++  // ----- Marketplace -----
++  async function loadMarketplace() {
++    if (!state.companyId) return;
+     try {
+-      const tasks = await api(`/companies/${state.companyId}/tasks`);
+-      state.tasks = tasks;
+-      const filter = $("taskFilter").value;
+-      const filtered = tasks.filter((t) => {
+-        if (filter === "all") return true;
+-        if (filter === "pending" || filter === "completed") return t.status === filter;
+-        if (filter === "consult" || filter === "execute")
+-          return (t.mode || "execute") === filter;
+-        return true;
+-      });
+-      $("taskList").innerHTML =
+-        filtered
+-          .map((t) => {
+-            const actions =
+-              t.mode === "consult" && t.status === "pending"
+-                ? `<button class="secondary" data-consult="${t.id}">Run consult</button>`
+-                : "";
+-            return `<div class="item">
+-            <div class="row between">
+-              <div><strong>${escapeHtml(t.title)}</strong>
+-                <div class="meta">${t.mode || "execute"} · ${t.status} · ${t.id}</div>
+-              </div>
+-              <div class="row">${actions}</div>
+-            </div>
++      const [templates, installs] = await Promise.all([
++        api("/marketplace/templates"),
++        api(`/companies/${state.companyId}/marketplace/installations`),
++      ]);
++      const installed = new Set((installs || []).map((i) => i.catalog_agent_id));
++      $("marketList").innerHTML =
++        (templates || [])
++          .map(
++            (t) => `<div class="agent-card">
++          <h4>${escapeHtml(t.name)}</h4>
++          <div class="muted" style="font-size:.8rem">${escapeHtml(t.role)} · v${escapeHtml(t.version)}</div>
++          <p style="font-size:.85rem;color:var(--muted)">${escapeHtml((t.description || "").slice(0, 120))}</p>
++          <div>${(t.skills || []).slice(0, 6).map((s) => `<span class="tag">${escapeHtml(s)}</span>`).join("")}</div>
++          <div class="row">
+             ${
+-              t.result
+-                ? `<pre class="log" style="max-height:120px">${escapeHtml(
+-                    String(t.result).slice(0, 800)
+-                  )}</pre>`
+-                : ""
++              installed.has(t.id)
++                ? `<span class="pill ok">Installed</span>`
++                : `<button class="primary btn-install" data-id="${t.id}">Install</button>`
+             }
+-          </div>`;
+-          })
+-          .join("") || '<div class="muted">No tasks</div>';
+-
+-      $("taskList").querySelectorAll("[data-consult]").forEach((btn) => {
+-        btn.onclick = async () => {
++          </div>
++        </div>`
++          )
++          .join("") || `<div class="empty">No public templates.</div>`;
++      $("installList").innerHTML =
++        (installs || [])
++          .map(
++            (i) => `<div class="item"><strong>${escapeHtml(i.catalog_name)}</strong>
++          <div class="meta">${escapeHtml(i.catalog_slug)} · v${escapeHtml(i.template_version)} · skills ${(i.installed_skill_ids || []).length}</div></div>`
++          )
++          .join("") || `<div class="empty">No installations yet.</div>`;
++      document.querySelectorAll(".btn-install").forEach((b) => {
++        b.onclick = async () => {
++          b.disabled = true;
+           try {
+-            await api(
+-              `/companies/${state.companyId}/tasks/${btn.dataset.consult}/consult`,
+-              { method: "POST" }
+-            );
+-            loadTasks();
+-            refreshInboxBadge();
++            await api(`/companies/${state.companyId}/marketplace/install/${b.dataset.id}`, {
++              method: "POST",
++              body: "{}",
++            });
++            loadMarketplace();
+           } catch (err) {
+             alert(err.message);
++            b.disabled = false;
+           }
+         };
+       });
+-      await refreshInboxBadge();
++    } catch (err) {
++      $("marketList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
++    }
++  }
++  if ($("btnRefreshMarket")) $("btnRefreshMarket").onclick = loadMarketplace;
++
++  // ----- Tasks -----
++  async function loadTasks() {
++    if (!state.companyId) return;
++    try {
++      let tasks = await api(`/companies/${state.companyId}/tasks`);
++      const f = $("taskFilter").value;
++      if (f === "pending") tasks = tasks.filter((t) => t.status === "pending");
++      if (f === "completed") tasks = tasks.filter((t) => t.status === "completed");
++      if (f === "consult") tasks = tasks.filter((t) => t.mode === "consult");
++      if (f === "execute") tasks = tasks.filter((t) => t.mode === "execute");
++      $("taskList").innerHTML =
++        (tasks || [])
++          .map(
++            (t) => `<div class="item">
++          <strong>${escapeHtml(t.title || t.id)}</strong>
++          <div class="meta">${escapeHtml(t.status)} · ${escapeHtml(t.mode || "")}</div>
++          ${
++            t.mode === "consult" && t.status === "pending"
++              ? `<div class="actions"><button class="primary btn-run-t" data-id="${t.id}">Run consult</button></div>`
++              : ""
++          }
++        </div>`
++          )
++          .join("") || `<div class="empty">No tasks.</div>`;
++      document.querySelectorAll(".btn-run-t").forEach((b) => {
++        b.onclick = async () => {
++          await api(`/companies/${state.companyId}/tasks/${b.dataset.id}/run`, {
++            method: "POST",
++            body: "{}",
++          });
++          loadTasks();
++        };
++      });
+     } catch (err) {
+       $("taskList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+     }
+@@ -662,73 +757,50 @@
+         method: "POST",
+         body: JSON.stringify({
+           agent_instance_id: $("taskAgent").value,
+-          title: $("taskTitle").value.trim(),
+-          instruction: $("taskInstruction").value.trim(),
++          title: $("taskTitle").value.trim() || "Task",
++          instruction: $("taskInstruction").value.trim() || "",
+           mode: $("taskMode").value,
+         }),
+       });
+       $("taskTitle").value = "";
+       $("taskInstruction").value = "";
+       loadTasks();
++      refreshInboxBadge();
+     } catch (err) {
+       alert(err.message);
+     }
+   };
+ 
+-  // ---- Approvals ----
++  // ----- Approvals -----
+   async function loadApprovals() {
++    if (!state.companyId) return;
+     try {
+-      const approvals = await api(`/companies/${state.companyId}/approvals`);
++      const list = await api(`/companies/${state.companyId}/approvals`);
+       $("approvalList").innerHTML =
+-        approvals
+-          .map((a) => {
+-            const pending = a.status === "pending";
+-            return `<div class="item">
+-            <div class="row between">
+-              <div>
+-                <strong>${escapeHtml(a.action)}</strong>
+-                <div class="meta">${a.status} · ${a.id}</div>
+-                <div class="meta">${escapeHtml(a.reason || "")}</div>
+-              </div>
+-              ${
+-                pending
+-                  ? `<div class="row">
+-                      <button class="success" data-approve="${a.id}">Approve</button>
+-                      <button class="danger" data-reject="${a.id}">Reject</button>
+-                    </div>`
+-                  : ""
+-              }
+-            </div>
+-          </div>`;
+-          })
+-          .join("") || '<div class="muted">No approvals</div>';
+-
+-      $("approvalList").querySelectorAll("[data-approve]").forEach((btn) => {
+-        btn.onclick = async () => {
+-          try {
+-            await api(
+-              `/companies/${state.companyId}/approvals/${btn.dataset.approve}/approve`,
+-              { method: "POST", body: JSON.stringify({ comment: "Approved from workspace" }) }
+-            );
+-            loadApprovals();
+-            refreshInboxBadge();
+-          } catch (err) {
+-            alert(err.message);
+-          }
+-        };
+-      });
+-      $("approvalList").querySelectorAll("[data-reject]").forEach((btn) => {
+-        btn.onclick = async () => {
+-          try {
+-            await api(
+-              `/companies/${state.companyId}/approvals/${btn.dataset.reject}/reject`,
+-              { method: "POST", body: JSON.stringify({ comment: "Rejected from workspace" }) }
+-            );
+-            loadApprovals();
+-            refreshInboxBadge();
+-          } catch (err) {
+-            alert(err.message);
++        (list || [])
++          .map(
++            (a) => `<div class="item">
++          <strong>${escapeHtml(a.action)}</strong>
++          <div class="meta">${escapeHtml(a.status)} · ${escapeHtml(a.reason || "")}</div>
++          ${
++            a.status === "pending"
++              ? `<div class="actions">
++            <button class="success btn-rev" data-id="${a.id}" data-d="approved">Approve</button>
++            <button class="danger btn-rev" data-id="${a.id}" data-d="rejected">Reject</button>
++          </div>`
++              : ""
+           }
++        </div>`
++          )
++          .join("") || `<div class="empty">No approvals.</div>`;
++      document.querySelectorAll(".btn-rev").forEach((b) => {
++        b.onclick = async () => {
++          await api(`/companies/${state.companyId}/approvals/${b.dataset.id}/review`, {
++            method: "POST",
++            body: JSON.stringify({ status: b.dataset.d, comment: "workspace" }),
++          });
++          loadApprovals();
++          refreshInboxBadge();
+         };
+       });
+     } catch (err) {
+@@ -737,11 +809,10 @@
+   }
+   $("btnRefreshApprovals").onclick = loadApprovals;
+ 
+-  // ---- Consult ----
++  // ----- Consult -----
+   $("btnConsult").onclick = async () => {
+-    const out = $("consultResult");
++    const log = $("consultResult");
+     try {
+-      out.textContent = "Creating consultation task...";
+       const task = await api(`/companies/${state.companyId}/tasks`, {
+         method: "POST",
+         body: JSON.stringify({
+@@ -751,42 +822,32 @@
+           mode: "consult",
+         }),
+       });
+-      const done = await api(
+-        `/companies/${state.companyId}/tasks/${task.id}/consult`,
+-        { method: "POST" }
+-      );
+-      let result = done.result;
+-      try {
+-        result = JSON.stringify(JSON.parse(done.result), null, 2);
+-      } catch {}
+-      out.textContent = result;
++      const ran = await api(`/companies/${state.companyId}/tasks/${task.id}/run`, {
++        method: "POST",
++        body: "{}",
++      });
++      log.textContent = JSON.stringify(ran, null, 2);
+     } catch (err) {
+-      out.textContent = err.message;
++      log.textContent = err.message;
+     }
+   };
+ 
+-  // ---- Directory ----
++  // ----- Directory -----
+   async function listDirectory(skill) {
++    if (!state.companyId) return;
+     try {
+-      const path = skill
+-        ? `/companies/${state.companyId}/directory/search?skill=${encodeURIComponent(skill)}`
+-        : `/companies/${state.companyId}/directory`;
+-      const entries = await api(path);
++      let path = `/companies/${state.companyId}/directory`;
++      if (skill) path += `?skill=${encodeURIComponent(skill)}`;
++      const list = await api(path);
+       $("dirList").innerHTML =
+-        entries
++        (list || [])
+           .map(
+             (e) => `<div class="agent-card">
+-            <h4>${escapeHtml(e.name)}</h4>
+-            <div class="meta">${escapeHtml(e.role)} · ${e.status}</div>
+-            <div style="margin-top:0.4rem">
+-              ${(e.capabilities || [])
+-                .slice(0, 10)
+-                .map((c) => `<span class="tag">${escapeHtml(c)}</span>`)
+-                .join("")}
+-            </div>
+-          </div>`
++          <h4>${escapeHtml(e.name || e.agent_name || e.id)}</h4>
++          <div class="muted" style="font-size:.8rem">${escapeHtml((e.skills || []).join(", "))}</div>
++        </div>`
+           )
+-          .join("") || '<div class="muted">No agents</div>';
++          .join("") || `<div class="empty">No matches.</div>`;
+     } catch (err) {
+       $("dirList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+     }
+@@ -794,7 +855,7 @@
+   $("btnListDir").onclick = () => listDirectory();
+   $("btnSearchDir").onclick = () => listDirectory($("dirSkill").value.trim());
+ 
+-  // ---- Knowledge ----
++  // ----- Knowledge -----
+   $("btnAddKnowledge").onclick = async () => {
+     try {
+       await api(`/companies/${state.companyId}/knowledge`, {
+@@ -802,12 +863,11 @@
+         body: JSON.stringify({
+           title: $("knowTitle").value.trim(),
+           content: $("knowContent").value.trim(),
+-          category: "general",
+         }),
+       });
+       $("knowTitle").value = "";
+       $("knowContent").value = "";
+-      $("knowResults").innerHTML = '<div class="item">Knowledge added.</div>';
++      alert("Knowledge added");
+     } catch (err) {
+       alert(err.message);
+     }
+@@ -816,62 +876,46 @@
+     try {
+       const hits = await api(`/companies/${state.companyId}/knowledge/search`, {
+         method: "POST",
+-        body: JSON.stringify({ query: $("knowQuery").value.trim(), limit: 10 }),
++        body: JSON.stringify({ query: $("knowQuery").value.trim() }),
+       });
+       $("knowResults").innerHTML =
+-        hits
++        (hits || [])
+           .map(
+-            (h) =>
+-              `<div class="item"><div class="meta">${h.source} · score ${h.score}</div>${escapeHtml(
+-                (h.content || h.title || "").slice(0, 300)
+-              )}</div>`
++            (h) => `<div class="item"><strong>${escapeHtml(h.title || h.id)}</strong>
++          <div class="meta">${escapeHtml((h.snippet || h.content || "").slice(0, 160))}</div></div>`
+           )
+-          .join("") || '<div class="muted">No hits</div>';
++          .join("") || `<div class="empty">No hits.</div>`;
+     } catch (err) {
+       $("knowResults").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+     }
+   };
+ 
+-  // ---- Delegation ----
++  // ----- Delegation -----
+   async function loadDelegations() {
++    if (!state.companyId) return;
+     try {
+-      const list = await api(`/companies/${state.companyId}/delegation-requests`);
++      const list = await api(`/companies/${state.companyId}/delegations`);
+       $("delList").innerHTML =
+-        list
++        (list || [])
+           .map(
+             (d) => `<div class="item">
+-            <div class="row between">
+-              <div>
+-                <strong>${escapeHtml(d.title)}</strong>
+-                <div class="meta">${d.status} · ${escapeHtml(d.capability)} · ${d.id}</div>
+-              </div>
+-              ${
+-                d.status === "pending" || d.status === "accepted"
+-                  ? `<button class="secondary" data-exec-del="${d.id}">Execute</button>`
+-                  : ""
+-              }
+-            </div>
+-            ${
+-              d.result
+-                ? `<pre class="log" style="max-height:100px">${escapeHtml(
+-                    String(d.result).slice(0, 500)
+-                  )}</pre>`
+-                : ""
+-            }
+-          </div>`
+-          )
+-          .join("") || '<div class="muted">No delegations</div>';
+-      $("delList").querySelectorAll("[data-exec-del]").forEach((btn) => {
+-        btn.onclick = async () => {
+-          try {
+-            await api(
+-              `/companies/${state.companyId}/delegation-requests/${btn.dataset.execDel}/execute`,
+-              { method: "POST", body: JSON.stringify({ mode: "consult" }) }
+-            );
+-            loadDelegations();
+-          } catch (err) {
+-            alert(err.message);
++          <strong>${escapeHtml(d.title || d.id)}</strong>
++          <div class="meta">${escapeHtml(d.status)} · ${escapeHtml(d.capability || "")}</div>
++          ${
++            d.status === "pending" || d.status === "accepted"
++              ? `<div class="actions"><button class="primary btn-exd" data-id="${d.id}">Execute</button></div>`
++              : ""
+           }
++        </div>`
++          )
++          .join("") || `<div class="empty">No delegations.</div>`;
++      document.querySelectorAll(".btn-exd").forEach((b) => {
++        b.onclick = async () => {
++          await api(`/companies/${state.companyId}/delegations/${b.dataset.id}/execute`, {
++            method: "POST",
++            body: "{}",
++          });
++          loadDelegations();
+         };
+       });
+     } catch (err) {
+@@ -881,7 +925,7 @@
+   $("btnRefreshDel").onclick = loadDelegations;
+   $("btnCreateDel").onclick = async () => {
+     try {
+-      await api(`/companies/${state.companyId}/delegation-requests`, {
++      await api(`/companies/${state.companyId}/delegations`, {
+         method: "POST",
+         body: JSON.stringify({
+           source_agent_instance_id: $("delSource").value,
+@@ -892,38 +936,27 @@
+         }),
+       });
+       loadDelegations();
+-      refreshInboxBadge();
+     } catch (err) {
+       alert(err.message);
+     }
+   };
+ 
+-  // ---- Automation ----
++  // ----- Automation -----
+   async function loadAutomations() {
++    if (!state.companyId) return;
+     try {
+-      const [rules, runs] = await Promise.all([
+-        api(`/companies/${state.companyId}/automations`),
+-        api(`/companies/${state.companyId}/automations/runs`),
+-      ]);
+-      $("autoRules").innerHTML =
+-        rules
+-          .map(
+-            (r) =>
+-              `<div class="item"><strong>${escapeHtml(r.name)}</strong>
+-               <div class="meta">${r.trigger_type} · ${r.event_type || "interval " + r.interval_seconds} · ${r.is_active ? "active" : "off"}</div></div>`
+-          )
+-          .join("") || '<div class="muted">No rules</div>';
+-      $("autoRuns").innerHTML =
+-        runs
+-          .slice(0, 15)
++      const list = await api(`/companies/${state.companyId}/automations`);
++      $("autoList").innerHTML =
++        (list || [])
+           .map(
+-            (r) =>
+-              `<div class="item"><strong>${r.status}</strong>
+-               <div class="meta">attempt ${r.attempt} · ${escapeHtml(r.idempotency_key)} · task ${r.task_id || "-"}</div></div>`
++            (r) => `<div class="item">
++          <strong>${escapeHtml(r.name || r.id)}</strong>
++          <div class="meta">${escapeHtml(r.trigger_type || "")} · ${escapeHtml(r.is_active ? "active" : "off")}</div>
++        </div>`
+           )
+-          .join("") || '<div class="muted">No runs</div>';
++          .join("") || `<div class="empty">No rules.</div>`;
+     } catch (err) {
+-      $("autoRules").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
++      $("autoList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+     }
+   }
+   $("btnRefreshAuto").onclick = loadAutomations;
+@@ -931,276 +964,439 @@
+     try {
+       const trigger = $("autoTrigger").value;
+       const body = {
++        name: $("autoName").value.trim() || "Rule",
+         agent_instance_id: $("autoAgent").value,
+-        name: $("autoName").value.trim() || "Automation",
+         trigger_type: trigger,
+-        task_title_template: $("autoTitle").value.trim() || "Auto task",
+-        task_instruction_template: $("autoInstruction").value.trim() || "Auto instruction",
+-        task_mode: "consult",
++        task_title_template: $("autoTitleTpl").value.trim() || "Auto task",
++        task_instruction_template: $("autoInstrTpl").value.trim() || "Run automated work",
+       };
+-      if (trigger === "event") {
+-        body.event_type = $("autoEvent").value.trim() || "sample.event";
+-      } else {
+-        body.interval_seconds = 3600;
+-      }
++      if (trigger === "schedule") body.cron = $("autoExpr").value.trim() || "0 8 * * *";
++      else body.event_type = $("autoExpr").value.trim() || "demo.event";
+       await api(`/companies/${state.companyId}/automations`, {
+         method: "POST",
+         body: JSON.stringify(body),
+       });
+-      $("autoLog").textContent = "Rule created.";
+       loadAutomations();
+     } catch (err) {
+-      $("autoLog").textContent = err.message;
++      alert(err.message);
+     }
+   };
+-  $("btnTickAuto").onclick = async () => {
++  if ($("btnTickAuto"))
++    $("btnTickAuto").onclick = async () => {
++      try {
++        await api(`/companies/${state.companyId}/automations/tick`, {
++          method: "POST",
++          body: "{}",
++        });
++        loadAutomations();
++      } catch (err) {
++        alert(err.message);
++      }
++    };
++  if ($("btnFireEvent"))
++    $("btnFireEvent").onclick = async () => {
++      try {
++        await api(`/companies/${state.companyId}/automations/events`, {
++          method: "POST",
++          body: JSON.stringify({
++            event_type: $("autoExpr").value.trim() || "demo.event",
++            payload: { booking_id: "B-DEMO" },
++          }),
++        });
++        loadAutomations();
++      } catch (err) {
++        alert(err.message);
++      }
++    };
++
++  // ----- Governance -----
++  async function loadGovernance() {
++    if (!state.companyId) return;
++    try {
++      const [overview, agents, audit] = await Promise.all([
++        api(`/companies/${state.companyId}/governance/overview`).catch(() => null),
++        api(`/companies/${state.companyId}/governance/agents`).catch(() => []),
++        api(`/companies/${state.companyId}/governance/audit?limit=20`).catch(() => []),
++      ]);
++      const o = overview || {};
++      $("govStats").innerHTML = [
++        ["Agents", o.agent_count ?? "—"],
++        ["Tasks", o.task_count ?? "—"],
++        ["Approvals", o.approval_count ?? "—"],
++        ["Experiences", o.experience_count ?? "—"],
++      ]
++        .map(
++          ([l, n]) =>
++            `<div class="stat"><div class="n">${escapeHtml(String(n))}</div><div class="l">${l}</div></div>`
++        )
++        .join("");
++      $("govAgents").innerHTML =
++        (agents || [])
++          .map(
++            (a) =>
++              `<div class="item">${escapeHtml(a.name || a.id)}<div class="meta">${escapeHtml(JSON.stringify(a).slice(0, 100))}</div></div>`
++          )
++          .join("") || `<div class="empty">No data</div>`;
++      $("govAudit").innerHTML =
++        (audit || [])
++          .map(
++            (a) =>
++              `<div class="item">${escapeHtml(a.action)}<div class="meta">${escapeHtml(a.status)} · ${escapeHtml(a.resource_type || "")}</div></div>`
++          )
++          .join("") || `<div class="empty">No audit rows</div>`;
++    } catch (err) {
++      $("govStats").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
++    }
++  }
++  if ($("btnRefreshGov")) $("btnRefreshGov").onclick = loadGovernance;
++
++  // ----- Chat -----
++  let chatConversationId = null;
++
++  async function loadChat() {
++    await loadAgentOptions();
++  }
++
++  async function refreshChatMessages() {
++    if (!chatConversationId || !state.companyId) return;
+     try {
+-      const runs = await api(`/companies/${state.companyId}/automations/tick`, {
++      const msgs = await api(
++        `/companies/${state.companyId}/conversations/${chatConversationId}/messages`
++      );
++      const thread = $("chatThread");
++      if (!thread) return;
++      thread.innerHTML =
++        (msgs || [])
++          .map((m) => {
++            const role = (m.role || "agent").toLowerCase();
++            const cls =
++              role === "human" || role === "user"
++                ? "human"
++                : role === "system"
++                  ? "system"
++                  : "agent";
++            return `<div class="bubble ${cls}"><div class="who">${escapeHtml(role)}</div>${escapeHtml(m.content || "")}</div>`;
++          })
++          .join("") || `<div class="empty">No messages yet. Say hello.</div>`;
++      thread.scrollTop = thread.scrollHeight;
++    } catch (err) {
++      const log = $("chatLog");
++      if (log) {
++        log.classList.remove("hidden-log");
++        log.textContent = err.message;
++      }
++    }
++  }
++
++  $("btnChatStart").onclick = async () => {
++    try {
++      const agentId = $("chatAgent").value;
++      const title = $("chatTitle").value || "Chat";
++      const conv = await api(`/companies/${state.companyId}/conversations`, {
+         method: "POST",
++        body: JSON.stringify({ agent_instance_id: agentId, title }),
+       });
+-      $("autoLog").textContent = "Tick: " + JSON.stringify(runs, null, 2);
+-      loadAutomations();
++      chatConversationId = conv.id;
++      $("chatMeta").textContent = "Conversation " + conv.id.slice(0, 8) + "…";
++      await refreshChatMessages();
+     } catch (err) {
+-      $("autoLog").textContent = err.message;
++      const log = $("chatLog");
++      log.classList.remove("hidden-log");
++      log.textContent = err.message;
+     }
+   };
+-  $("btnFireEvent").onclick = async () => {
++
++  $("btnChatSend").onclick = async () => {
++    if (!chatConversationId) {
++      const log = $("chatLog");
++      log.classList.remove("hidden-log");
++      log.textContent = "Start a conversation first.";
++      return;
++    }
+     try {
+-      const eventType = $("autoEvent").value.trim() || "sample.event";
+-      const runs = await api(`/companies/${state.companyId}/automations/events`, {
++      const content = $("chatInput").value.trim();
++      if (!content) return;
++      await api(`/companies/${state.companyId}/conversations/${chatConversationId}/messages`, {
+         method: "POST",
+         body: JSON.stringify({
+-          event_type: eventType,
+-          payload: { booking_id: "B-DEMO" },
+-          idempotency_key: eventType + ":B-DEMO:" + Date.now(),
++          content,
++          create_task: !!$("chatCreateTask").checked,
++          task_mode: $("chatTaskMode").value || "consult",
+         }),
+       });
+-      $("autoLog").textContent = "Event: " + JSON.stringify(runs, null, 2);
+-      loadAutomations();
++      $("chatInput").value = "";
++      await refreshChatMessages();
+     } catch (err) {
+-      $("autoLog").textContent = err.message;
++      const log = $("chatLog");
++      log.classList.remove("hidden-log");
++      log.textContent = err.message;
+     }
+   };
+ 
+ 
+-  async function loadGovernance() {
++  // ----- Policy simulate -----
++  if ($("btnSimulate"))
++    $("btnSimulate").onclick = async () => {
++      const log = $("simResult");
++      try {
++        let args = {};
++        try {
++          args = JSON.parse($("simArgs").value || "{}");
++        } catch {
++          throw new Error("Arguments must be valid JSON");
++        }
++        const res = await api(`/companies/${state.companyId}/policies/simulate`, {
++          method: "POST",
++          body: JSON.stringify({
++            agent_instance_id: $("simAgent").value,
++            tool_name: $("simTool").value.trim(),
++            arguments: args,
++            context: {},
++          }),
++        });
++        log.textContent = JSON.stringify(res, null, 2);
++      } catch (err) {
++        log.textContent = err.message;
++      }
++    };
++
++  // ----- Departments -----
++  async function loadDepartments() {
++    if (!state.companyId) return;
+     try {
+-      const [ov, agents, exp, audit] = await Promise.all([
+-        api(`/companies/${state.companyId}/governance/overview`),
+-        api(`/companies/${state.companyId}/governance/agents`),
+-        api(`/companies/${state.companyId}/governance/experiences`),
+-        api(`/companies/${state.companyId}/governance/audit?limit=50`),
+-      ]);
+-      $("govStats").innerHTML = [
+-        ["Agents", ov.workforce.agents_total],
+-        ["Open tasks", ov.tasks.open],
+-        ["Pending approvals", ov.approvals.pending],
+-        ["Validated experiences", ov.experiences.validated],
++      const list = await api(`/companies/${state.companyId}/departments`);
++      $("deptList").innerHTML =
++        (list || [])
++          .map(
++            (d) =>
++              `<div class="item"><strong>${escapeHtml(d.name)}</strong><div class="meta">${escapeHtml(d.id)}</div></div>`
++          )
++          .join("") || `<div class="empty">No departments.</div>`;
++    } catch (err) {
++      $("deptList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
++    }
++  }
++  if ($("btnRefreshDept")) $("btnRefreshDept").onclick = loadDepartments;
++  if ($("btnCreateDept"))
++    $("btnCreateDept").onclick = async () => {
++      try {
++        await api(`/companies/${state.companyId}/departments`, {
++          method: "POST",
++          body: JSON.stringify({ name: $("deptName").value.trim() }),
++        });
++        $("deptName").value = "";
++        loadDepartments();
++      } catch (err) {
++        alert(err.message);
++      }
++    };
++
++  // ----- Skills -----
++  async function loadSkills() {
++    if (!state.companyId) return;
++    try {
++      const list = await api(`/companies/${state.companyId}/skills`);
++      $("skillsList").innerHTML =
++        (list || [])
++          .map(
++            (s) => `<div class="agent-card">
++          <h4>${escapeHtml(s.name)}</h4>
++          <div class="muted" style="font-size:.8rem">${escapeHtml(s.slug)} · ${s.company_id ? "company" : "platform"} · v${escapeHtml(s.version || "")}</div>
++          <p style="font-size:.85rem;color:var(--muted)">${escapeHtml((s.description || "").slice(0, 100))}</p>
++        </div>`
++          )
++          .join("") || `<div class="empty">No skills.</div>`;
++    } catch (err) {
++      $("skillsList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
++    }
++  }
++  if ($("btnRefreshSkills")) $("btnRefreshSkills").onclick = loadSkills;
++
++  // ----- Usage -----
++  async function loadUsage() {
++    if (!state.companyId) return;
++    try {
++      const u = await api(`/companies/${state.companyId}/usage`);
++      const plan = u.plan || u.plan_code || "—";
++      $("usageStats").innerHTML = [
++        ["Plan", plan],
++        ["Agents", `${u.agents_used ?? u.agent_count ?? "—"} / ${u.max_agents ?? "∞"}`],
++        ["Tasks today", `${u.tasks_today ?? "—"} / ${u.max_tasks_day ?? "∞"}`],
++        ["Automations", `${u.automations_used ?? "—"} / ${u.max_automations ?? "∞"}`],
+       ]
+         .map(
+           ([l, n]) =>
+-            `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`
++            `<div class="stat"><div class="n" style="font-size:1.1rem">${escapeHtml(String(n))}</div><div class="l">${l}</div></div>`
+         )
+         .join("");
+-      $("govAgents").innerHTML =
+-        agents
++      $("usageDetail").textContent = JSON.stringify(u, null, 2);
++    } catch (err) {
++      $("usageStats").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
++    }
++  }
++  if ($("btnRefreshUsage")) $("btnRefreshUsage").onclick = loadUsage;
++
++  // ----- Tools -----
++  async function loadTools() {
++    try {
++      const list = await api("/tools");
++      $("toolsList").innerHTML =
++        (list || [])
+           .map(
+-            (a) =>
+-              `<div class="item"><strong>${escapeHtml(a.name)}</strong>
+-               <div class="meta">tasks ${a.tasks_total} · completed ${a.tasks_completed} · rate ${a.completion_rate}</div></div>`
++            (t) => `<div class="item">
++          <strong>${escapeHtml(t.name || t.id)}</strong>
++          <div class="meta">side_effect: ${escapeHtml(String(t.side_effect ?? "—"))} · risk: ${escapeHtml(String(t.risk ?? "—"))}</div>
++        </div>`
+           )
+-          .join("") || '<div class="muted">No agents</div>';
+-      $("govExp").textContent = JSON.stringify(exp, null, 2);
+-      $("govAudit").textContent = JSON.stringify(
+-        { by_action: audit.by_action, recent: audit.recent },
+-        null,
+-        2
+-      );
++          .join("") || `<div class="empty">No tools registered.</div>`;
+     } catch (err) {
+-      $("govStats").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
++      $("toolsList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+     }
+   }
+-  const btnGov = $("btnRefreshGov");
+-  if (btnGov) btnGov.onclick = loadGovernance;
+-
++  if ($("btnRefreshTools")) $("btnRefreshTools").onclick = loadTools;
+ 
+-  async function applyAuthSession(body) {
+-    state.companyId = body.company_id;
+-    state.userId = body.user_id;
+-    state.accessToken = body.access_token || "";
+-    $("companyId").value = state.companyId;
+-    $("userId").value = state.userId;
+-    localStorage.setItem("ws_companyId", state.companyId);
+-    localStorage.setItem("ws_userId", state.userId);
+-    localStorage.setItem("ws_accessToken", state.accessToken);
+-    if (body.refresh_token) {
+-      localStorage.setItem("ws_refreshToken", body.refresh_token);
++  // ----- Integrations -----
++  async function loadIntegrations() {
++    if (!state.companyId) return;
++    try {
++      const list = await api(`/companies/${state.companyId}/integrations`);
++      $("integList").innerHTML =
++        (list || [])
++          .map(
++            (i) => `<div class="item">
++          <strong>${escapeHtml(i.name)}</strong>
++          <div class="meta">${escapeHtml(i.type)} · ${escapeHtml(i.status || "")}</div>
++        </div>`
++          )
++          .join("") || `<div class="empty">No integrations.</div>`;
++    } catch (err) {
++      $("integList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+     }
+-    setConnected(true);
+-    await refreshInboxBadge();
+-    showView("workforce");
+   }
+-
+-  const btnLogin = $("btnLogin");
+-  if (btnLogin) {
+-    btnLogin.onclick = async () => {
++  if ($("btnRefreshInteg")) $("btnRefreshInteg").onclick = loadIntegrations;
++  if ($("btnCreateInteg"))
++    $("btnCreateInteg").onclick = async () => {
++      const log = $("integLog");
+       try {
+-        const body = await api("/auth/login", {
++        const body = await api(`/companies/${state.companyId}/integrations`, {
+           method: "POST",
+           body: JSON.stringify({
+-            company_id: $("companyId").value.trim(),
+-            email: $("loginEmail").value.trim(),
+-            password: $("loginPassword").value,
++            name: $("integName").value.trim() || "Integration",
++            type: $("integType").value,
++            config: {},
++            event_map: {},
+           }),
+-          skipAuth: true,
+         });
+-        $("setupLog").textContent = "Login OK for " + body.email;
+-        await applyAuthSession(body);
++        log.textContent =
++          "Created " +
++          body.name +
++          (body.webhook_secret ? "\nWebhook secret (once): " + body.webhook_secret : "");
++        loadIntegrations();
+       } catch (err) {
+-        $("setupLog").textContent = "Login failed: " + err.message;
++        log.textContent = err.message;
+       }
+     };
++
++  // ----- Workflows -----
++  async function loadWorkflows() {
++    if (!state.companyId) return;
++    try {
++      const list = await api(`/companies/${state.companyId}/workflows`);
++      $("wfList").innerHTML =
++        (list || [])
++          .map(
++            (w) => `<div class="item">
++          <strong>${escapeHtml(w.name || w.id)}</strong>
++          <div class="meta">steps: ${escapeHtml(String((w.steps || []).length))} · ${escapeHtml(w.id || "")}</div>
++        </div>`
++          )
++          .join("") || `<div class="empty">No workflows.</div>`;
++    } catch (err) {
++      $("wfList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
++    }
+   }
+-  const btnRegister = $("btnRegister");
+-  if (btnRegister) {
+-    btnRegister.onclick = async () => {
++  if ($("btnRefreshWf")) $("btnRefreshWf").onclick = loadWorkflows;
++  if ($("btnCreateWf"))
++    $("btnCreateWf").onclick = async () => {
++      const log = $("wfLog");
+       try {
+-        const body = await api("/auth/register", {
++        const agentId = $("wfAgent").value;
++        const body = await api(`/companies/${state.companyId}/workflows`, {
+           method: "POST",
+           body: JSON.stringify({
+-            company_id: $("companyId").value.trim(),
+-            email: $("loginEmail").value.trim(),
+-            name: $("loginEmail").value.trim().split("@")[0] || "User",
+-            password: $("loginPassword").value,
+-            role: "member",
++            name: $("wfName").value.trim() || "Demo workflow",
++            steps: [
++              {
++                type: "create_task",
++                agent_instance_id: agentId,
++                title: "Workflow task",
++                instruction: "Automated step from workflow",
++                mode: "consult",
++              },
++              { type: "wait_approval" },
++            ],
+           }),
+-          skipAuth: true,
+         });
+-        $("setupLog").textContent = "Registered " + body.email;
+-        await applyAuthSession(body);
++        log.textContent = "Created " + JSON.stringify(body, null, 2);
++        loadWorkflows();
+       } catch (err) {
+-        $("setupLog").textContent = "Register failed: " + err.message;
++        log.textContent = err.message;
+       }
+     };
+-  }
+ 
+-
+-
+-  // Job 21 — Agent chat
+-  let chatConversationId = null;
+-
+-  async function loadChat() {
++  // ----- Cost -----
++  async function loadCost() {
++    if (!state.companyId) return;
+     try {
+-      const agents = await api(`/companies/${state.companyId}/agents`);
+-      const sel = $("chatAgent");
+-      if (!sel) return;
+-      sel.innerHTML = agents
+-        .map((a) => `<option value="${a.id}">${a.name}</option>`)
++      const c = await api(`/companies/${state.companyId}/governance/cost`);
++      $("costStats").innerHTML = [
++        ["Calls", c.total_calls ?? c.call_count ?? "—"],
++        ["Tokens", c.total_tokens ?? "—"],
++        ["Est. cost", c.estimated_cost ?? c.total_cost ?? "—"],
++        ["Budget", c.budget_status ?? c.soft_limit ?? "—"],
++      ]
++        .map(
++          ([l, n]) =>
++            `<div class="stat"><div class="n" style="font-size:1.1rem">${escapeHtml(String(n))}</div><div class="l">${l}</div></div>`
++        )
+         .join("");
++      $("costDetail").textContent = JSON.stringify(c, null, 2);
+     } catch (err) {
+-      const log = $("chatLog");
+-      if (log) log.textContent = err.message;
++      $("costStats").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+     }
+   }
++  if ($("btnRefreshCost")) $("btnRefreshCost").onclick = loadCost;
+ 
+-  async function refreshChatMessages() {
+-    if (!chatConversationId) return;
+-    const msgs = await api(
+-      `/companies/${state.companyId}/conversations/${chatConversationId}/messages`
+-    );
+-    const thread = $("chatThread");
+-    if (!thread) return;
+-    thread.innerHTML = msgs
+-      .map(
+-        (m) =>
+-          `<div class="list-item"><strong>${m.role}</strong><div>${String(
+-            m.content || ""
+-          ).replace(/</g, "&lt;")}</div><div class="muted">${m.created_at || ""}${
+-            m.task_id ? " · task " + m.task_id : ""
+-          }</div></div>`
+-      )
+-      .join("");
+-  }
++  // ----- Scope check -----
++  if ($("btnScopeCheck"))
++    $("btnScopeCheck").onclick = async () => {
++      const log = $("scopeResult");
++      try {
++        const res = await api(`/companies/${state.companyId}/scope-check`, {
++          method: "POST",
++          body: JSON.stringify({
++            agent_instance_id: $("scopeAgent").value,
++            instruction: $("scopeInstruction").value.trim(),
++            auto_delegate: !!$("scopeAutoDel").checked,
++          }),
++        });
++        log.textContent = JSON.stringify(res, null, 2);
++      } catch (err) {
++        log.textContent = err.message;
++      }
++    };
+ 
+-  (function wireChat() {
+-    const start = $("btnChatStart");
+-    if (start)
+-      start.onclick = async () => {
+-        try {
+-          const agentId = $("chatAgent").value;
+-          const title = ($("chatTitle") && $("chatTitle").value) || "Chat";
+-          const conv = await api(`/companies/${state.companyId}/conversations`, {
+-            method: "POST",
+-            body: JSON.stringify({ agent_instance_id: agentId, title }),
+-          });
+-          chatConversationId = conv.id;
+-          const meta = $("chatMeta");
+-          if (meta) meta.textContent = "Conversation " + conv.id;
+-          await refreshChatMessages();
+-        } catch (err) {
+-          const log = $("chatLog");
+-          if (log) log.textContent = err.message;
+-        }
+-      };
+-    const send = $("btnChatSend");
+-    if (send)
+-      send.onclick = async () => {
+-        if (!chatConversationId) {
+-          const log = $("chatLog");
+-          if (log) log.textContent = "Start a conversation first.";
+-          return;
+-        }
+-        try {
+-          const content = ($("chatInput") && $("chatInput").value.trim()) || "";
+-          if (!content) return;
+-          await api(
+-            `/companies/${state.companyId}/conversations/${chatConversationId}/messages`,
+-            {
+-              method: "POST",
+-              body: JSON.stringify({
+-                content,
+-                create_task: !!(
+-                  $("chatCreateTask") && $("chatCreateTask").checked
+-                ),
+-                task_mode:
+-                  ($("chatTaskMode") && $("chatTaskMode").value) || "consult",
+-              }),
+-            }
+-          );
+-          if ($("chatInput")) $("chatInput").value = "";
+-          await refreshChatMessages();
+-        } catch (err) {
+-          const log = $("chatLog");
+-          if (log) log.textContent = err.message;
+-        }
+-      };
+-    const ref = $("btnChatRefresh");
+-    if (ref) ref.onclick = () => refreshChatMessages();
+-  })();
++
++  // ----- Boot -----
++  if ($("apiBase")) $("apiBase").value = state.apiBase;
++  if ($("companyId")) $("companyId").value = state.companyId;
++  if ($("userId")) $("userId").value = state.userId;
++  if ($("loginCompanyId")) $("loginCompanyId").value = state.companyId;
+ 
+   if (state.companyId && state.userId) {
+-    $("btnConnect").click();
++    setConnected(true);
++    refreshInboxBadge().then(() => showView("home"));
++  } else {
++    setConnected(false);
+   }
+ })();
+-
+-
+-
+-  // Job 20 — notification controls
+-  document.addEventListener("DOMContentLoaded", () => {
+-    const r = $("btnNotifRefresh");
+-    if (r) r.onclick = () => loadNotifications();
+-    const a = $("btnNotifReadAll");
+-    if (a)
+-      a.onclick = async () => {
+-        if (!state.companyId) return;
+-        await api(`/companies/${state.companyId}/notifications/read-all`, {
+-          method: "POST",
+-          body: "{}",
+-        });
+-        await loadNotifications();
+-        await refreshInboxBadge();
+-      };
+-  });
+-
+-
+-  // 
+\ No newline at end of file
+diff --git a/app/static/workspace/index.html b/app/static/workspace/index.html
+index 6581978..f40a14b 100644
+--- a/app/static/workspace/index.html
++++ b/app/static/workspace/index.html
+@@ -7,135 +7,209 @@
+   <link rel="stylesheet" href="/workspace/assets/styles.css" />
+ </head>
+ <body>
+-  <div id="app">
++  <!-- ========== LOGIN GATE ========== -->
++  <div id="loginGate" class="login-gate">
++    <div class="login-card">
++      <div class="login-brand">
++        <div class="logo lg">AI</div>
++        <div>
++          <h1>AI Employee Platform</h1>
++          <p>Modern enterprise workspace for human + AI collaboration</p>
++        </div>
++      </div>
++
++      <div class="login-tabs">
++        <button type="button" class="tab active" data-tab="quick">Quick start</button>
++        <button type="button" class="tab" data-tab="login">Login</button>
++        <button type="button" class="tab" data-tab="connect">Connect IDs</button>
++      </div>
++
++      <div id="tab-quick" class="tab-panel active">
++        <p class="muted">Create a demo company, owner account, and hire sample AI employees in one click.</p>
++        <button id="btnQuickStart" class="primary block">Launch demo workspace</button>
++        <pre id="quickLog" class="log"></pre>
++      </div>
++
++      <div id="tab-login" class="tab-panel">
++        <label>Company ID
++          <input id="loginCompanyId" placeholder="uuid from quick start or admin" />
++        </label>
++        <label>Email
++          <input id="loginEmail" placeholder="owner@demo.local" />
++        </label>
++        <label>Password
++          <input id="loginPassword" type="password" placeholder="min 8 characters" />
++        </label>
++        <div class="row">
++          <button id="btnLogin" class="primary">Sign in</button>
++          <button id="btnRegister" class="secondary">Register</button>
++        </div>
++        <pre id="loginLog" class="log"></pre>
++      </div>
++
++      <div id="tab-connect" class="tab-panel">
++        <p class="muted">Dev mode: paste existing company + user IDs (X-User-ID).</p>
++        <label>API base
++          <input id="apiBase" value="/api/v1" />
++        </label>
++        <label>Company ID
++          <input id="companyId" placeholder="uuid" />
++        </label>
++        <label>User ID
++          <input id="userId" placeholder="uuid" />
++        </label>
++        <div class="row">
++          <button id="btnConnect" class="primary">Connect</button>
++          <button id="btnClearSession" class="secondary">Clear session</button>
++        </div>
++        <pre id="setupLog" class="log"></pre>
++      </div>
++    </div>
++  </div>
++
++  <!-- ========== APP SHELL ========== -->
++  <div id="app" class="hidden">
+     <aside class="sidebar">
+       <div class="brand">
+         <span class="logo">AI</span>
+         <div>
+           <strong>Employee Platform</strong>
+-          <small>Human + AI Workspace</small>
++          <small id="brandSub">Workspace</small>
+         </div>
+       </div>
++
+       <nav id="nav">
+-        <button data-view="setup" class="nav-btn active">Setup</button>
+-        <button data-view="workforce" class="nav-btn" disabled>Workforce Overview</button>
+-        <button data-view="inbox" class="nav-btn" disabled>AI Inbox</button>
+-        <button data-view="notifications" class="nav-btn" disabled>Notifications</button>
+-        <button data-view="tasks" class="nav-btn" disabled>Task Center</button>
+-        <button data-view="approvals" class="nav-btn" disabled>Approval Center</button>
+-        <button data-view="agents" class="nav-btn" disabled>Agent Dashboard</button>
+-        <button data-view="consult" class="nav-btn" disabled>Consultation</button>
+-        <button data-view="chat" class="nav-btn" disabled>Agent Chat</button>
+-        <button data-view="directory" class="nav-btn" disabled>Directory</button>
+-        <button data-view="knowledge" class="nav-btn" disabled>Knowledge</button>
+-        <button data-view="delegation" class="nav-btn" disabled>Delegation</button>
+-        <button data-view="automation" class="nav-btn" disabled>Automation</button>
+-        <button data-view="governance" class="nav-btn" disabled>Governance</button>
++        <div class="nav-group">Work</div>
++        <button data-view="home" class="nav-btn active">Home</button>
++        <button data-view="inbox" class="nav-btn">Inbox <span id="navInboxCount" class="nav-count hidden">0</span></button>
++        <button data-view="chat" class="nav-btn">Chat</button>
++        <button data-view="tasks" class="nav-btn">Tasks</button>
++        <button data-view="approvals" class="nav-btn">Approvals</button>
++
++        <div class="nav-group">Workforce</div>
++        <button data-view="agents" class="nav-btn">AI Employees</button>
++        <button data-view="directory" class="nav-btn">Directory</button>
++        <button data-view="marketplace" class="nav-btn">Marketplace</button>
++
++        <div class="nav-group">Collaborate</div>
++        <button data-view="consult" class="nav-btn">Consult</button>
++        <button data-view="knowledge" class="nav-btn">Knowledge</button>
++        <button data-view="delegation" class="nav-btn">Delegation</button>
++        <button data-view="automation" class="nav-btn">Automation</button>
++
++        <div class="nav-group">Company</div>
++        <button data-view="notifications" class="nav-btn">Notifications</button>
++        <button data-view="governance" class="nav-btn">Governance</button>
++        <button data-view="policies" class="nav-btn">Policy Simulator</button>
++        <button data-view="departments" class="nav-btn">Departments</button>
++        <button data-view="skills" class="nav-btn">Skills</button>
++        <button data-view="usage" class="nav-btn">Plan & Usage</button>
++
++        <div class="nav-group">Developer</div>
++        <button data-view="tools" class="nav-btn">Tools</button>
++        <button data-view="integrations" class="nav-btn">Integrations</button>
++        <button data-view="workflows" class="nav-btn">Workflows</button>
++        <button data-view="cost" class="nav-btn">LLM Cost</button>
++        <button data-view="scopecheck" class="nav-btn">Scope Check</button>
+       </nav>
++
+       <div class="session" id="sessionBox">
+         <small>Not connected</small>
+       </div>
++      <button id="btnLogout" class="secondary block logout-btn">Sign out</button>
+     </aside>
+ 
+     <main class="main">
+       <header class="topbar">
+-        <h1 id="viewTitle">Setup</h1>
++        <div>
++          <h1 id="viewTitle">Home</h1>
++          <p id="viewSubtitle" class="muted top-sub">Command center</p>
++        </div>
+         <div class="top-actions">
++          <button id="btnTopNotif" class="icon-btn" title="Notifications">🔔 <span id="notifBadge" class="badge hidden">0</span></button>
+           <span id="inboxBadge" class="badge hidden">0</span>
+-          <span id="statusPill" class="pill muted">Offline</span>
++          <span id="statusPill" class="pill ok">Online</span>
+         </div>
+       </header>
+ 
+-      <!-- SETUP -->
+-      <section id="view-setup" class="view active">
+-        <div class="card">
+-          <h2>Connect to company</h2>
+-          <p class="muted">Workspace uses API header <code>X-User-ID</code>. Create a demo company or paste existing IDs.</p>
+-          <div class="grid-2">
+-            <label>API base
+-              <input id="apiBase" value="/api/v1" />
+-            </label>
+-            <label>Company ID
+-              <input id="companyId" placeholder="uuid" />
+-            </label>
+-            <label>User ID
+-              <input id="userId" placeholder="uuid" />
+-            </label>
+-          </div>
+-          <div class="row">
+-            <button id="btnConnect" class="primary">Connect</button>
+-            <button id="btnQuickStart" class="secondary">Quick start (demo company)</button>
+-            <button id="btnClearSession" class="secondary">Clear session</button>
+-          </div>
+-          
+-          <hr />
+-          <h3>Login with password (Job 15)</h3>
+-          <p class="muted">After Quick start, set a password via Register or use Login.</p>
+-          <div class="grid-2">
+-            <label>Email
+-              <input id="loginEmail" placeholder="owner@demo.local" />
+-            </label>
+-            <label>Password
+-              <input id="loginPassword" type="password" placeholder="min 8 chars" />
+-            </label>
+-          </div>
+-          <div class="row">
+-            <button id="btnLogin" class="primary">Login</button>
+-            <button id="btnRegister" class="secondary">Register on company</button>
+-          </div>
+-
+-          <pre id="setupLog" class="log"></pre>
+-        </div>
+-      </section>
+-
+-      <!-- WORKFORCE OVERVIEW -->
+-      <section id="view-workforce" class="view">
+-        <div class="stats" id="wfStats"></div>
++      <!-- HOME -->
++      <section id="view-home" class="view active">
++        <div class="stats" id="homeStats"></div>
+         <div class="grid-2">
+           <div class="card">
+-            <h3>Workforce by status</h3>
+-            <div id="wfStatusBreakdown" class="list"></div>
++            <div class="row between">
++              <h3>Needs attention</h3>
++              <button data-jump="inbox" class="link-btn">Open inbox →</button>
++            </div>
++            <div id="homeInbox" class="list"></div>
+           </div>
+           <div class="card">
+-            <h3>Recent activity</h3>
+-            <div id="wfActivity" class="list"></div>
++            <div class="row between">
++              <h3>Your AI employees</h3>
++              <button data-jump="agents" class="link-btn">Manage →</button>
++            </div>
++            <div id="homeAgents" class="cards compact"></div>
+           </div>
+         </div>
+         <div class="card">
+-          <h3>AI Employees snapshot</h3>
+-          <div id="wfAgentGrid" class="cards"></div>
+-        </div>
+-      </section>
+-
+-      <!-- AI INBOX -->
+-      
+-      <section id="view-notifications" class="view">
+-        <div class="card">
+-          <h2>Notifications</h2>
+-          <p class="muted">Approvals, delegations, and task failures routed to you.</p>
++          <h3>Quick actions</h3>
+           <div class="row">
+-            <button id="btnNotifRefresh" class="secondary">Refresh</button>
+-            <button id="btnNotifReadAll" class="secondary">Mark all read</button>
++            <button data-jump="chat" class="primary">Open chat</button>
++            <button data-jump="tasks" class="secondary">Create task</button>
++            <button data-jump="marketplace" class="secondary">Browse marketplace</button>
++            <button data-jump="approvals" class="secondary">Review approvals</button>
+           </div>
+-          <div id="notifStats" class="stats"></div>
+-          <div id="notifList" class="list"></div>
+         </div>
+       </section>
+ 
++      <!-- INBOX -->
+       <section id="view-inbox" class="view">
+         <div class="card">
+           <div class="row between">
+-            <h2>AI Inbox</h2>
++            <div>
++              <h2>AI Inbox</h2>
++              <p class="muted">Pending tasks, approvals, and open delegations.</p>
++            </div>
+             <button id="btnRefreshInbox" class="secondary">Refresh</button>
+           </div>
+-          <p class="muted">Unified queue: pending tasks, approvals, and open delegations that need human attention.</p>
+           <div class="stats" id="inboxStats"></div>
+-          <h3>Needs attention</h3>
+           <div id="inboxList" class="list"></div>
+         </div>
+       </section>
+ 
+-      <!-- TASK CENTER -->
++      <!-- CHAT -->
++      <section id="view-chat" class="view">
++        <div class="chat-layout">
++          <div class="card chat-side">
++            <h3>Conversation</h3>
++            <label>Agent
++              <select id="chatAgent"></select>
++            </label>
++            <label>Title
++              <input id="chatTitle" value="Workspace chat" />
++            </label>
++            <button id="btnChatStart" class="primary block">Start / switch</button>
++            <div id="chatMeta" class="muted meta-box"></div>
++            <label class="check-row">
++              <input type="checkbox" id="chatCreateTask" /> Create task from message
++            </label>
++            <select id="chatTaskMode">
++              <option value="consult">consult</option>
++              <option value="execute">execute</option>
++            </select>
++          </div>
++          <div class="card chat-main">
++            <div id="chatThread" class="chat-thread"></div>
++            <div class="chat-composer">
++              <textarea id="chatInput" rows="2" placeholder="Message your AI employee…"></textarea>
++              <button id="btnChatSend" class="primary">Send</button>
++            </div>
++            <pre id="chatLog" class="log hidden-log"></pre>
++          </div>
++        </div>
++      </section>
++
++      <!-- TASKS -->
+       <section id="view-tasks" class="view">
+         <div class="card">
+           <h2>Create task</h2>
+@@ -160,14 +234,14 @@
+         </div>
+         <div class="card">
+           <div class="row between">
+-            <h3>Task Center</h3>
++            <h3>Task center</h3>
+             <div class="row">
+               <select id="taskFilter">
+                 <option value="all">All</option>
+                 <option value="pending">Pending</option>
+                 <option value="completed">Completed</option>
+-                <option value="consult">Consult mode</option>
+-                <option value="execute">Execute mode</option>
++                <option value="consult">Consult</option>
++                <option value="execute">Execute</option>
+               </select>
+               <button id="btnRefreshTasks" class="secondary">Refresh</button>
+             </div>
+@@ -176,23 +250,25 @@
+         </div>
+       </section>
+ 
+-      <!-- APPROVAL CENTER -->
++      <!-- APPROVALS -->
+       <section id="view-approvals" class="view">
+         <div class="card">
+           <div class="row between">
+-            <h2>Approval Center</h2>
++            <div>
++              <h2>Approval center</h2>
++              <p class="muted">Human authority for restricted AI actions.</p>
++            </div>
+             <button id="btnRefreshApprovals" class="secondary">Refresh</button>
+           </div>
+-          <p class="muted">Review and decide on actions that require human authority.</p>
+           <div id="approvalList" class="list"></div>
+         </div>
+       </section>
+ 
+-      <!-- AGENT DASHBOARD -->
++      <!-- AGENTS -->
+       <section id="view-agents" class="view">
+         <div class="card">
+           <div class="row between">
+-            <h2>Agent Dashboard</h2>
++            <h2>AI Employees</h2>
+             <button id="btnRefreshAgents" class="secondary">Refresh</button>
+           </div>
+           <div id="agentList" class="cards"></div>
+@@ -208,47 +284,29 @@
+         </div>
+       </section>
+ 
+-      <!-- CONSULT -->
+-      
+-      <section id="view-chat" class="view">
++      <!-- MARKETPLACE -->
++      <section id="view-marketplace" class="view">
+         <div class="card">
+-          <h2>Agent Chat</h2>
+-          <p class="muted">Advisory transcript only. Tools require creating a Task.</p>
+-          <div class="grid-2">
+-            <label>Agent
+-              <select id="chatAgent"></select>
+-            </label>
+-            <label>Conversation title
+-              <input id="chatTitle" value="Workspace chat" />
+-            </label>
+-          </div>
+-          <div class="row">
+-            <button id="btnChatStart" class="primary">Start conversation</button>
+-            <button id="btnChatRefresh" class="secondary">Refresh messages</button>
+-          </div>
+-          <div id="chatMeta" class="muted"></div>
+-          <div id="chatThread" class="list" style="max-height:360px;overflow:auto"></div>
+-          <label>Message
+-            <textarea id="chatInput" rows="3" placeholder="Ask the agent..."></textarea>
+-          </label>
+-          <div class="row">
+-            <button id="btnChatSend" class="primary">Send</button>
+-            <label style="display:flex;align-items:center;gap:6px">
+-              <input type="checkbox" id="chatCreateTask" /> Create Task
+-            </label>
+-            <select id="chatTaskMode">
+-              <option value="consult">consult</option>
+-              <option value="execute">execute</option>
+-            </select>
++          <div class="row between">
++            <div>
++              <h2>Marketplace</h2>
++              <p class="muted">Public agent templates. Install copies skills into your company catalog.</p>
++            </div>
++            <button id="btnRefreshMarket" class="secondary">Refresh</button>
+           </div>
+-          <pre id="chatLog" class="log"></pre>
++          <div id="marketList" class="cards"></div>
++        </div>
++        <div class="card">
++          <h3>Installed templates</h3>
++          <div id="installList" class="list"></div>
+         </div>
+       </section>
+ 
++      <!-- CONSULT -->
+       <section id="view-consult" class="view">
+         <div class="card">
+           <h2>Consultation</h2>
+-          <p class="muted">Ask for a recommendation without side-effect tools.</p>
++          <p class="muted">Recommendation without side-effect tools.</p>
+           <div class="grid-2">
+             <label>Agent
+               <select id="consultAgent"></select>
+@@ -268,7 +326,7 @@
+       <!-- DIRECTORY -->
+       <section id="view-directory" class="view">
+         <div class="card">
+-          <h2>Agent Directory</h2>
++          <h2>Agent directory</h2>
+           <div class="row">
+             <input id="dirSkill" placeholder="skill filter e.g. contract_analysis" />
+             <button id="btnSearchDir" class="primary">Search</button>
+@@ -293,7 +351,7 @@
+           <button id="btnAddKnowledge" class="primary">Add knowledge</button>
+           <hr />
+           <div class="row">
+-            <input id="knowQuery" placeholder="Search knowledge..." />
++            <input id="knowQuery" placeholder="Search knowledge…" class="grow" />
+             <button id="btnSearchKnow" class="secondary">Search</button>
+           </div>
+           <div id="knowResults" class="list"></div>
+@@ -342,69 +400,238 @@
+             </label>
+             <label>Trigger
+               <select id="autoTrigger">
+-                <option value="event">Event</option>
+-                <option value="schedule">Schedule</option>
++                <option value="schedule">schedule</option>
++                <option value="event">event</option>
+               </select>
+             </label>
+             <label>Name
+-              <input id="autoName" placeholder="On booking created" />
++              <input id="autoName" placeholder="Nightly report" />
+             </label>
+-            <label>Event type
+-              <input id="autoEvent" placeholder="booking.created" />
++            <label>Cron / event type
++              <input id="autoExpr" placeholder="0 8 * * * or booking.created" />
+             </label>
+-            <label>Title template
+-              <input id="autoTitle" placeholder="Booking {booking_id}" />
++            <label class="full">Task title template
++              <input id="autoTitleTpl" placeholder="Daily summary" />
+             </label>
+             <label class="full">Instruction template
+-              <textarea id="autoInstruction" rows="2" placeholder="Handle booking {booking_id}"></textarea>
++              <textarea id="autoInstrTpl" rows="2"></textarea>
+             </label>
+           </div>
+-          <button id="btnCreateAuto" class="primary">Create rule</button>
+           <div class="row">
+-            <button id="btnTickAuto" class="secondary">Run schedule tick</button>
+-            <button id="btnFireEvent" class="secondary">Fire sample event</button>
++            <button id="btnCreateAuto" class="primary">Create rule</button>
++            <button id="btnTickAuto" class="secondary">Tick schedules</button>
++            <button id="btnFireEvent" class="secondary">Fire demo event</button>
+           </div>
+-          <pre id="autoLog" class="log"></pre>
+         </div>
+         <div class="card">
+           <div class="row between">
+-            <h3>Rules & runs</h3>
++            <h3>Rules</h3>
+             <button id="btnRefreshAuto" class="secondary">Refresh</button>
+           </div>
+-          <div id="autoRules" class="list"></div>
+-          <hr />
+-          <div id="autoRuns" class="list"></div>
++          <div id="autoList" class="list"></div>
+         </div>
+       </section>
+-    
+-      <!-- GOVERNANCE -->
+-      <section id="view-governance" class="view">
++
++      <!-- NOTIFICATIONS -->
++      <section id="view-notifications" class="view">
+         <div class="card">
+           <div class="row between">
+-            <h2>Performance & Governance</h2>
+-            <button id="btnRefreshGov" class="secondary">Refresh</button>
++            <h2>Notifications</h2>
++            <div class="row">
++              <button id="btnNotifRefresh" class="secondary">Refresh</button>
++              <button id="btnNotifReadAll" class="secondary">Mark all read</button>
++            </div>
+           </div>
+-          <p class="muted">Read-only metrics: workforce, tasks, approvals, experience quality, audit.</p>
+-          <div class="stats" id="govStats"></div>
++          <div id="notifStats" class="stats"></div>
++          <div id="notifList" class="list"></div>
+         </div>
+-        <div class="grid-2">
+-          <div class="card">
+-            <h3>Agent performance</h3>
+-            <div id="govAgents" class="list"></div>
++      </section>
++
++
++      <!-- POLICIES -->
++      <section id="view-policies" class="view">
++        <div class="card">
++          <h2>Policy simulator</h2>
++          <p class="muted">Dry-run ALLOW / APPROVAL / DENY without executing tools.</p>
++          <div class="grid-2">
++            <label>Agent
++              <select id="simAgent"></select>
++            </label>
++            <label>Tool name
++              <input id="simTool" placeholder="send_quotation" />
++            </label>
++            <label class="full">Arguments (JSON)
++              <textarea id="simArgs" rows="3">{}</textarea>
++            </label>
+           </div>
+-          <div class="card">
+-            <h3>Experience quality</h3>
+-            <pre id="govExp" class="log"></pre>
++          <button id="btnSimulate" class="primary">Simulate</button>
++          <pre id="simResult" class="log"></pre>
++        </div>
++      </section>
++
++      <!-- DEPARTMENTS -->
++      <section id="view-departments" class="view">
++        <div class="card">
++          <h2>Departments</h2>
++          <div class="row">
++            <input id="deptName" placeholder="Department name" />
++            <button id="btnCreateDept" class="primary">Create</button>
++            <button id="btnRefreshDept" class="secondary">Refresh</button>
++          </div>
++          <div id="deptList" class="list"></div>
++        </div>
++      </section>
++
++      <!-- SKILLS -->
++      <section id="view-skills" class="view">
++        <div class="card">
++          <div class="row between">
++            <div>
++              <h2>Skills</h2>
++              <p class="muted">Platform + company-scoped skills available to agents.</p>
++            </div>
++            <button id="btnRefreshSkills" class="secondary">Refresh</button>
++          </div>
++          <div id="skillsList" class="cards"></div>
++        </div>
++      </section>
++
++      <!-- USAGE -->
++      <section id="view-usage" class="view">
++        <div class="card">
++          <div class="row between">
++            <h2>Plan & usage</h2>
++            <button id="btnRefreshUsage" class="secondary">Refresh</button>
++          </div>
++          <div id="usageStats" class="stats"></div>
++          <pre id="usageDetail" class="log"></pre>
++        </div>
++      </section>
++
++      <!-- TOOLS -->
++      <section id="view-tools" class="view">
++        <div class="card">
++          <div class="row between">
++            <div>
++              <h2>Tool catalog</h2>
++              <p class="muted">Platform tools with side-effect and risk metadata.</p>
++            </div>
++            <button id="btnRefreshTools" class="secondary">Refresh</button>
++          </div>
++          <div id="toolsList" class="list"></div>
++        </div>
++      </section>
++
++      <!-- INTEGRATIONS -->
++      <section id="view-integrations" class="view">
++        <div class="card">
++          <h2>Create integration</h2>
++          <div class="grid-2">
++            <label>Name
++              <input id="integName" placeholder="Mailer" />
++            </label>
++            <label>Type
++              <select id="integType">
++                <option value="email_outbound">email_outbound</option>
++                <option value="calendar">calendar</option>
++                <option value="webhook_generic">webhook_generic</option>
++              </select>
++            </label>
+           </div>
++          <button id="btnCreateInteg" class="primary">Create</button>
++          <pre id="integLog" class="log"></pre>
+         </div>
+         <div class="card">
+-          <h3>Audit analytics (recent)</h3>
+-          <pre id="govAudit" class="log"></pre>
++          <div class="row between">
++            <h3>Integrations</h3>
++            <button id="btnRefreshInteg" class="secondary">Refresh</button>
++          </div>
++          <div id="integList" class="list"></div>
++        </div>
++      </section>
++
++      <!-- WORKFLOWS -->
++      <section id="view-workflows" class="view">
++        <div class="card">
++          <div class="row between">
++            <div>
++              <h2>Workflows</h2>
++              <p class="muted">Multi-step automation definitions and runs.</p>
++            </div>
++            <button id="btnRefreshWf" class="secondary">Refresh</button>
++          </div>
++          <div id="wfList" class="list"></div>
++        </div>
++        <div class="card">
++          <h3>Create simple workflow</h3>
++          <div class="grid-2">
++            <label>Name
++              <input id="wfName" placeholder="Onboarding flow" />
++            </label>
++            <label>Agent for task step
++              <select id="wfAgent"></select>
++            </label>
++          </div>
++          <button id="btnCreateWf" class="primary">Create (task → wait_approval)</button>
++          <pre id="wfLog" class="log"></pre>
++        </div>
++      </section>
++
++      <!-- COST -->
++      <section id="view-cost" class="view">
++        <div class="card">
++          <div class="row between">
++            <h2>LLM cost</h2>
++            <button id="btnRefreshCost" class="secondary">Refresh</button>
++          </div>
++          <div id="costStats" class="stats"></div>
++          <pre id="costDetail" class="log"></pre>
+         </div>
+       </section>
+ 
++      <!-- SCOPE CHECK -->
++      <section id="view-scopecheck" class="view">
++        <div class="card">
++          <h2>Scope check</h2>
++          <p class="muted">Test whether an instruction is in-scope; get directory matches if not.</p>
++          <div class="grid-2">
++            <label>Agent
++              <select id="scopeAgent"></select>
++            </label>
++            <label class="full">Instruction
++              <textarea id="scopeInstruction" rows="3" placeholder="Analyze this supplier contract…"></textarea>
++            </label>
++          </div>
++          <label class="check-row"><input type="checkbox" id="scopeAutoDel" /> Suggest auto-delegate</label>
++          <button id="btnScopeCheck" class="primary">Check scope</button>
++          <pre id="scopeResult" class="log"></pre>
++        </div>
++      </section>
++
++
++      <!-- GOVERNANCE -->
++      <section id="view-governance" class="view">
++        <div class="card">
++          <div class="row between">
++            <h2>Governance</h2>
++            <button id="btnRefreshGov" class="secondary">Refresh</button>
++          </div>
++          <div id="govStats" class="stats"></div>
++          <div class="grid-2">
++            <div>
++              <h3>Agents</h3>
++              <div id="govAgents" class="list"></div>
++            </div>
++            <div>
++              <h3>Recent audit</h3>
++              <div id="govAudit" class="list"></div>
++            </div>
++          </div>
++        </div>
++      </section>
+     </main>
+   </div>
++
+   <script src="/workspace/assets/app.js"></script>
+ </body>
+ </html>
+diff --git a/app/static/workspace/styles.css b/app/static/workspace/styles.css
+index 01fdd4d..eb91482 100644
+--- a/app/static/workspace/styles.css
++++ b/app/static/workspace/styles.css
+@@ -1,83 +1,129 @@
+ :root {
+-  --bg: #0f1419;
+-  --panel: #171d25;
+-  --panel-2: #1e2630;
+-  --border: #2a3441;
+-  --text: #e7eef7;
+-  --muted: #93a1b3;
++  --bg: #0b1220;
++  --bg-2: #0f172a;
++  --panel: #111827;
++  --panel-2: #1e293b;
++  --border: #243044;
++  --text: #e8eef7;
++  --muted: #94a3b8;
+   --accent: #3b82f6;
+-  --accent-2: #22c55e;
++  --accent-hover: #2563eb;
++  --success: #22c55e;
+   --warn: #f59e0b;
+   --danger: #ef4444;
+   --radius: 12px;
+-  --font: "Segoe UI", system-ui, -apple-system, sans-serif;
++  --font: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
++  --shadow: 0 10px 40px rgba(0,0,0,.35);
+ }
+ * { box-sizing: border-box; }
+ body {
+   margin: 0;
+   font-family: var(--font);
+-  background: radial-gradient(1200px 600px at 10% -10%, #1a2740 0%, var(--bg) 55%);
++  background: radial-gradient(1000px 500px at 15% -5%, #1e3a5f 0%, var(--bg) 50%);
+   color: var(--text);
+   min-height: 100vh;
+ }
+-#app { display: grid; grid-template-columns: 260px 1fr; min-height: 100vh; }
+-.sidebar {
+-  background: rgba(15, 20, 25, 0.92);
+-  border-right: 1px solid var(--border);
+-  padding: 1.25rem 1rem;
+-  display: flex;
+-  flex-direction: column;
+-  gap: 1.25rem;
++.hidden { display: none !important; }
++
++/* Login gate */
++.login-gate {
++  min-height: 100vh;
++  display: grid;
++  place-items: center;
++  padding: 1.5rem;
+ }
+-.brand { display: flex; gap: 0.75rem; align-items: center; }
++.login-card {
++  width: min(440px, 100%);
++  background: rgba(17, 24, 39, 0.95);
++  border: 1px solid var(--border);
++  border-radius: 16px;
++  padding: 1.5rem;
++  box-shadow: var(--shadow);
++}
++.login-brand { display: flex; gap: 1rem; align-items: center; margin-bottom: 1.25rem; }
++.login-brand h1 { margin: 0; font-size: 1.25rem; }
++.login-brand p { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.85rem; }
+ .logo {
+   width: 40px; height: 40px; border-radius: 10px;
+   background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+-  display: grid; place-items: center; font-weight: 700;
++  display: grid; place-items: center; font-weight: 700; flex-shrink: 0;
++}
++.logo.lg { width: 52px; height: 52px; font-size: 1.1rem; }
++.login-tabs { display: flex; gap: 0.35rem; margin-bottom: 1rem; }
++.login-tabs .tab {
++  flex: 1; background: var(--panel-2); border: 1px solid var(--border);
++  color: var(--muted); padding: 0.5rem; border-radius: 8px; cursor: pointer; font: inherit;
++}
++.login-tabs .tab.active { color: var(--text); border-color: var(--accent); background: rgba(59,130,246,.12); }
++.tab-panel { display: none; }
++.tab-panel.active { display: block; }
++.tab-panel label { margin-bottom: 0.75rem; }
++button.block { width: 100%; margin-top: 0.5rem; }
++
++/* App shell */
++#app { display: grid; grid-template-columns: 250px 1fr; min-height: 100vh; }
++.sidebar {
++  background: rgba(11, 18, 32, 0.95);
++  border-right: 1px solid var(--border);
++  padding: 1.1rem 0.85rem;
++  display: flex; flex-direction: column; gap: 0.75rem;
++  position: sticky; top: 0; height: 100vh; overflow-y: auto;
++}
++.brand { display: flex; gap: 0.7rem; align-items: center; padding: 0 0.35rem; }
++.brand small { display: block; color: var(--muted); font-size: 0.75rem; }
++.nav-group {
++  font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.06em;
++  color: #64748b; margin: 0.65rem 0.5rem 0.25rem;
+ }
+-.brand small { display: block; color: var(--muted); }
+-nav { display: flex; flex-direction: column; gap: 0.35rem; }
++nav { display: flex; flex-direction: column; gap: 0.2rem; flex: 1; }
+ .nav-btn {
+-  text-align: left;
+-  background: transparent;
+-  border: 1px solid transparent;
+-  color: var(--muted);
+-  padding: 0.65rem 0.8rem;
+-  border-radius: 8px;
+-  cursor: pointer;
+-}
+-.nav-btn:hover:not(:disabled) { background: var(--panel-2); color: var(--text); }
+-.nav-btn.active { background: var(--panel-2); color: var(--text); border-color: var(--border); }
+-.nav-btn:disabled { opacity: 0.4; cursor: not-allowed; }
++  text-align: left; background: transparent; border: 1px solid transparent;
++  color: var(--muted); padding: 0.55rem 0.7rem; border-radius: 8px;
++  cursor: pointer; font: inherit; display: flex; justify-content: space-between; align-items: center;
++}
++.nav-btn:hover { background: var(--panel-2); color: var(--text); }
++.nav-btn.active { background: rgba(59,130,246,.12); color: var(--text); border-color: rgba(59,130,246,.35); }
++.nav-count {
++  background: var(--warn); color: #111; font-size: 0.7rem; font-weight: 700;
++  padding: 0.05rem 0.4rem; border-radius: 999px;
++}
++.nav-count.hidden { display: none; }
+ .session {
+-  margin-top: auto;
+-  padding: 0.75rem;
+-  background: var(--panel);
+-  border: 1px solid var(--border);
+-  border-radius: 8px;
+-  font-size: 0.8rem;
+-  color: var(--muted);
+-  word-break: break-all;
++  padding: 0.65rem; background: var(--panel); border: 1px solid var(--border);
++  border-radius: 8px; font-size: 0.75rem; color: var(--muted); word-break: break-all;
+ }
+-.main { padding: 1.25rem 1.5rem 2rem; }
++.logout-btn { margin-top: 0.35rem; font-size: 0.85rem; }
++
++.main { padding: 1.15rem 1.5rem 2rem; max-width: 1200px; }
+ .topbar {
+-  display: flex; justify-content: space-between; align-items: center;
+-  margin-bottom: 1rem;
++  display: flex; justify-content: space-between; align-items: flex-start;
++  margin-bottom: 1.1rem; gap: 1rem;
++}
++.topbar h1 { margin: 0; font-size: 1.35rem; letter-spacing: -0.02em; }
++.top-sub { margin: 0.2rem 0 0; font-size: 0.85rem; }
++.top-actions { display: flex; gap: 0.5rem; align-items: center; }
++.icon-btn {
++  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
++  border-radius: 8px; padding: 0.4rem 0.65rem; cursor: pointer; font: inherit; position: relative;
+ }
+-.topbar h1 { margin: 0; font-size: 1.35rem; }
+ .pill {
+-  display: inline-block;
+-  padding: 0.25rem 0.65rem;
+-  border-radius: 999px;
+-  font-size: 0.75rem;
+-  border: 1px solid var(--border);
++  display: inline-block; padding: 0.25rem 0.65rem; border-radius: 999px;
++  font-size: 0.75rem; border: 1px solid var(--border);
+ }
+-.pill.ok { background: rgba(34,197,94,0.15); color: #86efac; }
++.pill.ok { background: rgba(34,197,94,0.15); color: #86efac; border-color: #14532d; }
+ .pill.muted { color: var(--muted); }
++.badge {
++  display: inline-flex; align-items: center; justify-content: center;
++  min-width: 1.25rem; height: 1.25rem; padding: 0 0.35rem;
++  background: var(--warn); color: #111; border-radius: 999px;
++  font-size: 0.7rem; font-weight: 700;
++}
++.badge.hidden { display: none; }
++
+ .view { display: none; }
+ .view.active { display: block; }
+ .card {
+-  background: rgba(23, 29, 37, 0.9);
++  background: rgba(17, 24, 39, 0.88);
+   border: 1px solid var(--border);
+   border-radius: var(--radius);
+   padding: 1rem 1.1rem;
+@@ -85,122 +131,110 @@ nav { display: flex; flex-direction: column; gap: 0.35rem; }
+ }
+ .card h2, .card h3 { margin-top: 0; }
+ .muted { color: var(--muted); }
+-.grid-2 {
+-  display: grid;
+-  grid-template-columns: 1fr 1fr;
+-  gap: 0.75rem;
+-}
+-label { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.85rem; color: var(--muted); }
++.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.85rem; }
++label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.82rem; color: var(--muted); }
+ label.full { grid-column: 1 / -1; }
+ input, select, textarea {
+-  background: var(--panel-2);
+-  border: 1px solid var(--border);
+-  color: var(--text);
+-  border-radius: 8px;
+-  padding: 0.55rem 0.7rem;
+-  font: inherit;
++  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
++  border-radius: 8px; padding: 0.55rem 0.7rem; font: inherit;
++}
++input:focus, select:focus, textarea:focus {
++  outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,130,246,.15);
+ }
++input.grow { flex: 1; }
+ button {
+-  border: none;
+-  border-radius: 8px;
+-  padding: 0.55rem 0.9rem;
+-  font: inherit;
+-  cursor: pointer;
++  border: none; border-radius: 8px; padding: 0.55rem 0.9rem;
++  font: inherit; cursor: pointer; transition: background .15s, transform .05s;
+ }
++button:active { transform: scale(0.98); }
+ button.primary { background: var(--accent); color: white; }
++button.primary:hover { background: var(--accent-hover); }
+ button.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+-button.danger { background: rgba(239,68,68,0.2); color: #fecaca; border: 1px solid #7f1d1d; }
+-button.success { background: rgba(34,197,94,0.2); color: #bbf7d0; border: 1px solid #14532d; }
+-.row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-top: 0.75rem; }
++button.danger { background: rgba(239,68,68,0.18); color: #fecaca; border: 1px solid #7f1d1d; }
++button.success { background: rgba(34,197,94,0.18); color: #bbf7d0; border: 1px solid #14532d; }
++.link-btn {
++  background: transparent; border: none; color: var(--accent); cursor: pointer;
++  font: inherit; font-size: 0.85rem; padding: 0;
++}
++.row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-top: 0.65rem; }
+ .row.between { justify-content: space-between; }
++.check-row { flex-direction: row; align-items: center; gap: 0.5rem; margin: 0.75rem 0 0.4rem; color: var(--text); }
+ .log {
+-  margin-top: 0.75rem;
+-  background: #0b0f14;
+-  border: 1px solid var(--border);
+-  border-radius: 8px;
+-  padding: 0.75rem;
+-  max-height: 280px;
+-  overflow: auto;
+-  font-size: 0.8rem;
+-  white-space: pre-wrap;
++  margin-top: 0.75rem; background: #070b12; border: 1px solid var(--border);
++  border-radius: 8px; padding: 0.75rem; max-height: 260px; overflow: auto;
++  font-size: 0.78rem; white-space: pre-wrap; font-family: ui-monospace, Consolas, monospace;
+ }
++.hidden-log:empty { display: none; }
+ .stats {
+-  display: grid;
+-  grid-template-columns: repeat(4, 1fr);
+-  gap: 0.75rem;
+-  margin-bottom: 1rem;
++  display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; margin-bottom: 1rem;
+ }
+ .stat {
+-  background: var(--panel);
+-  border: 1px solid var(--border);
+-  border-radius: var(--radius);
+-  padding: 1rem;
++  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem;
+ }
+-.stat .n { font-size: 1.6rem; font-weight: 700; }
+-.stat .l { color: var(--muted); font-size: 0.8rem; }
++.stat .n { font-size: 1.55rem; font-weight: 700; letter-spacing: -0.02em; }
++.stat .l { color: var(--muted); font-size: 0.78rem; margin-top: 0.15rem; }
+ .list { display: flex; flex-direction: column; gap: 0.5rem; }
+ .item {
+-  background: var(--panel-2);
+-  border: 1px solid var(--border);
+-  border-radius: 8px;
+-  padding: 0.7rem 0.8rem;
+-  font-size: 0.9rem;
+-}
+-.item .meta { color: var(--muted); font-size: 0.75rem; margin-top: 0.25rem; }
++  background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px;
++  padding: 0.75rem 0.85rem; font-size: 0.9rem;
++}
++.item .meta { color: var(--muted); font-size: 0.75rem; margin-top: 0.3rem; }
++.item .actions { margin-top: 0.5rem; display: flex; gap: 0.4rem; flex-wrap: wrap; }
++.type-tag {
++  display: inline-block; font-size: 0.68rem; font-weight: 600; text-transform: uppercase;
++  letter-spacing: 0.04em; padding: 0.12rem 0.4rem; border-radius: 6px; margin-right: 0.35rem;
++}
++.type-tag.task { background: rgba(59,130,246,.2); color: #93c5fd; }
++.type-tag.approval { background: rgba(245,158,11,.2); color: #fcd34d; }
++.type-tag.delegation { background: rgba(139,92,246,.2); color: #c4b5fd; }
+ .cards {
+-  display: grid;
+-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+-  gap: 0.75rem;
++  display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 0.75rem;
+ }
++.cards.compact { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+ .agent-card {
+-  background: var(--panel-2);
+-  border: 1px solid var(--border);
+-  border-radius: 10px;
+-  padding: 0.9rem;
++  background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px; padding: 0.95rem;
++  transition: border-color .15s;
+ }
++.agent-card:hover { border-color: rgba(59,130,246,.45); }
+ .agent-card h4 { margin: 0 0 0.35rem; }
++.status-dot {
++  display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 0.35rem;
++  background: var(--success);
++}
++.status-dot.inactive { background: var(--muted); }
+ .tag {
+-  display: inline-block;
+-  font-size: 0.7rem;
+-  padding: 0.15rem 0.4rem;
+-  border-radius: 6px;
+-  background: #243044;
+-  color: #c7d2fe;
+-  margin: 0.15rem 0.15rem 0 0;
++  display: inline-block; font-size: 0.68rem; padding: 0.12rem 0.4rem; border-radius: 6px;
++  background: #1e3a5f; color: #c7d2fe; margin: 0.12rem 0.12rem 0 0;
+ }
+ hr { border: none; border-top: 1px solid var(--border); margin: 1rem 0; }
+-code { background: #0b0f14; padding: 0.1rem 0.3rem; border-radius: 4px; }
+-@media (max-width: 900px) {
+-  #app { grid-template-columns: 1fr; }
+-  .sidebar { border-right: none; border-bottom: 1px solid var(--border); }
+-  .stats { grid-template-columns: 1fr 1fr; }
+-  .grid-2 { grid-template-columns: 1fr; }
++code { background: #070b12; padding: 0.1rem 0.3rem; border-radius: 4px; font-size: 0.85em; }
++.meta-box { margin-top: 0.75rem; font-size: 0.78rem; word-break: break-all; }
++
++/* Chat */
++.chat-layout { display: grid; grid-template-columns: 260px 1fr; gap: 1rem; }
++.chat-thread {
++  min-height: 360px; max-height: 52vh; overflow: auto;
++  display: flex; flex-direction: column; gap: 0.65rem;
++  padding: 0.25rem 0 0.75rem;
++}
++.bubble {
++  max-width: 85%; padding: 0.65rem 0.85rem; border-radius: 12px; font-size: 0.9rem;
++  line-height: 1.45; white-space: pre-wrap;
++}
++.bubble.human { align-self: flex-end; background: rgba(59,130,246,.25); border: 1px solid rgba(59,130,246,.35); }
++.bubble.agent { align-self: flex-start; background: var(--panel-2); border: 1px solid var(--border); }
++.bubble.system { align-self: center; background: transparent; color: var(--muted); font-size: 0.78rem; border: none; }
++.bubble .who { font-size: 0.7rem; color: var(--muted); margin-bottom: 0.25rem; }
++.chat-composer { display: flex; gap: 0.5rem; align-items: flex-end; }
++.chat-composer textarea { flex: 1; resize: vertical; min-height: 48px; }
++
++.empty {
++  color: var(--muted); text-align: center; padding: 1.5rem 1rem; font-size: 0.9rem;
+ }
+ 
+-.badge {
+-  display: inline-flex;
+-  align-items: center;
+-  justify-content: center;
+-  min-width: 1.4rem;
+-  height: 1.4rem;
+-  padding: 0 0.4rem;
+-  border-radius: 999px;
+-  background: #ef4444;
+-  color: white;
+-  font-size: 0.75rem;
+-  font-weight: 700;
+-  margin-right: 0.5rem;
++@media (max-width: 960px) {
++  #app { grid-template-columns: 1fr; }
++  .sidebar { position: relative; height: auto; }
++  .stats { grid-template-columns: repeat(2, 1fr); }
++  .grid-2, .chat-layout { grid-template-columns: 1fr; }
+ }
+-.badge.hidden { display: none; }
+-.inbox-item-type {
+-  display: inline-block;
+-  font-size: 0.7rem;
+-  text-transform: uppercase;
+-  letter-spacing: 0.04em;
+-  padding: 0.15rem 0.45rem;
+-  border-radius: 6px;
+-  margin-right: 0.4rem;
+-}
+-.inbox-item-type.task { background: #1e3a5f; color: #93c5fd; }
+-.inbox-item-type.approval { background: #3b2f1a; color: #fcd34d; }
+-.inbox-item-type.delegation { background: #2e1a3b; color: #d8b4fe; }
+diff --git a/tests/test_workspace_ui.py b/tests/test_workspace_ui.py
+index 92f0218..2b2b12f 100644
+--- a/tests/test_workspace_ui.py
++++ b/tests/test_workspace_ui.py
+@@ -1,4 +1,4 @@
+-"""Phase 8 + Job 12 — Human workspace UI smoke tests."""
++"""Phase 8 + Job 12 + Workspace v1 — Human workspace UI smoke tests."""
+ 
+ from pathlib import Path
+ 
+@@ -13,22 +13,27 @@ def test_workspace_page_served():
+     res = client.get("/workspace")
+     assert res.status_code == 200
+     assert "text/html" in res.headers.get("content-type", "")
+-    assert b"AI Employee Workspace" in res.content
++    assert b"AI Employee Workspace" in res.content or b"AI Employee Platform" in res.content
+ 
+ 
+-def test_job12_nav_surfaces_present():
+-    """Job 12: task center, approval center, AI inbox, agent dashboard, workforce."""
++def test_v1_nav_surfaces_present():
++    """v1 product shell: home, inbox, chat, tasks, approvals, agents, marketplace."""
+     html = client.get("/workspace").content
+-    assert b"Workforce Overview" in html
+-    assert b"AI Inbox" in html
+-    assert b"Task Center" in html
+-    assert b"Approval Center" in html
+-    assert b"Agent Dashboard" in html
+-    assert b'data-view="workforce"' in html
+-    assert b'data-view="inbox"' in html
+-    assert b'data-view="tasks"' in html
+-    assert b'data-view="approvals"' in html
+-    assert b'data-view="agents"' in html
++    assert b"AI Inbox" in html or b"Inbox" in html
++    assert b"data-view=\"inbox\"" in html
++    assert b"data-view=\"tasks\"" in html
++    assert b"data-view=\"approvals\"" in html
++    assert b"data-view=\"agents\"" in html
++    assert b"data-view=\"chat\"" in html
++    assert b"data-view=\"marketplace\"" in html
++    assert b"data-view=\"home\"" in html
++    assert b"loginGate" in html or b"Quick start" in html
++    assert b"data-view=\"policies\"" in html
++    assert b"data-view=\"tools\"" in html
++    assert b"data-view=\"integrations\"" in html
++    assert b"data-view=\"workflows\"" in html
++    assert b"data-view=\"cost\"" in html
++    assert b"data-view=\"scopecheck\"" in html
+ 
+ 
+ def test_workspace_assets_css_js():
+@@ -39,7 +44,12 @@ def test_workspace_assets_css_js():
+     js = client.get("/workspace/assets/app.js")
+     assert js.status_code == 200
+     assert b"loadInbox" in js.content
+-    assert b"loadWorkforce" in js.content
++    assert b"loadHome" in js.content
++    assert b"loadMarketplace" in js.content
++    assert b"loadTools" in js.content
++    assert b"loadIntegrations" in js.content
++    assert b"loadCost" in js.content
++    assert b"btnSimulate" in js.content
+     assert b"btnConsult" in js.content or b"consult" in js.content
+     assert b"delegation" in js.content
+     assert b"automations" in js.content

@@ -1,0 +1,1038 @@
+diff --git a/app/api/routes.py b/app/api/routes.py
+index 28a8c1d..b66c6ec 100644
+--- a/app/api/routes.py
++++ b/app/api/routes.py
+@@ -22,6 +22,8 @@ from app.models import (
+     AgentSubscription,
+     Approval,
+     AuditLog,
++    AutomationRule,
++    AutomationRun,
+     Company,
+     DelegationRequest,
+     Experience,
+@@ -61,6 +63,10 @@ from app.schemas.domain import (
+     ExperienceSearchRequest,
+     ExperienceValidateRequest,
+     ExperienceFeedbackRequest,
++    AutomationRuleCreate,
++    AutomationRuleRead,
++    AutomationRunRead,
++    AutomationEventRequest,
+     KnowledgeSearchRequest,
+     KnowledgeSearchHit,
+     AgentCatalogRead,
+@@ -88,6 +94,11 @@ from app.services.skills import (
+     list_agent_skills,
+     list_available_skills,
+ )
++from app.services.automation import (
++    fire_event,
++    retry_run,
++    tick_schedules,
++)
+ from app.services.access import (
+     grant_access,
+     require_agent_approve,
+@@ -2520,6 +2531,176 @@ def propagate_delegation_result(
+         raise HTTPException(status_code=409, detail=str(exc)) from exc
+ 
+ 
++
++
++@router.get(
++    "/companies/{company_id}/automations",
++    response_model=list[AutomationRuleRead],
++)
++def list_automation_rules(
++    company_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "agent.read")
++    return list(
++        db.scalars(
++            select(AutomationRule)
++            .where(AutomationRule.company_id == company_id)
++            .order_by(AutomationRule.created_at.desc())
++        ).all()
++    )
++
++
++@router.post(
++    "/companies/{company_id}/automations",
++    response_model=AutomationRuleRead,
++    status_code=status.HTTP_201_CREATED,
++)
++def create_automation_rule(
++    company_id: str,
++    payload: AutomationRuleCreate,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "agent.manage")
++    agent = get_owned_agent_or_404(db, company_id, payload.agent_instance_id)
++
++    if payload.trigger_type == "schedule":
++        if not payload.interval_seconds:
++            raise HTTPException(
++                status_code=400,
++                detail="interval_seconds required for schedule triggers",
++            )
++    if payload.trigger_type == "event":
++        if not payload.event_type:
++            raise HTTPException(
++                status_code=400,
++                detail="event_type required for event triggers",
++            )
++
++    from datetime import datetime, timezone
++
++    next_run = payload.next_run_at
++    if payload.trigger_type == "schedule" and next_run is None:
++        next_run = datetime.now(timezone.utc)
++
++    rule = AutomationRule(
++        company_id=company_id,
++        agent_instance_id=agent.id,
++        name=payload.name,
++        description=payload.description or "",
++        trigger_type=payload.trigger_type,
++        interval_seconds=payload.interval_seconds,
++        next_run_at=next_run,
++        event_type=payload.event_type,
++        task_title_template=payload.task_title_template,
++        task_instruction_template=payload.task_instruction_template,
++        task_mode=payload.task_mode,
++        max_retries=payload.max_retries,
++        is_active=payload.is_active,
++    )
++    db.add(rule)
++    db.flush()
++    record_audit(
++        db,
++        company_id=company_id,
++        user_id=user.id,
++        agent_instance_id=agent.id,
++        action="automation.rule.create",
++        resource_type="automation_rule",
++        resource_id=rule.id,
++        status="success",
++        details={"trigger_type": rule.trigger_type},
++    )
++    db.commit()
++    db.refresh(rule)
++    return rule
++
++
++@router.post(
++    "/companies/{company_id}/automations/tick",
++    response_model=list[AutomationRunRead],
++)
++def tick_company_automations(
++    company_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    """Process due scheduled automations (call from cron or manually)."""
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "agent.manage")
++    return tick_schedules(db, company_id=company_id, user_id=user.id)
++
++
++@router.post(
++    "/companies/{company_id}/automations/events",
++    response_model=list[AutomationRunRead],
++)
++def fire_company_automation_event(
++    company_id: str,
++    payload: AutomationEventRequest,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "task.create")
++    return fire_event(
++        db,
++        company_id=company_id,
++        event_type=payload.event_type,
++        payload=payload.payload,
++        idempotency_key=payload.idempotency_key,
++        user_id=user.id,
++    )
++
++
++@router.get(
++    "/companies/{company_id}/automations/runs",
++    response_model=list[AutomationRunRead],
++)
++def list_automation_runs(
++    company_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++    rule_id: str | None = None,
++):
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "agent.read")
++    q = select(AutomationRun).where(AutomationRun.company_id == company_id)
++    if rule_id:
++        q = q.where(AutomationRun.rule_id == rule_id)
++    return list(db.scalars(q.order_by(AutomationRun.created_at.desc())).all())
++
++
++@router.post(
++    "/companies/{company_id}/automations/runs/{run_id}/retry",
++    response_model=AutomationRunRead,
++)
++def retry_automation_run(
++    company_id: str,
++    run_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "agent.manage")
++    run = db.scalar(
++        select(AutomationRun).where(
++            AutomationRun.id == run_id,
++            AutomationRun.company_id == company_id,
++        )
++    )
++    if not run:
++        raise HTTPException(status_code=404, detail="Automation run not found")
++    try:
++        return retry_run(db, run=run, user_id=user.id)
++    except ValueError as exc:
++        raise HTTPException(status_code=409, detail=str(exc)) from exc
++
++
+ @router.post(
+     "/companies/{company_id}/tasks/{task_id}/consult",
+     response_model=TaskRead,
+diff --git a/app/models/__init__.py b/app/models/__init__.py
+index 8ed1d89..4d1f707 100644
+--- a/app/models/__init__.py
++++ b/app/models/__init__.py
+@@ -8,6 +8,10 @@ from app.models.entities import (
+     Approval,
+     ApprovalStatus,
+     AuditLog,
++    AutomationRule,
++    AutomationRun,
++    AutomationRunStatus,
++    AutomationTriggerType,
+     Company,
+     DelegationRequest,
+     DelegationStatus,
+@@ -34,6 +38,10 @@ __all__ = [
+     "Approval",
+     "ApprovalStatus",
+     "AuditLog",
++    "AutomationRule",
++    "AutomationRun",
++    "AutomationRunStatus",
++    "AutomationTriggerType",
+     "Company",
+     "DelegationRequest",
+     "DelegationStatus",
+diff --git a/app/models/entities.py b/app/models/entities.py
+index 4a2908b..d16578f 100644
+--- a/app/models/entities.py
++++ b/app/models/entities.py
+@@ -63,6 +63,20 @@ class DelegationStatus(str, Enum):
+     FAILED = "failed"
+     CANCELLED = "cancelled"
+ 
++
++class AutomationTriggerType(str, Enum):
++    SCHEDULE = "schedule"
++    EVENT = "event"
++
++
++class AutomationRunStatus(str, Enum):
++    PENDING = "pending"
++    RUNNING = "running"
++    COMPLETED = "completed"
++    FAILED = "failed"
++    PAUSED_APPROVAL = "paused_approval"
++    CANCELLED = "cancelled"
++
+ class SubscriptionStatus(str, Enum):
+     ACTIVE = "active"
+     SUSPENDED = "suspended"
+@@ -608,6 +622,95 @@ class DelegationRequest(Base):
+     )
+ 
+ 
++
++class AutomationRule(Base):
++    """Scheduled or event-driven automation that creates agent tasks."""
++
++    __tablename__ = "automation_rules"
++
++    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
++    company_id: Mapped[str] = mapped_column(
++        ForeignKey("companies.id", ondelete="CASCADE"),
++        nullable=False,
++        index=True,
++    )
++    agent_instance_id: Mapped[str] = mapped_column(
++        ForeignKey("agent_instances.id", ondelete="CASCADE"),
++        nullable=False,
++        index=True,
++    )
++    name: Mapped[str] = mapped_column(String(200), nullable=False)
++    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
++    trigger_type: Mapped[str] = mapped_column(
++        String(30),
++        default=AutomationTriggerType.SCHEDULE.value,
++        nullable=False,
++        index=True,
++    )
++    # schedule: interval_seconds between runs; next_run_at is the due clock
++    interval_seconds: Mapped[int | None] = mapped_column(nullable=True)
++    next_run_at: Mapped[datetime | None] = mapped_column(
++        DateTime(timezone=True), nullable=True, index=True
++    )
++    # event: fire when this event_type is posted
++    event_type: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
++    task_title_template: Mapped[str] = mapped_column(String(300), nullable=False)
++    task_instruction_template: Mapped[str] = mapped_column(Text, nullable=False)
++    task_mode: Mapped[str] = mapped_column(String(20), default="consult", nullable=False)
++    max_retries: Mapped[int] = mapped_column(default=3, nullable=False)
++    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
++    last_run_at: Mapped[datetime | None] = mapped_column(
++        DateTime(timezone=True), nullable=True
++    )
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), default=utcnow, nullable=False
++    )
++    updated_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
++    )
++
++
++class AutomationRun(Base):
++    """One execution attempt of an automation rule (idempotent)."""
++
++    __tablename__ = "automation_runs"
++    __table_args__ = (
++        UniqueConstraint("company_id", "idempotency_key", name="uq_automation_idempotency"),
++    )
++
++    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
++    company_id: Mapped[str] = mapped_column(
++        ForeignKey("companies.id", ondelete="CASCADE"),
++        nullable=False,
++        index=True,
++    )
++    rule_id: Mapped[str] = mapped_column(
++        ForeignKey("automation_rules.id", ondelete="CASCADE"),
++        nullable=False,
++        index=True,
++    )
++    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
++    attempt: Mapped[int] = mapped_column(default=1, nullable=False)
++    status: Mapped[str] = mapped_column(
++        String(30),
++        default=AutomationRunStatus.PENDING.value,
++        nullable=False,
++        index=True,
++    )
++    task_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
++    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
++    trigger_payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
++    started_at: Mapped[datetime | None] = mapped_column(
++        DateTime(timezone=True), nullable=True
++    )
++    completed_at: Mapped[datetime | None] = mapped_column(
++        DateTime(timezone=True), nullable=True
++    )
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), default=utcnow, nullable=False
++    )
++
++
+ class Task(Base):
+     __tablename__ = "tasks"
+ 
+diff --git a/app/schemas/domain.py b/app/schemas/domain.py
+index 82f41a8..ff841df 100644
+--- a/app/schemas/domain.py
++++ b/app/schemas/domain.py
+@@ -514,3 +514,61 @@ class ExperienceFeedbackRequest(BaseModel):
+     human_correction: str = ""
+     lesson: str | None = None
+     confidence_delta: float = Field(default=0.0, ge=-0.5, le=0.5)
++
++
++class AutomationRuleCreate(BaseModel):
++    agent_instance_id: str
++    name: str = Field(min_length=2, max_length=200)
++    description: str = ""
++    trigger_type: str = Field(default="schedule", pattern="^(schedule|event)$")
++    interval_seconds: int | None = Field(default=None, ge=1)
++    next_run_at: datetime | None = None
++    event_type: str | None = Field(default=None, max_length=100)
++    task_title_template: str = Field(min_length=1, max_length=300)
++    task_instruction_template: str = Field(min_length=1)
++    task_mode: str = Field(default="consult", pattern="^(execute|consult)$")
++    max_retries: int = Field(default=3, ge=0, le=20)
++    is_active: bool = True
++
++
++class AutomationRuleRead(BaseModel):
++    model_config = ConfigDict(from_attributes=True)
++    id: str
++    company_id: str
++    agent_instance_id: str
++    name: str
++    description: str
++    trigger_type: str
++    interval_seconds: int | None
++    next_run_at: datetime | None
++    event_type: str | None
++    task_title_template: str
++    task_instruction_template: str
++    task_mode: str
++    max_retries: int
++    is_active: bool
++    last_run_at: datetime | None
++    created_at: datetime
++    updated_at: datetime
++
++
++class AutomationRunRead(BaseModel):
++    model_config = ConfigDict(from_attributes=True)
++    id: str
++    company_id: str
++    rule_id: str
++    idempotency_key: str
++    attempt: int
++    status: str
++    task_id: str | None
++    error_message: str | None
++    trigger_payload: dict
++    started_at: datetime | None
++    completed_at: datetime | None
++    created_at: datetime
++
++
++class AutomationEventRequest(BaseModel):
++    event_type: str = Field(min_length=1, max_length=100)
++    payload: dict = Field(default_factory=dict)
++    idempotency_key: str | None = Field(default=None, max_length=200)
+diff --git a/app/services/automation.py b/app/services/automation.py
+new file mode 100644
+index 0000000..f7a370c
+--- /dev/null
++++ b/app/services/automation.py
+@@ -0,0 +1,358 @@
++"""Job 11 — Automation: schedule, events, retries, idempotency, approval pause."""
++
++from __future__ import annotations
++
++from datetime import datetime, timedelta, timezone
++from typing import Any
++from uuid import uuid4
++
++from sqlalchemy import select
++from sqlalchemy.exc import IntegrityError
++from sqlalchemy.orm import Session
++
++from app.models.entities import (
++    AgentInstance,
++    AgentStatus,
++    AutomationRule,
++    AutomationRun,
++    AutomationRunStatus,
++    AutomationTriggerType,
++    Task,
++    TaskStatus,
++)
++from app.services.audit import record_audit
++from app.services.consultation import run_consultation
++
++
++def _now() -> datetime:
++    return datetime.now(timezone.utc)
++
++
++def _aware(dt: datetime | None) -> datetime | None:
++    if dt is None:
++        return None
++    if dt.tzinfo is None:
++        return dt.replace(tzinfo=timezone.utc)
++    return dt
++
++
++def render_template(template: str, payload: dict[str, Any]) -> str:
++    text = template or ""
++    for key, value in (payload or {}).items():
++        text = text.replace("{" + str(key) + "}", str(value))
++    return text
++
++
++def get_existing_run(
++    db: Session,
++    *,
++    company_id: str,
++    idempotency_key: str,
++) -> AutomationRun | None:
++    return db.scalar(
++        select(AutomationRun).where(
++            AutomationRun.company_id == company_id,
++            AutomationRun.idempotency_key == idempotency_key,
++        )
++    )
++
++
++def execute_run(
++    db: Session,
++    *,
++    rule: AutomationRule,
++    run: AutomationRun,
++    user_id: str | None = None,
++) -> AutomationRun:
++    """
++    Create target task and optionally complete consult mode.
++
++    Idempotent: if run already completed/paused with task_id, return as-is.
++    """
++    if run.status in (
++        AutomationRunStatus.COMPLETED.value,
++        AutomationRunStatus.PAUSED_APPROVAL.value,
++    ) and run.task_id:
++        return run
++
++    agent = db.get(AgentInstance, rule.agent_instance_id)
++    if agent is None or agent.company_id != rule.company_id:
++        run.status = AutomationRunStatus.FAILED.value
++        run.error_message = "Agent not found for automation rule."
++        run.completed_at = _now()
++        db.flush()
++        return run
++
++    if agent.status != AgentStatus.ACTIVE.value:
++        run.status = AutomationRunStatus.FAILED.value
++        run.error_message = f"Agent is not active (status={agent.status})."
++        run.completed_at = _now()
++        db.flush()
++        return run
++
++    run.status = AutomationRunStatus.RUNNING.value
++    run.started_at = _now()
++    db.flush()
++
++    title = render_template(rule.task_title_template, run.trigger_payload or {})
++    instruction = render_template(
++        rule.task_instruction_template, run.trigger_payload or {}
++    )
++
++    task = Task(
++        company_id=rule.company_id,
++        agent_instance_id=rule.agent_instance_id,
++        title=title[:300],
++        instruction=instruction,
++        mode=rule.task_mode if rule.task_mode in ("execute", "consult") else "consult",
++        status=TaskStatus.PENDING.value,
++    )
++    db.add(task)
++    db.flush()
++    run.task_id = task.id
++
++    record_audit(
++        db,
++        company_id=rule.company_id,
++        user_id=user_id,
++        agent_instance_id=rule.agent_instance_id,
++        task_id=task.id,
++        action="automation.run",
++        resource_type="automation_run",
++        resource_id=run.id,
++        status="success",
++        details={
++            "rule_id": rule.id,
++            "idempotency_key": run.idempotency_key,
++            "attempt": run.attempt,
++            "mode": task.mode,
++        },
++    )
++
++    try:
++        if task.mode == "consult":
++            task = run_consultation(
++                db, company_id=rule.company_id, task_id=task.id
++            )
++            db.refresh(run)
++            db.refresh(task)
++            if task.status == TaskStatus.WAITING_APPROVAL.value:
++                run.status = AutomationRunStatus.PAUSED_APPROVAL.value
++            elif task.status == TaskStatus.COMPLETED.value:
++                run.status = AutomationRunStatus.COMPLETED.value
++                run.completed_at = _now()
++            elif task.status == TaskStatus.FAILED.value:
++                run.status = AutomationRunStatus.FAILED.value
++                run.error_message = "Child task failed."
++                run.completed_at = _now()
++            else:
++                run.status = AutomationRunStatus.COMPLETED.value
++                run.completed_at = _now()
++        else:
++            # execute mode: task left pending; automation run completes handoff
++            run.status = AutomationRunStatus.COMPLETED.value
++            run.completed_at = _now()
++
++        rule.last_run_at = _now()
++        if (
++            rule.trigger_type == AutomationTriggerType.SCHEDULE.value
++            and rule.interval_seconds
++        ):
++            base = _aware(rule.next_run_at) or _now()
++            # advance next_run_at from now to avoid stampede
++            rule.next_run_at = _now() + timedelta(seconds=int(rule.interval_seconds))
++
++        db.commit()
++        db.refresh(run)
++        return run
++
++    except Exception as exc:
++        run.status = AutomationRunStatus.FAILED.value
++        run.error_message = str(exc)
++        run.completed_at = _now()
++        record_audit(
++            db,
++            company_id=rule.company_id,
++            user_id=user_id,
++            agent_instance_id=rule.agent_instance_id,
++            task_id=run.task_id,
++            action="automation.failed",
++            resource_type="automation_run",
++            resource_id=run.id,
++            status="failure",
++            details={"error": str(exc)},
++        )
++        db.commit()
++        db.refresh(run)
++        return run
++
++
++def create_and_execute_run(
++    db: Session,
++    *,
++    rule: AutomationRule,
++    idempotency_key: str,
++    payload: dict[str, Any] | None = None,
++    user_id: str | None = None,
++) -> AutomationRun:
++    existing = get_existing_run(
++        db, company_id=rule.company_id, idempotency_key=idempotency_key
++    )
++    if existing:
++        # Idempotent return — do not create a second task
++        return existing
++
++    run = AutomationRun(
++        company_id=rule.company_id,
++        rule_id=rule.id,
++        idempotency_key=idempotency_key,
++        attempt=1,
++        status=AutomationRunStatus.PENDING.value,
++        trigger_payload=dict(payload or {}),
++    )
++    db.add(run)
++    try:
++        db.flush()
++    except IntegrityError:
++        db.rollback()
++        existing = get_existing_run(
++            db, company_id=rule.company_id, idempotency_key=idempotency_key
++        )
++        if existing:
++            return existing
++        raise
++
++    return execute_run(db, rule=rule, run=run, user_id=user_id)
++
++
++def tick_schedules(
++    db: Session,
++    *,
++    company_id: str,
++    user_id: str | None = None,
++    limit: int = 50,
++) -> list[AutomationRun]:
++    """Fire due schedule rules for a company (worker-less MVP tick)."""
++    now = _now()
++    rules = list(
++        db.scalars(
++            select(AutomationRule).where(
++                AutomationRule.company_id == company_id,
++                AutomationRule.is_active.is_(True),
++                AutomationRule.trigger_type == AutomationTriggerType.SCHEDULE.value,
++            )
++        ).all()
++    )
++    runs: list[AutomationRun] = []
++    for rule in rules:
++        if not rule.next_run_at:
++            continue
++        due = _aware(rule.next_run_at)
++        if due is None or due > now:
++            continue
++        # idempotency per due window
++        key = f"schedule:{rule.id}:{due.isoformat()}"
++        run = create_and_execute_run(
++            db,
++            rule=rule,
++            idempotency_key=key,
++            payload={"trigger": "schedule", "due_at": due.isoformat()},
++            user_id=user_id,
++        )
++        runs.append(run)
++        if len(runs) >= limit:
++            break
++    return runs
++
++
++def fire_event(
++    db: Session,
++    *,
++    company_id: str,
++    event_type: str,
++    payload: dict[str, Any] | None = None,
++    idempotency_key: str | None = None,
++    user_id: str | None = None,
++) -> list[AutomationRun]:
++    """Fire all active event rules matching event_type."""
++    rules = list(
++        db.scalars(
++            select(AutomationRule).where(
++                AutomationRule.company_id == company_id,
++                AutomationRule.is_active.is_(True),
++                AutomationRule.trigger_type == AutomationTriggerType.EVENT.value,
++                AutomationRule.event_type == event_type,
++            )
++        ).all()
++    )
++    key_base = idempotency_key or f"event:{event_type}:{uuid4()}"
++    runs: list[AutomationRun] = []
++    for i, rule in enumerate(rules):
++        key = key_base if len(rules) == 1 else f"{key_base}:{rule.id}"
++        run = create_and_execute_run(
++            db,
++            rule=rule,
++            idempotency_key=key,
++            payload={"trigger": "event", "event_type": event_type, **(payload or {})},
++            user_id=user_id,
++        )
++        runs.append(run)
++    return runs
++
++
++def retry_run(
++    db: Session,
++    *,
++    run: AutomationRun,
++    user_id: str | None = None,
++) -> AutomationRun:
++    """Safe retry: only failed runs, under max_retries, new attempt with new key suffix."""
++    rule = db.get(AutomationRule, run.rule_id)
++    if rule is None:
++        raise ValueError("Automation rule not found.")
++    if run.status != AutomationRunStatus.FAILED.value:
++        raise ValueError(
++            f"Only failed runs can be retried (status={run.status})."
++        )
++    if run.attempt >= int(rule.max_retries or 0):
++        raise ValueError(
++            f"Max retries reached ({rule.max_retries})."
++        )
++
++    new_key = f"{run.idempotency_key}:retry:{run.attempt + 1}"
++    existing = get_existing_run(
++        db, company_id=run.company_id, idempotency_key=new_key
++    )
++    if existing:
++        return existing
++
++    new_run = AutomationRun(
++        company_id=run.company_id,
++        rule_id=rule.id,
++        idempotency_key=new_key,
++        attempt=run.attempt + 1,
++        status=AutomationRunStatus.PENDING.value,
++        trigger_payload=dict(run.trigger_payload or {}),
++    )
++    db.add(new_run)
++    db.flush()
++    return execute_run(db, rule=rule, run=new_run, user_id=user_id)
++
++
++def sync_approval_pause(
++    db: Session,
++    *,
++    run: AutomationRun,
++) -> AutomationRun:
++    """If linked task is waiting_approval, mark run paused_approval."""
++    if not run.task_id:
++        return run
++    task = db.get(Task, run.task_id)
++    if task and task.status == TaskStatus.WAITING_APPROVAL.value:
++        run.status = AutomationRunStatus.PAUSED_APPROVAL.value
++        db.flush()
++    elif task and task.status == TaskStatus.COMPLETED.value:
++        run.status = AutomationRunStatus.COMPLETED.value
++        run.completed_at = _now()
++        db.flush()
++    return run
+diff --git a/tests/test_automation.py b/tests/test_automation.py
+new file mode 100644
+index 0000000..5d10715
+--- /dev/null
++++ b/tests/test_automation.py
+@@ -0,0 +1,242 @@
++"""Job 11 — Automation tests."""
++
++from datetime import datetime, timedelta, timezone
++
++import pytest
++from fastapi.testclient import TestClient
++from sqlalchemy import create_engine
++from sqlalchemy.orm import sessionmaker
++
++from app.core.database import Base, get_db
++from app.main import app
++from app.models.entities import AutomationRule
++from app.services.seed import seed_catalog
++
++engine = create_engine(
++    "sqlite:///./test_automation.db",
++    connect_args={"check_same_thread": False},
++)
++SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
++
++
++@pytest.fixture()
++def client():
++    Base.metadata.drop_all(bind=engine)
++    Base.metadata.create_all(bind=engine)
++    with SessionLocal() as db:
++        seed_catalog(db)
++
++    def override():
++        db = SessionLocal()
++        try:
++            yield db
++        finally:
++            db.close()
++
++    prev = app.dependency_overrides.get(get_db)
++    app.dependency_overrides[get_db] = override
++    with TestClient(app) as c:
++        yield c
++    if prev is None:
++        app.dependency_overrides.pop(get_db, None)
++    else:
++        app.dependency_overrides[get_db] = prev
++
++
++def setup(client):
++    co = client.post("/api/v1/companies", json={"name": "Auto Co"}).json()
++    owner = client.post(
++        f"/api/v1/companies/{co['id']}/users",
++        json={"name": "Owner", "email": "owner@auto.test", "role": "owner"},
++    ).json()
++    catalog = client.get("/api/v1/agent-catalog").json()
++    res = next(i for i in catalog if i["slug"] == "reservation")
++    hire = client.post(
++        f"/api/v1/companies/{co['id']}/agents/{res['id']}/hire",
++        json={"name": "Auto AI"},
++        headers={"X-User-ID": owner["id"]},
++    )
++    assert hire.status_code == 201
++    return co["id"], owner["id"], hire.json()["id"]
++
++
++def test_schedule_tick_creates_task(client):
++    company_id, owner_id, agent_id = setup(client)
++    past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
++    rule = client.post(
++        f"/api/v1/companies/{company_id}/automations",
++        headers={"X-User-ID": owner_id},
++        json={
++            "agent_instance_id": agent_id,
++            "name": "Nightly check",
++            "trigger_type": "schedule",
++            "interval_seconds": 3600,
++            "next_run_at": past,
++            "task_title_template": "Scheduled availability",
++            "task_instruction_template": "Review availability status",
++            "task_mode": "consult",
++        },
++    )
++    assert rule.status_code == 201, rule.text
++
++    runs = client.post(
++        f"/api/v1/companies/{company_id}/automations/tick",
++        headers={"X-User-ID": owner_id},
++    )
++    assert runs.status_code == 200, runs.text
++    body = runs.json()
++    assert len(body) >= 1
++    assert body[0]["status"] in ("completed", "paused_approval")
++    assert body[0]["task_id"]
++
++    # second tick same window is idempotent (no duplicate for same due key)
++    runs2 = client.post(
++        f"/api/v1/companies/{company_id}/automations/tick",
++        headers={"X-User-ID": owner_id},
++    )
++    assert runs2.status_code == 200
++    # after first run next_run_at advanced; may be empty
++    assert isinstance(runs2.json(), list)
++
++
++def test_event_trigger_idempotency(client):
++    company_id, owner_id, agent_id = setup(client)
++    rule = client.post(
++        f"/api/v1/companies/{company_id}/automations",
++        headers={"X-User-ID": owner_id},
++        json={
++            "agent_instance_id": agent_id,
++            "name": "On booking",
++            "trigger_type": "event",
++            "event_type": "booking.created",
++            "task_title_template": "New booking {booking_id}",
++            "task_instruction_template": "Handle booking {booking_id}",
++            "task_mode": "consult",
++        },
++    )
++    assert rule.status_code == 201, rule.text
++
++    r1 = client.post(
++        f"/api/v1/companies/{company_id}/automations/events",
++        headers={"X-User-ID": owner_id},
++        json={
++            "event_type": "booking.created",
++            "payload": {"booking_id": "B-100"},
++            "idempotency_key": "booking.created:B-100",
++        },
++    )
++    assert r1.status_code == 200, r1.text
++    assert len(r1.json()) == 1
++    run_id = r1.json()[0]["id"]
++    task_id = r1.json()[0]["task_id"]
++
++    r2 = client.post(
++        f"/api/v1/companies/{company_id}/automations/events",
++        headers={"X-User-ID": owner_id},
++        json={
++            "event_type": "booking.created",
++            "payload": {"booking_id": "B-100"},
++            "idempotency_key": "booking.created:B-100",
++        },
++    )
++    assert r2.status_code == 200
++    assert len(r2.json()) == 1
++    assert r2.json()[0]["id"] == run_id
++    assert r2.json()[0]["task_id"] == task_id
++
++
++def test_retry_failed_run(client):
++    company_id, owner_id, agent_id = setup(client)
++    rule = client.post(
++        f"/api/v1/companies/{company_id}/automations",
++        headers={"X-User-ID": owner_id},
++        json={
++            "agent_instance_id": agent_id,
++            "name": "Retryable",
++            "trigger_type": "event",
++            "event_type": "retry.test",
++            "task_title_template": "Retry task",
++            "task_instruction_template": "Do something",
++            "task_mode": "consult",
++            "max_retries": 3,
++        },
++    ).json()
++
++    # fire once successfully then force-fail a synthetic run via DB is hard;
++    # instead create event, then manually mark failed and retry
++    r1 = client.post(
++        f"/api/v1/companies/{company_id}/automations/events",
++        headers={"X-User-ID": owner_id},
++        json={
++            "event_type": "retry.test",
++            "idempotency_key": "retry.test:1",
++        },
++    )
++    assert r1.status_code == 200
++    run_id = r1.json()[0]["id"]
++
++    with SessionLocal() as db:
++        from app.models.entities import AutomationRun
++
++        run = db.get(AutomationRun, run_id)
++        run.status = "failed"
++        run.error_message = "forced failure"
++        db.commit()
++
++    retry = client.post(
++        f"/api/v1/companies/{company_id}/automations/runs/{run_id}/retry",
++        headers={"X-User-ID": owner_id},
++    )
++    assert retry.status_code == 200, retry.text
++    assert retry.json()["attempt"] == 2
++    assert retry.json()["status"] in ("completed", "paused_approval", "failed")
++
++
++def test_list_rules_and_runs(client):
++    company_id, owner_id, agent_id = setup(client)
++    client.post(
++        f"/api/v1/companies/{company_id}/automations",
++        headers={"X-User-ID": owner_id},
++        json={
++            "agent_instance_id": agent_id,
++            "name": "List me",
++            "trigger_type": "event",
++            "event_type": "list.event",
++            "task_title_template": "T",
++            "task_instruction_template": "I",
++        },
++    )
++    rules = client.get(
++        f"/api/v1/companies/{company_id}/automations",
++        headers={"X-User-ID": owner_id},
++    )
++    assert rules.status_code == 200
++    assert len(rules.json()) >= 1
++
++    client.post(
++        f"/api/v1/companies/{company_id}/automations/events",
++        headers={"X-User-ID": owner_id},
++        json={"event_type": "list.event", "idempotency_key": "list.event:1"},
++    )
++    runs = client.get(
++        f"/api/v1/companies/{company_id}/automations/runs",
++        headers={"X-User-ID": owner_id},
++    )
++    assert runs.status_code == 200
++    assert len(runs.json()) >= 1
++
++
++def test_schedule_requires_interval(client):
++    company_id, owner_id, agent_id = setup(client)
++    resp = client.post(
++        f"/api/v1/companies/{company_id}/automations",
++        headers={"X-User-ID": owner_id},
++        json={
++            "agent_instance_id": agent_id,
++            "name": "Bad schedule",
++            "trigger_type": "schedule",
++            "task_title_template": "T",
++            "task_instruction_template": "I",
++        },
++    )
++    assert resp.status_code == 400

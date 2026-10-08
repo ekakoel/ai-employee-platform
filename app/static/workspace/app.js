@@ -1,114 +1,130 @@
-/* Job 12 — Human workspace client */
 (function () {
+  const $ = (id) => document.getElementById(id);
+
   const state = {
     apiBase: localStorage.getItem("ws_apiBase") || "/api/v1",
     companyId: localStorage.getItem("ws_companyId") || "",
     userId: localStorage.getItem("ws_userId") || "",
     accessToken: localStorage.getItem("ws_accessToken") || "",
-    connected: false,
-    tasks: [],
-    agents: [],
+    userName: localStorage.getItem("ws_userName") || "",
   };
 
-  const $ = (id) => document.getElementById(id);
+  const titles = {
+    home: ["Home", "Command center"],
+    inbox: ["Inbox", "Needs your attention"],
+    chat: ["Chat", "Talk with AI employees"],
+    tasks: ["Tasks", "Create and track work"],
+    approvals: ["Approvals", "Human authority queue"],
+    agents: ["AI Employees", "Hire and manage workforce"],
+    marketplace: ["Marketplace", "Install public templates"],
+    consult: ["Consult", "Recommendations without side effects"],
+    directory: ["Directory", "Find capability across agents"],
+    knowledge: ["Knowledge", "Company memory and search"],
+    delegation: ["Delegation", "AI-to-AI handoff"],
+    automation: ["Automation", "Rules and triggers"],
+    notifications: ["Notifications", "Alerts and updates"],
+    governance: ["Governance", "Metrics and audit"],
+  };
 
   function clearSession() {
     state.companyId = "";
     state.userId = "";
     state.accessToken = "";
-    state.connected = false;
-    localStorage.removeItem("ws_companyId");
-    localStorage.removeItem("ws_userId");
-    localStorage.removeItem("ws_accessToken");
-    localStorage.removeItem("ws_refreshToken");
-    if ($("companyId")) $("companyId").value = "";
-    if ($("userId")) $("userId").value = "";
-    setConnected(false);
+    state.userName = "";
+    ["ws_companyId", "ws_userId", "ws_accessToken", "ws_refreshToken", "ws_userName"].forEach((k) =>
+      localStorage.removeItem(k)
+    );
+    showGate(true);
   }
 
   function headers(json = true, skipAuth = false) {
     const h = {};
     if (json) h["Content-Type"] = "application/json";
     if (!skipAuth) {
-      if (state.userId) h["X-User-ID"] = state.userId;
       if (state.accessToken) h["Authorization"] = "Bearer " + state.accessToken;
+      if (state.userId) h["X-User-ID"] = state.userId;
     }
     return h;
   }
 
   async function api(path, opts = {}) {
-    const skipAuth = !!opts.skipAuth;
-    const fetchOpts = { ...opts };
-    delete fetchOpts.skipAuth;
-    const url = state.apiBase.replace(/\/$/, "") + path;
+    const base = (state.apiBase || "/api/v1").replace(/\/$/, "");
+    const url = path.startsWith("http") ? path : base + path;
     const res = await fetch(url, {
-      ...fetchOpts,
-      headers: {
-        ...headers(!(opts.body instanceof FormData), skipAuth),
-        ...(opts.headers || {}),
-      },
+      ...opts,
+      headers: { ...headers(true, opts.skipAuth), ...(opts.headers || {}) },
     });
-    let data = null;
     const text = await res.text();
+    let data = null;
     try {
       data = text ? JSON.parse(text) : null;
     } catch {
       data = text;
     }
     if (!res.ok) {
-      const detail = data && data.detail ? data.detail : text || res.statusText;
+      const detail =
+        data && typeof data === "object"
+          ? data.detail || JSON.stringify(data)
+          : text || res.statusText;
       throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
     }
     return data;
   }
 
   function escapeHtml(s) {
-    return String(s)
+    return String(s ?? "")
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
   }
 
+  function showGate(show) {
+    const gate = $("loginGate");
+    const app = $("app");
+    if (gate) gate.classList.toggle("hidden", !show);
+    if (app) app.classList.toggle("hidden", show);
+  }
+
   function setConnected(ok) {
-    state.connected = ok;
-    $("statusPill").textContent = ok ? "Connected" : "Offline";
-    $("statusPill").className = "pill " + (ok ? "ok" : "muted");
-    $("sessionBox").innerHTML = ok
-      ? `<div><strong>Company</strong><br>${state.companyId}</div>
-         <div style="margin-top:0.4rem"><strong>User</strong><br>${state.userId}</div>`
-      : "<small>Not connected</small>";
-    document.querySelectorAll(".nav-btn").forEach((btn) => {
-      if (btn.dataset.view === "setup") return;
-      btn.disabled = !ok;
-    });
+    showGate(!ok);
+    const box = $("sessionBox");
+    const pill = $("statusPill");
+    if (box) {
+      box.innerHTML = ok
+        ? `<div><strong>${escapeHtml(state.userName || "User")}</strong></div>
+           <small>${escapeHtml(state.userId.slice(0, 8))}…</small><br/>
+           <small>co ${escapeHtml(state.companyId.slice(0, 8))}…</small>`
+        : "<small>Not connected</small>";
+    }
+    if (pill) {
+      pill.textContent = ok ? "Online" : "Offline";
+      pill.className = ok ? "pill ok" : "pill muted";
+    }
+    const sub = $("brandSub");
+    if (sub) sub.textContent = ok ? "Workspace" : "Offline";
   }
 
   function setInboxBadge(n) {
-    const el = $("inboxBadge");
-    if (n > 0) {
-      el.textContent = String(n);
-      el.classList.remove("hidden");
-    } else {
-      el.classList.add("hidden");
+    const b = $("inboxBadge");
+    const nav = $("navInboxCount");
+    if (b) {
+      b.textContent = String(n);
+      b.classList.toggle("hidden", !n);
+    }
+    if (nav) {
+      nav.textContent = String(n);
+      nav.classList.toggle("hidden", !n);
     }
   }
 
-  const titles = {
-    setup: "Setup",
-    workforce: "Workforce Overview",
-    inbox: "AI Inbox",
-    tasks: "Task Center",
-    approvals: "Approval Center",
-    agents: "Agent Dashboard",
-    consult: "Consultation",
-    chat: "Agent Chat",
-    directory: "Agent Directory",
-    knowledge: "Knowledge",
-    delegation: "Delegation",
-    automation: "Automation",
-    governance: "Governance",
-  };
+  function setNotifBadge(n) {
+    const b = $("notifBadge");
+    if (b) {
+      b.textContent = String(n);
+      b.classList.toggle("hidden", !n);
+    }
+  }
 
   function showView(name) {
     document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
@@ -117,9 +133,11 @@
     if (view) view.classList.add("active");
     const btn = document.querySelector(`.nav-btn[data-view="${name}"]`);
     if (btn) btn.classList.add("active");
-    $("viewTitle").textContent = titles[name] || name;
-    if (!state.connected) return;
-    if (name === "workforce") loadWorkforce();
+    const t = titles[name] || [name, ""];
+    if ($("viewTitle")) $("viewTitle").textContent = t[0];
+    if ($("viewSubtitle")) $("viewSubtitle").textContent = t[1];
+
+    if (name === "home") loadHome();
     if (name === "inbox") loadInbox();
     if (name === "agents") loadAgents();
     if (name === "tasks") {
@@ -129,7 +147,7 @@
     if (name === "approvals") loadApprovals();
     if (name === "chat") loadChat();
     if (name === "consult") loadAgentOptions();
-    if (name === "directory") listDirectory();
+    if (name === "marketplace") loadMarketplace();
     if (name === "delegation") {
       loadAgentOptions();
       loadDelegations();
@@ -138,302 +156,361 @@
       loadAgentOptions();
       loadAutomations();
     }
+    if (name === "notifications") loadNotifications();
     if (name === "governance") loadGovernance();
+    if (name === "directory") listDirectory();
   }
 
-  document.getElementById("nav").addEventListener("click", (e) => {
-    const btn = e.target.closest(".nav-btn");
-    if (!btn || btn.disabled) return;
-    showView(btn.dataset.view);
+  document.querySelectorAll(".nav-btn").forEach((btn) => {
+    btn.addEventListener("click", () => showView(btn.dataset.view));
   });
 
-  // ---- Setup ----
-  $("apiBase").value = state.apiBase;
-  $("companyId").value = state.companyId;
-  $("userId").value = state.userId;
+  document.querySelectorAll("[data-jump]").forEach((btn) => {
+    btn.addEventListener("click", () => showView(btn.dataset.jump));
+  });
 
-  $("btnConnect").onclick = async () => {
-    state.apiBase = $("apiBase").value.trim() || "/api/v1";
-    state.companyId = $("companyId").value.trim();
-    state.userId = $("userId").value.trim();
-    localStorage.setItem("ws_apiBase", state.apiBase);
+  // Login tabs
+  document.querySelectorAll(".login-tabs .tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".login-tabs .tab").forEach((t) => t.classList.remove("active"));
+      document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("active"));
+      tab.classList.add("active");
+      const panel = $("tab-" + tab.dataset.tab);
+      if (panel) panel.classList.add("active");
+    });
+  });
+
+  async function applyAuthSession(body) {
+    state.companyId = body.company_id;
+    state.userId = body.user_id;
+    state.accessToken = body.access_token || "";
+    state.userName = body.name || body.email || "";
     localStorage.setItem("ws_companyId", state.companyId);
     localStorage.setItem("ws_userId", state.userId);
-    try {
-      await api(`/companies/${state.companyId}/agents`);
-      setConnected(true);
-      $("setupLog").textContent = "Connected.";
-      await refreshInboxBadge();
-      showView("workforce");
-    } catch (err) {
-      $("setupLog").textContent =
-        "Connect failed: " + err.message +
-        "\nSession cleared. Use Quick start or create a new company, then Register/Login.";
-      clearSession();
-    }
-  };
-
-  const btnClear = $("btnClearSession");
-  if (btnClear) {
-    btnClear.onclick = () => {
-      clearSession();
-      $("setupLog").textContent = "Session cleared. Use Quick start or fill company/user IDs.";
-    };
+    localStorage.setItem("ws_accessToken", state.accessToken);
+    localStorage.setItem("ws_userName", state.userName);
+    if (body.refresh_token) localStorage.setItem("ws_refreshToken", body.refresh_token);
+    if ($("companyId")) $("companyId").value = state.companyId;
+    if ($("userId")) $("userId").value = state.userId;
+    if ($("loginCompanyId")) $("loginCompanyId").value = state.companyId;
+    setConnected(true);
+    await refreshInboxBadge();
+    showView("home");
   }
 
+  // ----- Quick start -----
   $("btnQuickStart").onclick = async () => {
-
-    state.apiBase = $("apiBase").value.trim() || "/api/v1";
-    localStorage.setItem("ws_apiBase", state.apiBase);
-    const log = $("setupLog");
-    // Drop stale credentials so bootstrap is not blocked by old JWT/user
-    clearSession();
-    state.apiBase = $("apiBase").value.trim() || "/api/v1";
+    const log = $("quickLog");
     try {
-      log.textContent = "Creating company...";
+      log.textContent = "Creating company…";
       const co = await api("/companies", {
         method: "POST",
-        body: JSON.stringify({
-          name: "Workspace Demo Co " + new Date().toISOString().slice(0, 19),
-        }),
+        body: JSON.stringify({ name: "Demo Co " + Date.now().toString(36) }),
         skipAuth: true,
       });
+      log.textContent += "\nCompany " + co.id;
       const user = await api(`/companies/${co.id}/users`, {
         method: "POST",
         body: JSON.stringify({
-          name: "Workspace Owner",
-          email: `owner-${Date.now()}@demo.local`,
+          name: "Demo Owner",
+          email: "owner@demo.local",
           role: "owner",
-          password: "demo-pass-123",
+          password: "demo12345",
         }),
         skipAuth: true,
       });
+      log.textContent += "\nUser " + user.id;
       state.companyId = co.id;
       state.userId = user.id;
-      state.accessToken = "";
-      $("companyId").value = co.id;
-      $("userId").value = user.id;
-      if ($("loginEmail")) $("loginEmail").value = user.email || "";
-      if ($("loginPassword")) $("loginPassword").value = "demo-pass-123";
-      localStorage.setItem("ws_companyId", co.id);
-      localStorage.setItem("ws_userId", user.id);
+      state.userName = user.name || "Demo Owner";
+      localStorage.setItem("ws_companyId", state.companyId);
+      localStorage.setItem("ws_userId", state.userId);
+      localStorage.setItem("ws_userName", state.userName);
 
-      // Login to obtain JWT for subsequent calls
+      // Try password login for JWT
       try {
         const tok = await api("/auth/login", {
           method: "POST",
           body: JSON.stringify({
             company_id: co.id,
-            email: user.email,
-            password: "demo-pass-123",
+            email: "owner@demo.local",
+            password: "demo12345",
           }),
           skipAuth: true,
         });
         state.accessToken = tok.access_token || "";
         localStorage.setItem("ws_accessToken", state.accessToken);
-        if (tok.refresh_token) {
-          localStorage.setItem("ws_refreshToken", tok.refresh_token);
-        }
-      } catch (loginErr) {
-        log.textContent += "\nLogin after create skipped: " + loginErr.message;
+        if (tok.refresh_token) localStorage.setItem("ws_refreshToken", tok.refresh_token);
+        log.textContent += "\nJWT session OK";
+      } catch (e) {
+        log.textContent += "\nJWT optional: " + e.message;
       }
 
-      const catalog = await api("/agent-catalog", { skipAuth: true });
-      const res = catalog.find((c) => c.slug === "reservation") || catalog[0];
-      if (res) {
-        await api(`/companies/${co.id}/agents/${res.id}/hire`, {
-          method: "POST",
-          body: JSON.stringify({ name: "Desk AI" }),
-        });
+      // Hire from catalog
+      try {
+        const catalog = await api("/agent-catalog", { skipAuth: true });
+        for (const c of (catalog || []).slice(0, 2)) {
+          await api(`/companies/${co.id}/agents/${c.id}/hire`, {
+            method: "POST",
+            body: JSON.stringify({ name: c.name.replace(/ AI Employee$/, "") + " (Demo)" }),
+          });
+          log.textContent += "\nHired " + c.slug;
+        }
+      } catch (e) {
+        log.textContent += "\nHire: " + e.message;
       }
-      const contract = catalog.find((c) => c.slug === "contract-manager");
-      if (contract) {
-        await api(`/companies/${co.id}/agents/${contract.id}/hire`, {
-          method: "POST",
-          body: JSON.stringify({ name: "Contract AI" }),
-        });
-      }
+
+      if ($("loginCompanyId")) $("loginCompanyId").value = co.id;
+      if ($("loginEmail")) $("loginEmail").value = "owner@demo.local";
+      if ($("loginPassword")) $("loginPassword").value = "demo12345";
+      if ($("companyId")) $("companyId").value = co.id;
+      if ($("userId")) $("userId").value = user.id;
+
       setConnected(true);
-      log.textContent =
-        `Company ${co.id}\nUser ${user.id}\nEmail ${user.email}\nPassword demo-pass-123\nAgents hired.\nReady.`;
       await refreshInboxBadge();
-      showView("workforce");
+      showView("home");
+      log.textContent += "\n\nWorkspace ready. Password: demo12345";
     } catch (err) {
-      log.textContent += "\nError: " + err.message;
+      log.textContent = "Quick start failed: " + err.message;
+    }
+  };
+
+  $("btnConnect").onclick = async () => {
+    const log = $("setupLog");
+    try {
+      state.apiBase = ($("apiBase") && $("apiBase").value.trim()) || "/api/v1";
+      state.companyId = $("companyId").value.trim();
+      state.userId = $("userId").value.trim();
+      if (!state.companyId || !state.userId) throw new Error("Company ID and User ID required");
+      localStorage.setItem("ws_apiBase", state.apiBase);
+      localStorage.setItem("ws_companyId", state.companyId);
+      localStorage.setItem("ws_userId", state.userId);
+      await api(`/companies/${state.companyId}`);
+      setConnected(true);
+      await refreshInboxBadge();
+      showView("home");
+      log.textContent = "Connected.";
+    } catch (err) {
+      log.textContent = "Connect failed: " + err.message;
       setConnected(false);
     }
   };
 
-  // ---- Shared data ----
+  $("btnClearSession").onclick = clearSession;
+  if ($("btnLogout")) $("btnLogout").onclick = clearSession;
+
+  $("btnLogin").onclick = async () => {
+    const log = $("loginLog");
+    try {
+      const companyId = ($("loginCompanyId").value || $("companyId").value || "").trim();
+      const body = await api("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({
+          company_id: companyId,
+          email: $("loginEmail").value.trim(),
+          password: $("loginPassword").value,
+        }),
+        skipAuth: true,
+      });
+      log.textContent = "Signed in as " + (body.email || body.user_id);
+      await applyAuthSession(body);
+    } catch (err) {
+      log.textContent = "Login failed: " + err.message;
+    }
+  };
+
+  $("btnRegister").onclick = async () => {
+    const log = $("loginLog");
+    try {
+      const companyId = ($("loginCompanyId").value || $("companyId").value || "").trim();
+      const email = $("loginEmail").value.trim();
+      const body = await api("/auth/register", {
+        method: "POST",
+        body: JSON.stringify({
+          company_id: companyId,
+          email,
+          name: email.split("@")[0] || "User",
+          password: $("loginPassword").value,
+          role: "member",
+        }),
+        skipAuth: true,
+      });
+      log.textContent = "Registered " + (body.email || body.user_id);
+      await applyAuthSession(body);
+    } catch (err) {
+      log.textContent = "Register failed: " + err.message;
+    }
+  };
+
   async function loadAgentOptions() {
-    const agents = await api(`/companies/${state.companyId}/agents`);
-    state.agents = agents;
-    const opts = agents
-      .map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`)
-      .join("");
-    ["taskAgent", "consultAgent", "delSource", "delTarget", "autoAgent"].forEach((id) => {
-      const el = $(id);
-      if (el) el.innerHTML = opts;
-    });
+    if (!state.companyId) return;
+    try {
+      const agents = await api(`/companies/${state.companyId}/agents`);
+      const opts = (agents || [])
+        .map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`)
+        .join("");
+      ["taskAgent", "consultAgent", "chatAgent", "delSource", "delTarget", "autoAgent"].forEach(
+        (id) => {
+          const el = $(id);
+          if (el) el.innerHTML = opts;
+        }
+      );
+    } catch (_) {}
   }
 
   async function refreshInboxBadge() {
+    if (!state.companyId) return;
     try {
       const [tasks, approvals, dels, notif] = await Promise.all([
-        api(`/companies/${state.companyId}/tasks`),
+        api(`/companies/${state.companyId}/tasks`).catch(() => []),
         api(`/companies/${state.companyId}/approvals`).catch(() => []),
-        api(`/companies/${state.companyId}/delegation-requests`).catch(() => []),
-        api(`/companies/${state.companyId}/notifications/unread-count`).catch(() => ({
-          count: 0,
-        })),
+        api(`/companies/${state.companyId}/delegations`).catch(() => []),
+        api(`/companies/${state.companyId}/notifications/unread-count`).catch(() => ({ count: 0 })),
       ]);
-      const n =
-        tasks.filter((t) => t.status === "pending").length +
-        (approvals || []).filter((a) => a.status === "pending").length +
-        (dels || []).filter((d) => d.status === "pending" || d.status === "accepted")
-          .length +
-        (notif && notif.count ? notif.count : 0);
-      setInboxBadge(n);
-    } catch {
-      setInboxBadge(0);
-    }
+      const pendingTasks = (tasks || []).filter((t) =>
+        ["pending", "waiting_approval", "planning"].includes(t.status)
+      ).length;
+      const pendingAppr = (approvals || []).filter((a) => a.status === "pending").length;
+      const openDel = (dels || []).filter((d) =>
+        ["pending", "accepted"].includes(d.status)
+      ).length;
+      setInboxBadge(pendingTasks + pendingAppr + openDel);
+      setNotifBadge((notif && notif.count) || 0);
+    } catch (_) {}
   }
 
-  async function loadNotifications() {
-    try {
-      const [notes, count] = await Promise.all([
-        api(`/companies/${state.companyId}/notifications?limit=50`),
-        api(`/companies/${state.companyId}/notifications/unread-count`),
-      ]);
-      $("notifStats").innerHTML = [
-        `<span class="stat"><strong>${count.count}</strong> unread</span>`,
-        `<span class="stat"><strong>${notes.length}</strong> shown</span>`,
-      ].join("");
-      if (!notes.length) {
-        $("notifList").innerHTML = '<p class="muted">No notifications yet.</p>';
-        return;
-      }
-      $("notifList").innerHTML = notes
-        .map(
-          (n) => `
-        <div class="list-item ${n.read_at ? "muted" : ""}">
-          <div>
-            <strong>${n.title}</strong>
-            <div class="muted">${n.type} · ${n.created_at || ""}</div>
-            <div>${(n.body || "").slice(0, 200)}</div>
-          </div>
-          <div class="row">
-            ${
-              n.read_at
-                ? "<span class=\"muted\">Read</span>"
-                : `<button class="secondary" data-notif-read="${n.id}">Mark read</button>`
-            }
-          </div>
-        </div>`
-        )
-        .join("");
-      $("notifList").querySelectorAll("[data-notif-read]").forEach((btn) => {
-        btn.onclick = async () => {
-          await api(
-            `/companies/${state.companyId}/notifications/${btn.dataset.notifRead}/read`,
-            { method: "POST", body: "{}" }
-          );
-          await loadNotifications();
-          await refreshInboxBadge();
-        };
-      });
-    } catch (err) {
-      $("notifList").innerHTML = `<p class="danger">${err.message}</p>`;
-    }
-  }
-
-  // ---- Workforce Overview ----
-  async function loadWorkforce() {
+  // ----- Home -----
+  async function loadHome() {
+    if (!state.companyId) return;
     try {
       const [agents, tasks, approvals] = await Promise.all([
         api(`/companies/${state.companyId}/agents`),
         api(`/companies/${state.companyId}/tasks`),
-        api(`/companies/${state.companyId}/approvals`).catch(() => []),
+        api(`/companies/${state.companyId}/approvals`),
       ]);
-      state.agents = agents;
-      state.tasks = tasks;
-      const pendingAppr = (approvals || []).filter((a) => a.status === "pending");
-      const active = agents.filter((a) => a.status === "active").length;
-      $("wfStats").innerHTML = [
+      const active = (agents || []).filter((a) => a.status === "active").length;
+      const openTasks = (tasks || []).filter((t) =>
+        !["completed", "failed", "cancelled"].includes(t.status)
+      ).length;
+      const pendingAppr = (approvals || []).filter((a) => a.status === "pending").length;
+      $("homeStats").innerHTML = [
         ["AI Employees", agents.length],
         ["Active", active],
-        ["Open tasks", tasks.filter((t) => t.status !== "completed").length],
-        ["Pending approvals", pendingAppr.length],
+        ["Open tasks", openTasks],
+        ["Pending approvals", pendingAppr],
       ]
         .map(
           ([l, n]) =>
-            `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`
+            `<div class="stat"><div class="n">${n}</div><div class="l">${escapeHtml(l)}</div></div>`
         )
         .join("");
 
-      const byStatus = {};
-      agents.forEach((a) => {
-        byStatus[a.status] = (byStatus[a.status] || 0) + 1;
-      });
-      $("wfStatusBreakdown").innerHTML =
-        Object.entries(byStatus)
-          .map(
-            ([s, n]) =>
-              `<div class="item"><strong>${escapeHtml(s)}</strong><div class="meta">${n} agent(s)</div></div>`
+      const attention = [];
+      (tasks || [])
+        .filter((t) => ["pending", "waiting_approval"].includes(t.status))
+        .slice(0, 4)
+        .forEach((t) =>
+          attention.push(
+            `<div class="item"><span class="type-tag task">task</span>${escapeHtml(t.title || t.id)}<div class="meta">${escapeHtml(t.status)} · ${escapeHtml(t.mode || "")}</div></div>`
           )
-          .join("") || '<div class="muted">No agents</div>';
-
-      $("wfActivity").innerHTML =
-        tasks
-          .slice(0, 8)
-          .map(
-            (t) =>
-              `<div class="item"><strong>${escapeHtml(t.title)}</strong>
-               <div class="meta">${t.mode || "execute"} · ${t.status}</div></div>`
+        );
+      (approvals || [])
+        .filter((a) => a.status === "pending")
+        .slice(0, 4)
+        .forEach((a) =>
+          attention.push(
+            `<div class="item"><span class="type-tag approval">approval</span>${escapeHtml(a.action)}<div class="meta">${escapeHtml(a.reason || "")}</div></div>`
           )
-          .join("") || '<div class="muted">No recent tasks</div>';
+        );
+      $("homeInbox").innerHTML =
+        attention.join("") || `<div class="empty">Nothing pending — you're clear.</div>`;
 
-      $("wfAgentGrid").innerHTML =
-        agents
+      $("homeAgents").innerHTML =
+        (agents || [])
+          .slice(0, 6)
           .map(
             (a) => `<div class="agent-card">
-            <h4>${escapeHtml(a.name)}</h4>
-            <div class="meta">${a.status} · autonomy ${a.autonomy ?? "-"}</div>
-            <div style="margin-top:0.4rem">
-              ${(a.skills || [])
-                .slice(0, 5)
-                .map((s) => `<span class="tag">${escapeHtml(s)}</span>`)
-                .join("")}
-            </div>
-          </div>`
+          <h4><span class="status-dot ${a.status !== "active" ? "inactive" : ""}"></span>${escapeHtml(a.name)}</h4>
+          <div class="meta muted">${escapeHtml(a.status)} · v${escapeHtml(a.template_version || "")}</div>
+        </div>`
           )
-          .join("") || '<div class="muted">Hire agents from Agent Dashboard</div>';
-
-      await refreshInboxBadge();
+          .join("") || `<div class="empty">No agents yet. Hire from Marketplace.</div>`;
     } catch (err) {
-      $("wfStats").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+      $("homeStats").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
     }
   }
 
-  // ---- AI Inbox ----
+  // ----- Notifications -----
+  async function loadNotifications() {
+    if (!state.companyId) return;
+    try {
+      const list = await api(`/companies/${state.companyId}/notifications`);
+      const unread = (list || []).filter((n) => !n.read_at).length;
+      $("notifStats").innerHTML = `<div class="stat"><div class="n">${unread}</div><div class="l">Unread</div></div>
+        <div class="stat"><div class="n">${(list || []).length}</div><div class="l">Total</div></div>`;
+      $("notifList").innerHTML =
+        (list || [])
+          .map(
+            (n) => `<div class="item">
+          <strong>${escapeHtml(n.type || "notification")}</strong>
+          <div class="meta">${escapeHtml(JSON.stringify(n.payload || {}).slice(0, 120))} · ${n.read_at ? "read" : "unread"}</div>
+          ${
+            !n.read_at
+              ? `<div class="actions"><button class="secondary btn-read-one" data-id="${n.id}">Mark read</button></div>`
+              : ""
+          }
+        </div>`
+          )
+          .join("") || `<div class="empty">No notifications.</div>`;
+      document.querySelectorAll(".btn-read-one").forEach((b) => {
+        b.onclick = async () => {
+          await api(`/companies/${state.companyId}/notifications/${b.dataset.id}/read`, {
+            method: "POST",
+            body: "{}",
+          });
+          await loadNotifications();
+          await refreshInboxBadge();
+        };
+      });
+      setNotifBadge(unread);
+    } catch (err) {
+      $("notifList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  if ($("btnNotifRefresh")) $("btnNotifRefresh").onclick = loadNotifications;
+  if ($("btnNotifReadAll"))
+    $("btnNotifReadAll").onclick = async () => {
+      await api(`/companies/${state.companyId}/notifications/read-all`, {
+        method: "POST",
+        body: "{}",
+      });
+      await loadNotifications();
+      await refreshInboxBadge();
+    };
+  if ($("btnTopNotif")) $("btnTopNotif").onclick = () => showView("notifications");
+
+  // ----- Inbox -----
   async function loadInbox() {
+    if (!state.companyId) return;
     try {
       const [tasks, approvals, dels] = await Promise.all([
         api(`/companies/${state.companyId}/tasks`),
-        api(`/companies/${state.companyId}/approvals`).catch(() => []),
-        api(`/companies/${state.companyId}/delegation-requests`).catch(() => []),
+        api(`/companies/${state.companyId}/approvals`),
+        api(`/companies/${state.companyId}/delegations`),
       ]);
-      const pendingTasks = tasks.filter((t) => t.status === "pending");
-      const pendingAppr = (approvals || []).filter((a) => a.status === "pending");
-      const openDels = (dels || []).filter(
-        (d) => d.status === "pending" || d.status === "accepted"
+      const pendingTasks = (tasks || []).filter((t) =>
+        ["pending", "waiting_approval", "planning", "running"].includes(t.status)
       );
-
+      const pendingAppr = (approvals || []).filter((a) => a.status === "pending");
+      const openDel = (dels || []).filter((d) =>
+        ["pending", "accepted"].includes(d.status)
+      );
       $("inboxStats").innerHTML = [
-        ["Pending tasks", pendingTasks.length],
+        ["Tasks", pendingTasks.length],
         ["Approvals", pendingAppr.length],
-        ["Delegations", openDels.length],
-        ["Total", pendingTasks.length + pendingAppr.length + openDels.length],
+        ["Delegations", openDel.length],
+        ["Total", pendingTasks.length + pendingAppr.length + openDel.length],
       ]
         .map(
           ([l, n]) =>
@@ -441,215 +518,215 @@
         )
         .join("");
 
-      const items = [];
-      pendingTasks.forEach((t) =>
-        items.push({
-          type: "task",
-          title: t.title,
-          meta: `${t.mode || "execute"} · ${t.id}`,
-          action:
-            t.mode === "consult"
-              ? `<button class="secondary" data-inbox-consult="${t.id}">Run consult</button>`
-              : "",
-        })
-      );
-      pendingAppr.forEach((a) =>
-        items.push({
-          type: "approval",
-          title: a.action,
-          meta: a.reason || a.id,
-          action: `<button class="success" data-inbox-approve="${a.id}">Approve</button>
-                   <button class="danger" data-inbox-reject="${a.id}">Reject</button>`,
-        })
-      );
-      openDels.forEach((d) =>
-        items.push({
-          type: "delegation",
-          title: d.title,
-          meta: `${d.status} · ${d.capability}`,
-          action:
-            d.status === "pending" || d.status === "accepted"
-              ? `<button class="secondary" data-inbox-exec-del="${d.id}">Execute</button>`
-              : "",
-        })
-      );
+      const rows = [];
+      pendingTasks.forEach((t) => {
+        rows.push(`<div class="item">
+          <span class="type-tag task">task</span><strong>${escapeHtml(t.title || t.id)}</strong>
+          <div class="meta">${escapeHtml(t.status)} · ${escapeHtml(t.mode || "")}</div>
+          <div class="actions">
+            ${
+              t.mode === "consult" && t.status === "pending"
+                ? `<button class="primary btn-run-consult" data-id="${t.id}">Run consult</button>`
+                : ""
+            }
+          </div>
+        </div>`);
+      });
+      pendingAppr.forEach((a) => {
+        rows.push(`<div class="item">
+          <span class="type-tag approval">approval</span><strong>${escapeHtml(a.action)}</strong>
+          <div class="meta">${escapeHtml(a.reason || "")}</div>
+          <div class="actions">
+            <button class="success btn-appr" data-id="${a.id}" data-d="approved">Approve</button>
+            <button class="danger btn-appr" data-id="${a.id}" data-d="rejected">Reject</button>
+          </div>
+        </div>`);
+      });
+      openDel.forEach((d) => {
+        rows.push(`<div class="item">
+          <span class="type-tag delegation">delegation</span><strong>${escapeHtml(d.title || d.id)}</strong>
+          <div class="meta">${escapeHtml(d.status)} · ${escapeHtml(d.capability || "")}</div>
+          <div class="actions">
+            ${
+              d.status === "pending" || d.status === "accepted"
+                ? `<button class="primary btn-exec-del" data-id="${d.id}">Execute</button>`
+                : ""
+            }
+          </div>
+        </div>`);
+      });
+      $("inboxList").innerHTML = rows.join("") || `<div class="empty">Inbox zero. Nice work.</div>`;
 
-      $("inboxList").innerHTML =
-        items
-          .map(
-            (i) => `<div class="item">
-            <div class="row between">
-              <div>
-                <span class="inbox-item-type ${i.type}">${i.type}</span>
-                <strong>${escapeHtml(i.title)}</strong>
-                <div class="meta">${escapeHtml(i.meta)}</div>
-              </div>
-              <div class="row">${i.action}</div>
-            </div>
-          </div>`
-          )
-          .join("") || '<div class="muted">Inbox is clear</div>';
-
-      setInboxBadge(items.length);
-
-      $("inboxList").querySelectorAll("[data-inbox-consult]").forEach((btn) => {
-        btn.onclick = async () => {
-          try {
-            await api(
-              `/companies/${state.companyId}/tasks/${btn.dataset.inboxConsult}/consult`,
-              { method: "POST" }
-            );
-            loadInbox();
-          } catch (err) {
-            alert(err.message);
-          }
+      document.querySelectorAll(".btn-run-consult").forEach((b) => {
+        b.onclick = async () => {
+          await api(`/companies/${state.companyId}/tasks/${b.dataset.id}/run`, {
+            method: "POST",
+            body: "{}",
+          });
+          loadInbox();
+          refreshInboxBadge();
         };
       });
-      $("inboxList").querySelectorAll("[data-inbox-approve]").forEach((btn) => {
-        btn.onclick = async () => {
-          try {
-            await api(
-              `/companies/${state.companyId}/approvals/${btn.dataset.inboxApprove}/approve`,
-              { method: "POST", body: JSON.stringify({ comment: "Approved from inbox" }) }
-            );
-            loadInbox();
-          } catch (err) {
-            alert(err.message);
-          }
+      document.querySelectorAll(".btn-appr").forEach((b) => {
+        b.onclick = async () => {
+          await api(`/companies/${state.companyId}/approvals/${b.dataset.id}/review`, {
+            method: "POST",
+            body: JSON.stringify({ status: b.dataset.d, comment: "workspace" }),
+          });
+          loadInbox();
+          refreshInboxBadge();
         };
       });
-      $("inboxList").querySelectorAll("[data-inbox-reject]").forEach((btn) => {
-        btn.onclick = async () => {
-          try {
-            await api(
-              `/companies/${state.companyId}/approvals/${btn.dataset.inboxReject}/reject`,
-              { method: "POST", body: JSON.stringify({ comment: "Rejected from inbox" }) }
-            );
-            loadInbox();
-          } catch (err) {
-            alert(err.message);
-          }
+      document.querySelectorAll(".btn-exec-del").forEach((b) => {
+        b.onclick = async () => {
+          await api(`/companies/${state.companyId}/delegations/${b.dataset.id}/execute`, {
+            method: "POST",
+            body: "{}",
+          });
+          loadInbox();
+          refreshInboxBadge();
         };
       });
-      $("inboxList").querySelectorAll("[data-inbox-exec-del]").forEach((btn) => {
-        btn.onclick = async () => {
-          try {
-            await api(
-              `/companies/${state.companyId}/delegation-requests/${btn.dataset.inboxExecDel}/execute`,
-              { method: "POST", body: JSON.stringify({ mode: "consult" }) }
-            );
-            loadInbox();
-          } catch (err) {
-            alert(err.message);
-          }
-        };
-      });
+      setInboxBadge(pendingTasks.length + pendingAppr.length + openDel.length);
     } catch (err) {
       $("inboxList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
     }
   }
   $("btnRefreshInbox").onclick = loadInbox;
 
-  // ---- Agents ----
+  // ----- Agents -----
   async function loadAgents() {
+    if (!state.companyId) return;
     try {
-      const agents = await api(`/companies/${state.companyId}/agents`);
-      state.agents = agents;
+      const [agents, catalog] = await Promise.all([
+        api(`/companies/${state.companyId}/agents`),
+        api("/agent-catalog"),
+      ]);
       $("agentList").innerHTML =
-        agents
+        (agents || [])
           .map(
             (a) => `<div class="agent-card">
-            <h4>${escapeHtml(a.name)}</h4>
-            <div class="meta">${a.status} · autonomy ${a.autonomy ?? "-"}</div>
-            <div style="margin-top:0.4rem">
-              ${(a.skills || [])
-                .slice(0, 6)
-                .map((s) => `<span class="tag">${escapeHtml(s)}</span>`)
-                .join("")}
-            </div>
-            <div class="meta" style="margin-top:0.35rem">${a.id}</div>
-          </div>`
+          <h4><span class="status-dot ${a.status !== "active" ? "inactive" : ""}"></span>${escapeHtml(a.name)}</h4>
+          <div class="muted" style="font-size:.8rem">${escapeHtml(a.status)} · autonomy ${escapeHtml(a.autonomy || "")}</div>
+          <div style="margin-top:.4rem">${(a.skills || []).slice(0, 5).map((s) => `<span class="tag">${escapeHtml(s)}</span>`).join("")}</div>
+        </div>`
           )
-          .join("") || '<div class="muted">No agents hired</div>';
-
-      const catalog = await api("/agent-catalog");
-      $("catalogSelect").innerHTML = catalog
-        .map((c) => `<option value="${c.id}">${escapeHtml(c.name)} (${c.slug})</option>`)
-        .join("");
+          .join("") || `<div class="empty">No agents hired yet.</div>`;
+      const sel = $("catalogSelect");
+      if (sel)
+        sel.innerHTML = (catalog || [])
+          .map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`)
+          .join("");
     } catch (err) {
       $("agentList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
     }
   }
   $("btnRefreshAgents").onclick = loadAgents;
   $("btnHire").onclick = async () => {
+    const log = $("hireLog");
     try {
-      const inst = await api(
-        `/companies/${state.companyId}/agents/${$("catalogSelect").value}/hire`,
-        {
-          method: "POST",
-          body: JSON.stringify({ name: $("hireName").value.trim() || "New AI" }),
-        }
-      );
-      $("hireLog").textContent = "Hired: " + JSON.stringify(inst, null, 2);
+      const catalogId = $("catalogSelect").value;
+      const name = $("hireName").value.trim() || "New AI Employee";
+      const inst = await api(`/companies/${state.companyId}/agents/${catalogId}/hire`, {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      });
+      log.textContent = "Hired " + inst.name + " (" + inst.id + ")";
       loadAgents();
+      loadHome();
     } catch (err) {
-      $("hireLog").textContent = err.message;
+      log.textContent = err.message;
     }
   };
 
-  // ---- Tasks ----
-  async function loadTasks() {
+  // ----- Marketplace -----
+  async function loadMarketplace() {
+    if (!state.companyId) return;
     try {
-      const tasks = await api(`/companies/${state.companyId}/tasks`);
-      state.tasks = tasks;
-      const filter = $("taskFilter").value;
-      const filtered = tasks.filter((t) => {
-        if (filter === "all") return true;
-        if (filter === "pending" || filter === "completed") return t.status === filter;
-        if (filter === "consult" || filter === "execute")
-          return (t.mode || "execute") === filter;
-        return true;
-      });
-      $("taskList").innerHTML =
-        filtered
-          .map((t) => {
-            const actions =
-              t.mode === "consult" && t.status === "pending"
-                ? `<button class="secondary" data-consult="${t.id}">Run consult</button>`
-                : "";
-            return `<div class="item">
-            <div class="row between">
-              <div><strong>${escapeHtml(t.title)}</strong>
-                <div class="meta">${t.mode || "execute"} · ${t.status} · ${t.id}</div>
-              </div>
-              <div class="row">${actions}</div>
-            </div>
+      const [templates, installs] = await Promise.all([
+        api("/marketplace/templates"),
+        api(`/companies/${state.companyId}/marketplace/installations`),
+      ]);
+      const installed = new Set((installs || []).map((i) => i.catalog_agent_id));
+      $("marketList").innerHTML =
+        (templates || [])
+          .map(
+            (t) => `<div class="agent-card">
+          <h4>${escapeHtml(t.name)}</h4>
+          <div class="muted" style="font-size:.8rem">${escapeHtml(t.role)} · v${escapeHtml(t.version)}</div>
+          <p style="font-size:.85rem;color:var(--muted)">${escapeHtml((t.description || "").slice(0, 120))}</p>
+          <div>${(t.skills || []).slice(0, 6).map((s) => `<span class="tag">${escapeHtml(s)}</span>`).join("")}</div>
+          <div class="row">
             ${
-              t.result
-                ? `<pre class="log" style="max-height:120px">${escapeHtml(
-                    String(t.result).slice(0, 800)
-                  )}</pre>`
-                : ""
+              installed.has(t.id)
+                ? `<span class="pill ok">Installed</span>`
+                : `<button class="primary btn-install" data-id="${t.id}">Install</button>`
             }
-          </div>`;
-          })
-          .join("") || '<div class="muted">No tasks</div>';
-
-      $("taskList").querySelectorAll("[data-consult]").forEach((btn) => {
-        btn.onclick = async () => {
+          </div>
+        </div>`
+          )
+          .join("") || `<div class="empty">No public templates.</div>`;
+      $("installList").innerHTML =
+        (installs || [])
+          .map(
+            (i) => `<div class="item"><strong>${escapeHtml(i.catalog_name)}</strong>
+          <div class="meta">${escapeHtml(i.catalog_slug)} · v${escapeHtml(i.template_version)} · skills ${(i.installed_skill_ids || []).length}</div></div>`
+          )
+          .join("") || `<div class="empty">No installations yet.</div>`;
+      document.querySelectorAll(".btn-install").forEach((b) => {
+        b.onclick = async () => {
+          b.disabled = true;
           try {
-            await api(
-              `/companies/${state.companyId}/tasks/${btn.dataset.consult}/consult`,
-              { method: "POST" }
-            );
-            loadTasks();
-            refreshInboxBadge();
+            await api(`/companies/${state.companyId}/marketplace/install/${b.dataset.id}`, {
+              method: "POST",
+              body: "{}",
+            });
+            loadMarketplace();
           } catch (err) {
             alert(err.message);
+            b.disabled = false;
           }
         };
       });
-      await refreshInboxBadge();
+    } catch (err) {
+      $("marketList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+    }
+  }
+  if ($("btnRefreshMarket")) $("btnRefreshMarket").onclick = loadMarketplace;
+
+  // ----- Tasks -----
+  async function loadTasks() {
+    if (!state.companyId) return;
+    try {
+      let tasks = await api(`/companies/${state.companyId}/tasks`);
+      const f = $("taskFilter").value;
+      if (f === "pending") tasks = tasks.filter((t) => t.status === "pending");
+      if (f === "completed") tasks = tasks.filter((t) => t.status === "completed");
+      if (f === "consult") tasks = tasks.filter((t) => t.mode === "consult");
+      if (f === "execute") tasks = tasks.filter((t) => t.mode === "execute");
+      $("taskList").innerHTML =
+        (tasks || [])
+          .map(
+            (t) => `<div class="item">
+          <strong>${escapeHtml(t.title || t.id)}</strong>
+          <div class="meta">${escapeHtml(t.status)} · ${escapeHtml(t.mode || "")}</div>
+          ${
+            t.mode === "consult" && t.status === "pending"
+              ? `<div class="actions"><button class="primary btn-run-t" data-id="${t.id}">Run consult</button></div>`
+              : ""
+          }
+        </div>`
+          )
+          .join("") || `<div class="empty">No tasks.</div>`;
+      document.querySelectorAll(".btn-run-t").forEach((b) => {
+        b.onclick = async () => {
+          await api(`/companies/${state.companyId}/tasks/${b.dataset.id}/run`, {
+            method: "POST",
+            body: "{}",
+          });
+          loadTasks();
+        };
+      });
     } catch (err) {
       $("taskList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
     }
@@ -662,73 +739,50 @@
         method: "POST",
         body: JSON.stringify({
           agent_instance_id: $("taskAgent").value,
-          title: $("taskTitle").value.trim(),
-          instruction: $("taskInstruction").value.trim(),
+          title: $("taskTitle").value.trim() || "Task",
+          instruction: $("taskInstruction").value.trim() || "",
           mode: $("taskMode").value,
         }),
       });
       $("taskTitle").value = "";
       $("taskInstruction").value = "";
       loadTasks();
+      refreshInboxBadge();
     } catch (err) {
       alert(err.message);
     }
   };
 
-  // ---- Approvals ----
+  // ----- Approvals -----
   async function loadApprovals() {
+    if (!state.companyId) return;
     try {
-      const approvals = await api(`/companies/${state.companyId}/approvals`);
+      const list = await api(`/companies/${state.companyId}/approvals`);
       $("approvalList").innerHTML =
-        approvals
-          .map((a) => {
-            const pending = a.status === "pending";
-            return `<div class="item">
-            <div class="row between">
-              <div>
-                <strong>${escapeHtml(a.action)}</strong>
-                <div class="meta">${a.status} · ${a.id}</div>
-                <div class="meta">${escapeHtml(a.reason || "")}</div>
-              </div>
-              ${
-                pending
-                  ? `<div class="row">
-                      <button class="success" data-approve="${a.id}">Approve</button>
-                      <button class="danger" data-reject="${a.id}">Reject</button>
-                    </div>`
-                  : ""
-              }
-            </div>
-          </div>`;
-          })
-          .join("") || '<div class="muted">No approvals</div>';
-
-      $("approvalList").querySelectorAll("[data-approve]").forEach((btn) => {
-        btn.onclick = async () => {
-          try {
-            await api(
-              `/companies/${state.companyId}/approvals/${btn.dataset.approve}/approve`,
-              { method: "POST", body: JSON.stringify({ comment: "Approved from workspace" }) }
-            );
-            loadApprovals();
-            refreshInboxBadge();
-          } catch (err) {
-            alert(err.message);
+        (list || [])
+          .map(
+            (a) => `<div class="item">
+          <strong>${escapeHtml(a.action)}</strong>
+          <div class="meta">${escapeHtml(a.status)} · ${escapeHtml(a.reason || "")}</div>
+          ${
+            a.status === "pending"
+              ? `<div class="actions">
+            <button class="success btn-rev" data-id="${a.id}" data-d="approved">Approve</button>
+            <button class="danger btn-rev" data-id="${a.id}" data-d="rejected">Reject</button>
+          </div>`
+              : ""
           }
-        };
-      });
-      $("approvalList").querySelectorAll("[data-reject]").forEach((btn) => {
-        btn.onclick = async () => {
-          try {
-            await api(
-              `/companies/${state.companyId}/approvals/${btn.dataset.reject}/reject`,
-              { method: "POST", body: JSON.stringify({ comment: "Rejected from workspace" }) }
-            );
-            loadApprovals();
-            refreshInboxBadge();
-          } catch (err) {
-            alert(err.message);
-          }
+        </div>`
+          )
+          .join("") || `<div class="empty">No approvals.</div>`;
+      document.querySelectorAll(".btn-rev").forEach((b) => {
+        b.onclick = async () => {
+          await api(`/companies/${state.companyId}/approvals/${b.dataset.id}/review`, {
+            method: "POST",
+            body: JSON.stringify({ status: b.dataset.d, comment: "workspace" }),
+          });
+          loadApprovals();
+          refreshInboxBadge();
         };
       });
     } catch (err) {
@@ -737,11 +791,10 @@
   }
   $("btnRefreshApprovals").onclick = loadApprovals;
 
-  // ---- Consult ----
+  // ----- Consult -----
   $("btnConsult").onclick = async () => {
-    const out = $("consultResult");
+    const log = $("consultResult");
     try {
-      out.textContent = "Creating consultation task...";
       const task = await api(`/companies/${state.companyId}/tasks`, {
         method: "POST",
         body: JSON.stringify({
@@ -751,42 +804,32 @@
           mode: "consult",
         }),
       });
-      const done = await api(
-        `/companies/${state.companyId}/tasks/${task.id}/consult`,
-        { method: "POST" }
-      );
-      let result = done.result;
-      try {
-        result = JSON.stringify(JSON.parse(done.result), null, 2);
-      } catch {}
-      out.textContent = result;
+      const ran = await api(`/companies/${state.companyId}/tasks/${task.id}/run`, {
+        method: "POST",
+        body: "{}",
+      });
+      log.textContent = JSON.stringify(ran, null, 2);
     } catch (err) {
-      out.textContent = err.message;
+      log.textContent = err.message;
     }
   };
 
-  // ---- Directory ----
+  // ----- Directory -----
   async function listDirectory(skill) {
+    if (!state.companyId) return;
     try {
-      const path = skill
-        ? `/companies/${state.companyId}/directory/search?skill=${encodeURIComponent(skill)}`
-        : `/companies/${state.companyId}/directory`;
-      const entries = await api(path);
+      let path = `/companies/${state.companyId}/directory`;
+      if (skill) path += `?skill=${encodeURIComponent(skill)}`;
+      const list = await api(path);
       $("dirList").innerHTML =
-        entries
+        (list || [])
           .map(
             (e) => `<div class="agent-card">
-            <h4>${escapeHtml(e.name)}</h4>
-            <div class="meta">${escapeHtml(e.role)} · ${e.status}</div>
-            <div style="margin-top:0.4rem">
-              ${(e.capabilities || [])
-                .slice(0, 10)
-                .map((c) => `<span class="tag">${escapeHtml(c)}</span>`)
-                .join("")}
-            </div>
-          </div>`
+          <h4>${escapeHtml(e.name || e.agent_name || e.id)}</h4>
+          <div class="muted" style="font-size:.8rem">${escapeHtml((e.skills || []).join(", "))}</div>
+        </div>`
           )
-          .join("") || '<div class="muted">No agents</div>';
+          .join("") || `<div class="empty">No matches.</div>`;
     } catch (err) {
       $("dirList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
     }
@@ -794,7 +837,7 @@
   $("btnListDir").onclick = () => listDirectory();
   $("btnSearchDir").onclick = () => listDirectory($("dirSkill").value.trim());
 
-  // ---- Knowledge ----
+  // ----- Knowledge -----
   $("btnAddKnowledge").onclick = async () => {
     try {
       await api(`/companies/${state.companyId}/knowledge`, {
@@ -802,12 +845,11 @@
         body: JSON.stringify({
           title: $("knowTitle").value.trim(),
           content: $("knowContent").value.trim(),
-          category: "general",
         }),
       });
       $("knowTitle").value = "";
       $("knowContent").value = "";
-      $("knowResults").innerHTML = '<div class="item">Knowledge added.</div>';
+      alert("Knowledge added");
     } catch (err) {
       alert(err.message);
     }
@@ -816,62 +858,46 @@
     try {
       const hits = await api(`/companies/${state.companyId}/knowledge/search`, {
         method: "POST",
-        body: JSON.stringify({ query: $("knowQuery").value.trim(), limit: 10 }),
+        body: JSON.stringify({ query: $("knowQuery").value.trim() }),
       });
       $("knowResults").innerHTML =
-        hits
+        (hits || [])
           .map(
-            (h) =>
-              `<div class="item"><div class="meta">${h.source} · score ${h.score}</div>${escapeHtml(
-                (h.content || h.title || "").slice(0, 300)
-              )}</div>`
+            (h) => `<div class="item"><strong>${escapeHtml(h.title || h.id)}</strong>
+          <div class="meta">${escapeHtml((h.snippet || h.content || "").slice(0, 160))}</div></div>`
           )
-          .join("") || '<div class="muted">No hits</div>';
+          .join("") || `<div class="empty">No hits.</div>`;
     } catch (err) {
       $("knowResults").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
     }
   };
 
-  // ---- Delegation ----
+  // ----- Delegation -----
   async function loadDelegations() {
+    if (!state.companyId) return;
     try {
-      const list = await api(`/companies/${state.companyId}/delegation-requests`);
+      const list = await api(`/companies/${state.companyId}/delegations`);
       $("delList").innerHTML =
-        list
+        (list || [])
           .map(
             (d) => `<div class="item">
-            <div class="row between">
-              <div>
-                <strong>${escapeHtml(d.title)}</strong>
-                <div class="meta">${d.status} · ${escapeHtml(d.capability)} · ${d.id}</div>
-              </div>
-              ${
-                d.status === "pending" || d.status === "accepted"
-                  ? `<button class="secondary" data-exec-del="${d.id}">Execute</button>`
-                  : ""
-              }
-            </div>
-            ${
-              d.result
-                ? `<pre class="log" style="max-height:100px">${escapeHtml(
-                    String(d.result).slice(0, 500)
-                  )}</pre>`
-                : ""
-            }
-          </div>`
-          )
-          .join("") || '<div class="muted">No delegations</div>';
-      $("delList").querySelectorAll("[data-exec-del]").forEach((btn) => {
-        btn.onclick = async () => {
-          try {
-            await api(
-              `/companies/${state.companyId}/delegation-requests/${btn.dataset.execDel}/execute`,
-              { method: "POST", body: JSON.stringify({ mode: "consult" }) }
-            );
-            loadDelegations();
-          } catch (err) {
-            alert(err.message);
+          <strong>${escapeHtml(d.title || d.id)}</strong>
+          <div class="meta">${escapeHtml(d.status)} · ${escapeHtml(d.capability || "")}</div>
+          ${
+            d.status === "pending" || d.status === "accepted"
+              ? `<div class="actions"><button class="primary btn-exd" data-id="${d.id}">Execute</button></div>`
+              : ""
           }
+        </div>`
+          )
+          .join("") || `<div class="empty">No delegations.</div>`;
+      document.querySelectorAll(".btn-exd").forEach((b) => {
+        b.onclick = async () => {
+          await api(`/companies/${state.companyId}/delegations/${b.dataset.id}/execute`, {
+            method: "POST",
+            body: "{}",
+          });
+          loadDelegations();
         };
       });
     } catch (err) {
@@ -881,7 +907,7 @@
   $("btnRefreshDel").onclick = loadDelegations;
   $("btnCreateDel").onclick = async () => {
     try {
-      await api(`/companies/${state.companyId}/delegation-requests`, {
+      await api(`/companies/${state.companyId}/delegations`, {
         method: "POST",
         body: JSON.stringify({
           source_agent_instance_id: $("delSource").value,
@@ -892,38 +918,27 @@
         }),
       });
       loadDelegations();
-      refreshInboxBadge();
     } catch (err) {
       alert(err.message);
     }
   };
 
-  // ---- Automation ----
+  // ----- Automation -----
   async function loadAutomations() {
+    if (!state.companyId) return;
     try {
-      const [rules, runs] = await Promise.all([
-        api(`/companies/${state.companyId}/automations`),
-        api(`/companies/${state.companyId}/automations/runs`),
-      ]);
-      $("autoRules").innerHTML =
-        rules
+      const list = await api(`/companies/${state.companyId}/automations`);
+      $("autoList").innerHTML =
+        (list || [])
           .map(
-            (r) =>
-              `<div class="item"><strong>${escapeHtml(r.name)}</strong>
-               <div class="meta">${r.trigger_type} · ${r.event_type || "interval " + r.interval_seconds} · ${r.is_active ? "active" : "off"}</div></div>`
+            (r) => `<div class="item">
+          <strong>${escapeHtml(r.name || r.id)}</strong>
+          <div class="meta">${escapeHtml(r.trigger_type || "")} · ${escapeHtml(r.is_active ? "active" : "off")}</div>
+        </div>`
           )
-          .join("") || '<div class="muted">No rules</div>';
-      $("autoRuns").innerHTML =
-        runs
-          .slice(0, 15)
-          .map(
-            (r) =>
-              `<div class="item"><strong>${r.status}</strong>
-               <div class="meta">attempt ${r.attempt} · ${escapeHtml(r.idempotency_key)} · task ${r.task_id || "-"}</div></div>`
-          )
-          .join("") || '<div class="muted">No runs</div>';
+          .join("") || `<div class="empty">No rules.</div>`;
     } catch (err) {
-      $("autoRules").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+      $("autoList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
     }
   }
   $("btnRefreshAuto").onclick = loadAutomations;
@@ -931,276 +946,185 @@
     try {
       const trigger = $("autoTrigger").value;
       const body = {
+        name: $("autoName").value.trim() || "Rule",
         agent_instance_id: $("autoAgent").value,
-        name: $("autoName").value.trim() || "Automation",
         trigger_type: trigger,
-        task_title_template: $("autoTitle").value.trim() || "Auto task",
-        task_instruction_template: $("autoInstruction").value.trim() || "Auto instruction",
-        task_mode: "consult",
+        task_title_template: $("autoTitleTpl").value.trim() || "Auto task",
+        task_instruction_template: $("autoInstrTpl").value.trim() || "Run automated work",
       };
-      if (trigger === "event") {
-        body.event_type = $("autoEvent").value.trim() || "sample.event";
-      } else {
-        body.interval_seconds = 3600;
-      }
+      if (trigger === "schedule") body.cron = $("autoExpr").value.trim() || "0 8 * * *";
+      else body.event_type = $("autoExpr").value.trim() || "demo.event";
       await api(`/companies/${state.companyId}/automations`, {
         method: "POST",
         body: JSON.stringify(body),
       });
-      $("autoLog").textContent = "Rule created.";
       loadAutomations();
     } catch (err) {
-      $("autoLog").textContent = err.message;
+      alert(err.message);
     }
   };
-  $("btnTickAuto").onclick = async () => {
-    try {
-      const runs = await api(`/companies/${state.companyId}/automations/tick`, {
-        method: "POST",
-      });
-      $("autoLog").textContent = "Tick: " + JSON.stringify(runs, null, 2);
-      loadAutomations();
-    } catch (err) {
-      $("autoLog").textContent = err.message;
-    }
-  };
-  $("btnFireEvent").onclick = async () => {
-    try {
-      const eventType = $("autoEvent").value.trim() || "sample.event";
-      const runs = await api(`/companies/${state.companyId}/automations/events`, {
-        method: "POST",
-        body: JSON.stringify({
-          event_type: eventType,
-          payload: { booking_id: "B-DEMO" },
-          idempotency_key: eventType + ":B-DEMO:" + Date.now(),
-        }),
-      });
-      $("autoLog").textContent = "Event: " + JSON.stringify(runs, null, 2);
-      loadAutomations();
-    } catch (err) {
-      $("autoLog").textContent = err.message;
-    }
-  };
+  if ($("btnTickAuto"))
+    $("btnTickAuto").onclick = async () => {
+      try {
+        await api(`/companies/${state.companyId}/automations/tick`, {
+          method: "POST",
+          body: "{}",
+        });
+        loadAutomations();
+      } catch (err) {
+        alert(err.message);
+      }
+    };
+  if ($("btnFireEvent"))
+    $("btnFireEvent").onclick = async () => {
+      try {
+        await api(`/companies/${state.companyId}/automations/events`, {
+          method: "POST",
+          body: JSON.stringify({
+            event_type: $("autoExpr").value.trim() || "demo.event",
+            payload: { booking_id: "B-DEMO" },
+          }),
+        });
+        loadAutomations();
+      } catch (err) {
+        alert(err.message);
+      }
+    };
 
-
+  // ----- Governance -----
   async function loadGovernance() {
+    if (!state.companyId) return;
     try {
-      const [ov, agents, exp, audit] = await Promise.all([
-        api(`/companies/${state.companyId}/governance/overview`),
-        api(`/companies/${state.companyId}/governance/agents`),
-        api(`/companies/${state.companyId}/governance/experiences`),
-        api(`/companies/${state.companyId}/governance/audit?limit=50`),
+      const [overview, agents, audit] = await Promise.all([
+        api(`/companies/${state.companyId}/governance/overview`).catch(() => null),
+        api(`/companies/${state.companyId}/governance/agents`).catch(() => []),
+        api(`/companies/${state.companyId}/governance/audit?limit=20`).catch(() => []),
       ]);
+      const o = overview || {};
       $("govStats").innerHTML = [
-        ["Agents", ov.workforce.agents_total],
-        ["Open tasks", ov.tasks.open],
-        ["Pending approvals", ov.approvals.pending],
-        ["Validated experiences", ov.experiences.validated],
+        ["Agents", o.agent_count ?? "—"],
+        ["Tasks", o.task_count ?? "—"],
+        ["Approvals", o.approval_count ?? "—"],
+        ["Experiences", o.experience_count ?? "—"],
       ]
         .map(
           ([l, n]) =>
-            `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`
+            `<div class="stat"><div class="n">${escapeHtml(String(n))}</div><div class="l">${l}</div></div>`
         )
         .join("");
       $("govAgents").innerHTML =
-        agents
+        (agents || [])
           .map(
             (a) =>
-              `<div class="item"><strong>${escapeHtml(a.name)}</strong>
-               <div class="meta">tasks ${a.tasks_total} · completed ${a.tasks_completed} · rate ${a.completion_rate}</div></div>`
+              `<div class="item">${escapeHtml(a.name || a.id)}<div class="meta">${escapeHtml(JSON.stringify(a).slice(0, 100))}</div></div>`
           )
-          .join("") || '<div class="muted">No agents</div>';
-      $("govExp").textContent = JSON.stringify(exp, null, 2);
-      $("govAudit").textContent = JSON.stringify(
-        { by_action: audit.by_action, recent: audit.recent },
-        null,
-        2
-      );
+          .join("") || `<div class="empty">No data</div>`;
+      $("govAudit").innerHTML =
+        (audit || [])
+          .map(
+            (a) =>
+              `<div class="item">${escapeHtml(a.action)}<div class="meta">${escapeHtml(a.status)} · ${escapeHtml(a.resource_type || "")}</div></div>`
+          )
+          .join("") || `<div class="empty">No audit rows</div>`;
     } catch (err) {
       $("govStats").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
     }
   }
-  const btnGov = $("btnRefreshGov");
-  if (btnGov) btnGov.onclick = loadGovernance;
+  if ($("btnRefreshGov")) $("btnRefreshGov").onclick = loadGovernance;
 
-
-  async function applyAuthSession(body) {
-    state.companyId = body.company_id;
-    state.userId = body.user_id;
-    state.accessToken = body.access_token || "";
-    $("companyId").value = state.companyId;
-    $("userId").value = state.userId;
-    localStorage.setItem("ws_companyId", state.companyId);
-    localStorage.setItem("ws_userId", state.userId);
-    localStorage.setItem("ws_accessToken", state.accessToken);
-    if (body.refresh_token) {
-      localStorage.setItem("ws_refreshToken", body.refresh_token);
-    }
-    setConnected(true);
-    await refreshInboxBadge();
-    showView("workforce");
-  }
-
-  const btnLogin = $("btnLogin");
-  if (btnLogin) {
-    btnLogin.onclick = async () => {
-      try {
-        const body = await api("/auth/login", {
-          method: "POST",
-          body: JSON.stringify({
-            company_id: $("companyId").value.trim(),
-            email: $("loginEmail").value.trim(),
-            password: $("loginPassword").value,
-          }),
-          skipAuth: true,
-        });
-        $("setupLog").textContent = "Login OK for " + body.email;
-        await applyAuthSession(body);
-      } catch (err) {
-        $("setupLog").textContent = "Login failed: " + err.message;
-      }
-    };
-  }
-  const btnRegister = $("btnRegister");
-  if (btnRegister) {
-    btnRegister.onclick = async () => {
-      try {
-        const body = await api("/auth/register", {
-          method: "POST",
-          body: JSON.stringify({
-            company_id: $("companyId").value.trim(),
-            email: $("loginEmail").value.trim(),
-            name: $("loginEmail").value.trim().split("@")[0] || "User",
-            password: $("loginPassword").value,
-            role: "member",
-          }),
-          skipAuth: true,
-        });
-        $("setupLog").textContent = "Registered " + body.email;
-        await applyAuthSession(body);
-      } catch (err) {
-        $("setupLog").textContent = "Register failed: " + err.message;
-      }
-    };
-  }
-
-
-
-  // Job 21 — Agent chat
+  // ----- Chat -----
   let chatConversationId = null;
 
   async function loadChat() {
-    try {
-      const agents = await api(`/companies/${state.companyId}/agents`);
-      const sel = $("chatAgent");
-      if (!sel) return;
-      sel.innerHTML = agents
-        .map((a) => `<option value="${a.id}">${a.name}</option>`)
-        .join("");
-    } catch (err) {
-      const log = $("chatLog");
-      if (log) log.textContent = err.message;
-    }
+    await loadAgentOptions();
   }
 
   async function refreshChatMessages() {
-    if (!chatConversationId) return;
-    const msgs = await api(
-      `/companies/${state.companyId}/conversations/${chatConversationId}/messages`
-    );
-    const thread = $("chatThread");
-    if (!thread) return;
-    thread.innerHTML = msgs
-      .map(
-        (m) =>
-          `<div class="list-item"><strong>${m.role}</strong><div>${String(
-            m.content || ""
-          ).replace(/</g, "&lt;")}</div><div class="muted">${m.created_at || ""}${
-            m.task_id ? " · task " + m.task_id : ""
-          }</div></div>`
-      )
-      .join("");
+    if (!chatConversationId || !state.companyId) return;
+    try {
+      const msgs = await api(
+        `/companies/${state.companyId}/conversations/${chatConversationId}/messages`
+      );
+      const thread = $("chatThread");
+      if (!thread) return;
+      thread.innerHTML =
+        (msgs || [])
+          .map((m) => {
+            const role = (m.role || "agent").toLowerCase();
+            const cls =
+              role === "human" || role === "user"
+                ? "human"
+                : role === "system"
+                  ? "system"
+                  : "agent";
+            return `<div class="bubble ${cls}"><div class="who">${escapeHtml(role)}</div>${escapeHtml(m.content || "")}</div>`;
+          })
+          .join("") || `<div class="empty">No messages yet. Say hello.</div>`;
+      thread.scrollTop = thread.scrollHeight;
+    } catch (err) {
+      const log = $("chatLog");
+      if (log) {
+        log.classList.remove("hidden-log");
+        log.textContent = err.message;
+      }
+    }
   }
 
-  (function wireChat() {
-    const start = $("btnChatStart");
-    if (start)
-      start.onclick = async () => {
-        try {
-          const agentId = $("chatAgent").value;
-          const title = ($("chatTitle") && $("chatTitle").value) || "Chat";
-          const conv = await api(`/companies/${state.companyId}/conversations`, {
-            method: "POST",
-            body: JSON.stringify({ agent_instance_id: agentId, title }),
-          });
-          chatConversationId = conv.id;
-          const meta = $("chatMeta");
-          if (meta) meta.textContent = "Conversation " + conv.id;
-          await refreshChatMessages();
-        } catch (err) {
-          const log = $("chatLog");
-          if (log) log.textContent = err.message;
-        }
-      };
-    const send = $("btnChatSend");
-    if (send)
-      send.onclick = async () => {
-        if (!chatConversationId) {
-          const log = $("chatLog");
-          if (log) log.textContent = "Start a conversation first.";
-          return;
-        }
-        try {
-          const content = ($("chatInput") && $("chatInput").value.trim()) || "";
-          if (!content) return;
-          await api(
-            `/companies/${state.companyId}/conversations/${chatConversationId}/messages`,
-            {
-              method: "POST",
-              body: JSON.stringify({
-                content,
-                create_task: !!(
-                  $("chatCreateTask") && $("chatCreateTask").checked
-                ),
-                task_mode:
-                  ($("chatTaskMode") && $("chatTaskMode").value) || "consult",
-              }),
-            }
-          );
-          if ($("chatInput")) $("chatInput").value = "";
-          await refreshChatMessages();
-        } catch (err) {
-          const log = $("chatLog");
-          if (log) log.textContent = err.message;
-        }
-      };
-    const ref = $("btnChatRefresh");
-    if (ref) ref.onclick = () => refreshChatMessages();
-  })();
+  $("btnChatStart").onclick = async () => {
+    try {
+      const agentId = $("chatAgent").value;
+      const title = $("chatTitle").value || "Chat";
+      const conv = await api(`/companies/${state.companyId}/conversations`, {
+        method: "POST",
+        body: JSON.stringify({ agent_instance_id: agentId, title }),
+      });
+      chatConversationId = conv.id;
+      $("chatMeta").textContent = "Conversation " + conv.id.slice(0, 8) + "…";
+      await refreshChatMessages();
+    } catch (err) {
+      const log = $("chatLog");
+      log.classList.remove("hidden-log");
+      log.textContent = err.message;
+    }
+  };
+
+  $("btnChatSend").onclick = async () => {
+    if (!chatConversationId) {
+      const log = $("chatLog");
+      log.classList.remove("hidden-log");
+      log.textContent = "Start a conversation first.";
+      return;
+    }
+    try {
+      const content = $("chatInput").value.trim();
+      if (!content) return;
+      await api(`/companies/${state.companyId}/conversations/${chatConversationId}/messages`, {
+        method: "POST",
+        body: JSON.stringify({
+          content,
+          create_task: !!$("chatCreateTask").checked,
+          task_mode: $("chatTaskMode").value || "consult",
+        }),
+      });
+      $("chatInput").value = "";
+      await refreshChatMessages();
+    } catch (err) {
+      const log = $("chatLog");
+      log.classList.remove("hidden-log");
+      log.textContent = err.message;
+    }
+  };
+
+  // ----- Boot -----
+  if ($("apiBase")) $("apiBase").value = state.apiBase;
+  if ($("companyId")) $("companyId").value = state.companyId;
+  if ($("userId")) $("userId").value = state.userId;
+  if ($("loginCompanyId")) $("loginCompanyId").value = state.companyId;
 
   if (state.companyId && state.userId) {
-    $("btnConnect").click();
+    setConnected(true);
+    refreshInboxBadge().then(() => showView("home"));
+  } else {
+    setConnected(false);
   }
 })();
-
-
-
-  // Job 20 — notification controls
-  document.addEventListener("DOMContentLoaded", () => {
-    const r = $("btnNotifRefresh");
-    if (r) r.onclick = () => loadNotifications();
-    const a = $("btnNotifReadAll");
-    if (a)
-      a.onclick = async () => {
-        if (!state.companyId) return;
-        await api(`/companies/${state.companyId}/notifications/read-all`, {
-          method: "POST",
-          body: "{}",
-        });
-        await loadNotifications();
-        await refreshInboxBadge();
-      };
-  });
-
-
-  // 

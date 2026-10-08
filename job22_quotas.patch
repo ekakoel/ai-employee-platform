@@ -1,0 +1,665 @@
+diff --git a/app/api/routes.py b/app/api/routes.py
+index 48a576f..e47d94d 100644
+--- a/app/api/routes.py
++++ b/app/api/routes.py
+@@ -285,6 +285,8 @@ def create_company(
+ 
+     try:
+         db.flush()
++        from app.services.quotas import get_or_assign_plan
++        get_or_assign_plan(db, company.id)
+     except IntegrityError as exc:
+         db.rollback()
+ 
+@@ -491,6 +493,9 @@ def hire_agent(
+         "agent.hire",
+     )
+ 
++    from app.services.quotas import enforce_agent_quota
++    enforce_agent_quota(db, company_id)
++
+     catalog = db.get(
+         AgentCatalog,
+         catalog_agent_id,
+@@ -2661,6 +2666,64 @@ def post_message_api(
+         task_id=task.id if task else None,
+     )
+ 
++
++@router.get("/plans")
++def list_plans(db: Session = Depends(get_db)):
++    from app.services.quotas import seed_default_plans
++    from app.models.entities import Plan
++    seed_default_plans(db)
++    db.commit()
++    plans = list(db.scalars(select(Plan).where(Plan.is_active.is_(True)).order_by(Plan.code)).all())
++    return [
++        {
++            "id": p.id,
++            "code": p.code,
++            "name": p.name,
++            "description": p.description,
++            "max_agents": p.max_agents,
++            "max_tasks_day": p.max_tasks_day,
++            "max_automations": p.max_automations,
++            "max_llm_calls_day": p.max_llm_calls_day,
++        }
++        for p in plans
++    ]
++
++
++@router.get("/companies/{company_id}/usage")
++def get_company_usage(
++    company_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    from app.services.quotas import usage_summary
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "agent.read")
++    summary = usage_summary(db, company_id)
++    db.commit()
++    return summary
++
++
++@router.put("/companies/{company_id}/plan")
++def set_company_plan_api(
++    company_id: str,
++    payload: dict,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    """Assign plan by code (owner/admin). No payment gateway yet."""
++    from app.services.quotas import set_company_plan, usage_summary
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "team.manage")
++    code = str(payload.get("plan_code") or payload.get("code") or "").strip()
++    if not code:
++        raise HTTPException(status_code=400, detail="plan_code required")
++    try:
++        set_company_plan(db, company_id, code)
++    except ValueError as exc:
++        raise HTTPException(status_code=404, detail=str(exc)) from exc
++    db.commit()
++    return usage_summary(db, company_id)
++
+ @router.get("/tools")
+ def list_platform_tools():
+     """Job 19 — global tool catalog (metadata: side_effect, risk)."""
+@@ -2758,6 +2821,9 @@ def create_task(
+         agent_instance_id=agent.id,
+     )
+ 
++    from app.services.quotas import enforce_task_quota, record_task_created
++    enforce_task_quota(db, company_id)
++
+     data = payload.model_dump()
+     check_scope_flag = bool(data.pop("check_scope", False))
+     auto_delegate_flag = bool(data.pop("auto_delegate", False))
+@@ -2795,6 +2861,8 @@ def create_task(
+             block_out_of_scope=block_oos,
+         )
+ 
++    record_task_created(db, company_id)
++
+     db.commit()
+     db.refresh(task)
+ 
+@@ -3229,6 +3297,9 @@ def create_automation_rule(
+     require_permission(user, "agent.manage")
+     agent = get_owned_agent_or_404(db, company_id, payload.agent_instance_id)
+ 
++    from app.services.quotas import enforce_automation_quota
++    enforce_automation_quota(db, company_id)
++
+     if payload.trigger_type == "schedule":
+         if not payload.interval_seconds:
+             raise HTTPException(
+diff --git a/app/models/__init__.py b/app/models/__init__.py
+index 31f37e4..98bb69b 100644
+--- a/app/models/__init__.py
++++ b/app/models/__init__.py
+@@ -1,4 +1,7 @@
+ from app.models.entities import (
++    Plan,
++    CompanyPlanSubscription,
++    UsageCounter,
+     Conversation,
+     ConversationStatus,
+     Message,
+@@ -38,6 +41,9 @@ from app.models.entities import (
+ )
+ 
+ __all__ = [
++    "Plan",
++    "CompanyPlanSubscription",
++    "UsageCounter",
+     "Conversation",
+     "ConversationStatus",
+     "Message",
+diff --git a/app/models/entities.py b/app/models/entities.py
+index 577fc15..aa3123c 100644
+--- a/app/models/entities.py
++++ b/app/models/entities.py
+@@ -986,6 +986,84 @@ class Message(Base):
+ 
+     conversation: Mapped[Conversation] = relationship(back_populates="messages")
+ 
++
++
++class Plan(Base):
++    """SaaS plan with quota limits (Job 22)."""
++
++    __tablename__ = "plans"
++
++    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
++    code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
++    name: Mapped[str] = mapped_column(String(200), nullable=False)
++    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
++    max_agents: Mapped[int] = mapped_column(default=5, nullable=False)
++    max_tasks_day: Mapped[int] = mapped_column(default=100, nullable=False)
++    max_automations: Mapped[int] = mapped_column(default=10, nullable=False)
++    max_llm_calls_day: Mapped[int] = mapped_column(default=500, nullable=False)
++    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), default=utcnow, nullable=False
++    )
++
++
++class CompanyPlanSubscription(Base):
++    """Company assigned to a Plan."""
++
++    __tablename__ = "company_plan_subscriptions"
++    __table_args__ = (
++        UniqueConstraint("company_id", name="uq_company_plan_sub"),
++    )
++
++    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
++    company_id: Mapped[str] = mapped_column(
++        ForeignKey("companies.id", ondelete="CASCADE"),
++        nullable=False,
++        index=True,
++    )
++    plan_id: Mapped[str] = mapped_column(
++        ForeignKey("plans.id"),
++        nullable=False,
++        index=True,
++    )
++    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
++    started_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), default=utcnow, nullable=False
++    )
++    ends_at: Mapped[datetime | None] = mapped_column(
++        DateTime(timezone=True), nullable=True
++    )
++
++    plan: Mapped[Plan] = relationship()
++    company: Mapped[Company] = relationship()
++
++
++class UsageCounter(Base):
++    """Daily usage counters per company (Job 22)."""
++
++    __tablename__ = "usage_counters"
++    __table_args__ = (
++        UniqueConstraint(
++            "company_id",
++            "metric",
++            "period_date",
++            name="uq_usage_company_metric_day",
++        ),
++    )
++
++    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
++    company_id: Mapped[str] = mapped_column(
++        ForeignKey("companies.id", ondelete="CASCADE"),
++        nullable=False,
++        index=True,
++    )
++    metric: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
++    period_date: Mapped[str] = mapped_column(String(10), nullable=False, index=True)  # YYYY-MM-DD
++    count: Mapped[int] = mapped_column(default=0, nullable=False)
++    updated_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
++    )
++
+ class Policy(Base):
+     __tablename__ = "policies"
+ 
+diff --git a/app/services/quotas.py b/app/services/quotas.py
+new file mode 100644
+index 0000000..ee221f4
+--- /dev/null
++++ b/app/services/quotas.py
+@@ -0,0 +1,261 @@
++"""Job 22 — Plans, quotas, and usage metering."""
++
++from __future__ import annotations
++
++from datetime import date, datetime, timezone
++
++from fastapi import HTTPException
++from sqlalchemy import func, select
++from sqlalchemy.orm import Session
++
++from app.models.entities import (
++    AgentInstance,
++    AgentStatus,
++    AutomationRule,
++    CompanyPlanSubscription,
++    Plan,
++    Task,
++    UsageCounter,
++)
++
++METRIC_TASKS = "tasks"
++METRIC_LLM = "llm_calls"
++
++
++def _today() -> str:
++    return date.today().isoformat()
++
++
++def seed_default_plans(db: Session) -> None:
++    """Ensure free / pro plans exist."""
++    defaults = [
++        {
++            "code": "free",
++            "name": "Free",
++            "description": "Starter quotas for evaluation",
++            "max_agents": 3,
++            "max_tasks_day": 50,
++            "max_automations": 5,
++            "max_llm_calls_day": 200,
++        },
++        {
++            "code": "pro",
++            "name": "Pro",
++            "description": "Higher limits for production teams",
++            "max_agents": 25,
++            "max_tasks_day": 1000,
++            "max_automations": 100,
++            "max_llm_calls_day": 10000,
++        },
++        {
++            "code": "enterprise",
++            "name": "Enterprise",
++            "description": "Large org limits",
++            "max_agents": 500,
++            "max_tasks_day": 50000,
++            "max_automations": 2000,
++            "max_llm_calls_day": 500000,
++        },
++    ]
++    for d in defaults:
++        existing = db.scalar(select(Plan).where(Plan.code == d["code"]))
++        if existing:
++            continue
++        db.add(Plan(**d))
++    db.flush()
++
++
++def get_or_assign_plan(db: Session, company_id: str) -> tuple[Plan, CompanyPlanSubscription]:
++    """Return company's plan; assign free plan if missing."""
++    seed_default_plans(db)
++    sub = db.scalar(
++        select(CompanyPlanSubscription).where(
++            CompanyPlanSubscription.company_id == company_id,
++            CompanyPlanSubscription.status == "active",
++        )
++    )
++    if sub:
++        plan = db.get(Plan, sub.plan_id)
++        if plan:
++            return plan, sub
++    free = db.scalar(select(Plan).where(Plan.code == "free"))
++    if not free:
++        raise RuntimeError("Free plan missing after seed")
++    sub = CompanyPlanSubscription(
++        company_id=company_id,
++        plan_id=free.id,
++        status="active",
++    )
++    db.add(sub)
++    db.flush()
++    return free, sub
++
++
++def set_company_plan(db: Session, company_id: str, plan_code: str) -> CompanyPlanSubscription:
++    seed_default_plans(db)
++    plan = db.scalar(select(Plan).where(Plan.code == plan_code, Plan.is_active.is_(True)))
++    if not plan:
++        raise ValueError(f"Plan '{plan_code}' not found")
++    sub = db.scalar(
++        select(CompanyPlanSubscription).where(
++            CompanyPlanSubscription.company_id == company_id
++        )
++    )
++    if sub:
++        sub.plan_id = plan.id
++        sub.status = "active"
++        sub.started_at = datetime.now(timezone.utc)
++    else:
++        sub = CompanyPlanSubscription(
++            company_id=company_id,
++            plan_id=plan.id,
++            status="active",
++        )
++        db.add(sub)
++    db.flush()
++    return sub
++
++
++def get_usage(db: Session, company_id: str, metric: str, period: str | None = None) -> int:
++    period = period or _today()
++    row = db.scalar(
++        select(UsageCounter).where(
++            UsageCounter.company_id == company_id,
++            UsageCounter.metric == metric,
++            UsageCounter.period_date == period,
++        )
++    )
++    return int(row.count) if row else 0
++
++
++def increment_usage(
++    db: Session,
++    company_id: str,
++    metric: str,
++    by: int = 1,
++) -> int:
++    period = _today()
++    row = db.scalar(
++        select(UsageCounter).where(
++            UsageCounter.company_id == company_id,
++            UsageCounter.metric == metric,
++            UsageCounter.period_date == period,
++        )
++    )
++    if row:
++        row.count = int(row.count) + by
++        db.flush()
++        return int(row.count)
++    row = UsageCounter(
++        company_id=company_id,
++        metric=metric,
++        period_date=period,
++        count=by,
++    )
++    db.add(row)
++    db.flush()
++    return by
++
++
++def count_active_agents(db: Session, company_id: str) -> int:
++    return int(
++        db.scalar(
++            select(func.count())
++            .select_from(AgentInstance)
++            .where(
++                AgentInstance.company_id == company_id,
++                AgentInstance.status == AgentStatus.ACTIVE.value,
++            )
++        )
++        or 0
++    )
++
++
++def count_automations(db: Session, company_id: str) -> int:
++    return int(
++        db.scalar(
++            select(func.count())
++            .select_from(AutomationRule)
++            .where(AutomationRule.company_id == company_id)
++        )
++        or 0
++    )
++
++
++def enforce_agent_quota(db: Session, company_id: str) -> None:
++    plan, _ = get_or_assign_plan(db, company_id)
++    used = count_active_agents(db, company_id)
++    if used >= plan.max_agents:
++        raise HTTPException(
++            status_code=429,
++            detail={
++                "error": "quota_exceeded",
++                "metric": "max_agents",
++                "limit": plan.max_agents,
++                "used": used,
++                "plan": plan.code,
++            },
++        )
++
++
++def enforce_task_quota(db: Session, company_id: str) -> None:
++    plan, _ = get_or_assign_plan(db, company_id)
++    used = get_usage(db, company_id, METRIC_TASKS)
++    if used >= plan.max_tasks_day:
++        raise HTTPException(
++            status_code=429,
++            detail={
++                "error": "quota_exceeded",
++                "metric": "max_tasks_day",
++                "limit": plan.max_tasks_day,
++                "used": used,
++                "plan": plan.code,
++            },
++        )
++
++
++def enforce_automation_quota(db: Session, company_id: str) -> None:
++    plan, _ = get_or_assign_plan(db, company_id)
++    used = count_automations(db, company_id)
++    if used >= plan.max_automations:
++        raise HTTPException(
++            status_code=429,
++            detail={
++                "error": "quota_exceeded",
++                "metric": "max_automations",
++                "limit": plan.max_automations,
++                "used": used,
++                "plan": plan.code,
++            },
++        )
++
++
++def record_task_created(db: Session, company_id: str) -> None:
++    increment_usage(db, company_id, METRIC_TASKS)
++
++
++def record_llm_call(db: Session, company_id: str) -> None:
++    """Stub counter for future LLM metering."""
++    increment_usage(db, company_id, METRIC_LLM)
++
++
++def usage_summary(db: Session, company_id: str) -> dict:
++    plan, sub = get_or_assign_plan(db, company_id)
++    return {
++        "plan": {
++            "code": plan.code,
++            "name": plan.name,
++            "max_agents": plan.max_agents,
++            "max_tasks_day": plan.max_tasks_day,
++            "max_automations": plan.max_automations,
++            "max_llm_calls_day": plan.max_llm_calls_day,
++        },
++        "subscription_id": sub.id,
++        "usage": {
++            "agents": count_active_agents(db, company_id),
++            "tasks_today": get_usage(db, company_id, METRIC_TASKS),
++            "automations": count_automations(db, company_id),
++            "llm_calls_today": get_usage(db, company_id, METRIC_LLM),
++        },
++        "period_date": _today(),
++    }
+diff --git a/tests/test_quotas_job22.py b/tests/test_quotas_job22.py
+new file mode 100644
+index 0000000..cb81cf6
+--- /dev/null
++++ b/tests/test_quotas_job22.py
+@@ -0,0 +1,164 @@
++"""Job 22 — Plans, quotas, usage metering tests."""
++
++import pytest
++from fastapi.testclient import TestClient
++from sqlalchemy import create_engine
++from sqlalchemy.orm import sessionmaker
++
++from app.core.database import Base, get_db
++from app.main import app
++from app.services.quotas import set_company_plan
++from app.services.seed import seed_catalog
++
++engine = create_engine(
++    "sqlite:///./test_quotas_job22.db",
++    connect_args={"check_same_thread": False},
++)
++SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
++
++
++@pytest.fixture()
++def client():
++    Base.metadata.drop_all(bind=engine)
++    Base.metadata.create_all(bind=engine)
++    with SessionLocal() as db:
++        seed_catalog(db)
++
++    def override():
++        db = SessionLocal()
++        try:
++            yield db
++        finally:
++            db.close()
++
++    app.dependency_overrides[get_db] = override
++    with TestClient(app) as c:
++        yield c
++    app.dependency_overrides.pop(get_db, None)
++
++
++def setup(client):
++    co = client.post("/api/v1/companies", json={"name": "Quota Co"}).json()
++    owner = client.post(
++        f"/api/v1/companies/{co['id']}/users",
++        json={
++            "name": "Owner",
++            "email": "quota@test.local",
++            "role": "owner",
++            "password": "secret123",
++        },
++    ).json()
++    headers = {"X-User-ID": owner["id"]}
++    return co["id"], headers
++
++
++def test_list_plans_and_default_usage(client):
++    company_id, headers = setup(client)
++    plans = client.get("/api/v1/plans")
++    assert plans.status_code == 200
++    codes = {p["code"] for p in plans.json()}
++    assert "free" in codes
++    assert "pro" in codes
++
++    usage = client.get(
++        f"/api/v1/companies/{company_id}/usage",
++        headers=headers,
++    )
++    assert usage.status_code == 200
++    body = usage.json()
++    assert body["plan"]["code"] == "free"
++    assert body["usage"]["agents"] == 0
++
++
++def test_agent_quota_exceeded(client):
++    company_id, headers = setup(client)
++    # free max_agents=3 — hire until blocked
++    catalog = client.get("/api/v1/agent-catalog").json()
++    res = next(i for i in catalog if i["slug"] == "reservation")
++    for i in range(3):
++        r = client.post(
++            f"/api/v1/companies/{company_id}/agents/{res['id']}/hire",
++            json={"name": f"Agent {i}"},
++            headers=headers,
++        )
++        assert r.status_code == 201, r.text
++    blocked = client.post(
++        f"/api/v1/companies/{company_id}/agents/{res['id']}/hire",
++        json={"name": "Agent over"},
++        headers=headers,
++    )
++    assert blocked.status_code == 429
++    detail = blocked.json()["detail"]
++    assert detail["error"] == "quota_exceeded"
++    assert detail["metric"] == "max_agents"
++
++
++def test_task_quota_and_upgrade_plan(client):
++    company_id, headers = setup(client)
++    catalog = client.get("/api/v1/agent-catalog").json()
++    res = next(i for i in catalog if i["slug"] == "reservation")
++    hire = client.post(
++        f"/api/v1/companies/{company_id}/agents/{res['id']}/hire",
++        json={"name": "Desk"},
++        headers=headers,
++    )
++    agent_id = hire.json()["id"]
++
++    # shrink free plan tasks for test via direct set + low limit plan
++    # use free plan but set max via assign and manual - create many tasks up to limit is slow
++    # instead: set plan and force usage by creating tasks equal to limit
++    # Assign enterprise then we won't hit - assign free and temporarily lower by API not available
++    # Simpler: create tasks until free max_tasks_day (50) is heavy - instead patch plan in DB
++    with SessionLocal() as db:
++        from app.models.entities import Plan
++        from sqlalchemy import select
++        free = db.scalar(select(Plan).where(Plan.code == "free"))
++        free.max_tasks_day = 2
++        db.commit()
++
++    for i in range(2):
++        t = client.post(
++            f"/api/v1/companies/{company_id}/tasks",
++            headers=headers,
++            json={
++                "agent_instance_id": agent_id,
++                "title": f"T{i}",
++                "instruction": "do",
++                "mode": "consult",
++            },
++        )
++        assert t.status_code == 201, t.text
++
++    blocked = client.post(
++        f"/api/v1/companies/{company_id}/tasks",
++        headers=headers,
++        json={
++            "agent_instance_id": agent_id,
++            "title": "T over",
++            "instruction": "do",
++            "mode": "consult",
++        },
++    )
++    assert blocked.status_code == 429
++    assert blocked.json()["detail"]["metric"] == "max_tasks_day"
++
++    # upgrade to pro
++    up = client.put(
++        f"/api/v1/companies/{company_id}/plan",
++        headers=headers,
++        json={"plan_code": "pro"},
++    )
++    assert up.status_code == 200
++    assert up.json()["plan"]["code"] == "pro"
++
++    ok = client.post(
++        f"/api/v1/companies/{company_id}/tasks",
++        headers=headers,
++        json={
++            "agent_instance_id": agent_id,
++            "title": "After upgrade",
++            "instruction": "do",
++            "mode": "consult",
++        },
++    )
++    assert ok.status_code == 201

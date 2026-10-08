@@ -1,0 +1,1067 @@
+diff --git a/app/agents/context.py b/app/agents/context.py
+index 88615d9..19d8f01 100644
+--- a/app/agents/context.py
++++ b/app/agents/context.py
+@@ -36,6 +36,8 @@ class AgentContext:
+ 
+     configuration: dict[str, Any] = field(default_factory=dict)
+     assigned_skills: list[dict[str, Any]] = field(default_factory=list)
++    memories: list[dict[str, Any]] = field(default_factory=list)
++    retrieved_knowledge: list[dict[str, Any]] = field(default_factory=list)
+ 
+     def to_dict(self) -> dict[str, Any]:
+         return {
+@@ -58,6 +60,8 @@ class AgentContext:
+             "knowledge": list(self.knowledge),
+             "configuration": dict(self.configuration),
+             "skills_detail": list(self.assigned_skills),
++            "memories": list(self.memories),
++            "retrieved_knowledge": list(self.retrieved_knowledge),
+         }
+ 
+ 
+@@ -159,6 +163,37 @@ def load_agent_context(
+     if agent.template_version:
+         configuration.setdefault("template_version", agent.template_version)
+ 
++    from app.knowledge.retrieval import (
++        active_agent_memories,
++        search_knowledge_chunks,
++    )
++
++    memory_rows = active_agent_memories(
++        db,
++        company_id=agent.company_id,
++        agent_instance_id=agent.id,
++        limit=10,
++    )
++    memories = [
++        {
++            "id": m.id,
++            "title": m.title,
++            "content": m.content,
++            "category": m.category,
++        }
++        for m in memory_rows
++    ]
++
++    retrieved_knowledge: list[dict[str, Any]] = []
++    if task is not None and task.instruction:
++        retrieved_knowledge = search_knowledge_chunks(
++            db,
++            company_id=agent.company_id,
++            agent_instance_id=agent.id,
++            query=f"{task.title or ''} {task.instruction}",
++            limit=5,
++        )
++
+     return AgentContext(
+         company_id=agent.company_id,
+         company_name=agent.company.name,
+@@ -181,4 +216,6 @@ def load_agent_context(
+         ],
+         configuration=configuration,
+         assigned_skills=assigned_skills,
++        memories=memories,
++        retrieved_knowledge=retrieved_knowledge,
+     )
+diff --git a/app/api/routes.py b/app/api/routes.py
+index 63dd30b..e5cd23e 100644
+--- a/app/api/routes.py
++++ b/app/api/routes.py
+@@ -7,21 +7,28 @@ from sqlalchemy.orm import Session
+ 
+ from app.core.database import get_db
+ from app.knowledge.service import save_document
++from app.knowledge.indexing import replace_chunks_for_item, replace_chunks_for_document
++from app.knowledge.retrieval import (
++    active_agent_memories,
++    search_knowledge_chunks,
++    search_knowledge_items,
++)
+ from app.models import (
+     AgentAccess,
+-    AgentSkill,
+     AgentCatalog,
+     AgentInstance,
++    AgentMemory,
++    AgentSkill,
+     AgentSubscription,
+     Approval,
+     AuditLog,
+     Company,
++    KnowledgeChunk,
+     KnowledgeItem,
+     Policy,
+     Skill,
+     Task,
+     User,
+-    User,
+ )
+ from app.models.entities import TaskStatus
+ from app.runtime.tool_executor import ToolExecutionError, ToolExecutor
+@@ -36,6 +43,11 @@ from app.schemas.domain import (
+     PolicyCreate,
+     PolicyRead,
+     PolicyUpdate,
++    AgentMemoryCreate,
++    AgentMemoryRead,
++    AgentMemoryUpdate,
++    KnowledgeSearchRequest,
++    KnowledgeSearchHit,
+     AgentCatalogRead,
+     AgentInstanceRead,
+     AgentInstanceUpdate,
+@@ -1210,6 +1222,196 @@ def delete_company_policy(
+     return None
+ 
+ 
++
++
++@router.post(
++    "/companies/{company_id}/knowledge/search",
++    response_model=list[KnowledgeSearchHit],
++)
++def search_company_knowledge(
++    company_id: str,
++    payload: KnowledgeSearchRequest,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++    agent_instance_id: str | None = None,
++):
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "knowledge.read")
++
++    hits = search_knowledge_chunks(
++        db,
++        company_id=company_id,
++        agent_instance_id=agent_instance_id,
++        query=payload.query,
++        limit=payload.limit,
++    )
++    if len(hits) < payload.limit:
++        items = search_knowledge_items(
++            db,
++            company_id=company_id,
++            agent_instance_id=agent_instance_id,
++            query=payload.query,
++            limit=payload.limit - len(hits),
++        )
++        hits.extend(items)
++    return hits
++
++
++@router.get(
++    "/companies/{company_id}/agents/{agent_instance_id}/memories",
++    response_model=list[AgentMemoryRead],
++)
++def list_agent_memories(
++    company_id: str,
++    agent_instance_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    user = require_company_user(db, company_id, x_user_id)
++    get_owned_agent_or_404(db, company_id, agent_instance_id)
++    require_permission(user, "agent.read")
++    return active_agent_memories(
++        db, company_id=company_id, agent_instance_id=agent_instance_id, limit=50
++    )
++
++
++@router.post(
++    "/companies/{company_id}/agents/{agent_instance_id}/memories",
++    response_model=AgentMemoryRead,
++    status_code=status.HTTP_201_CREATED,
++)
++def create_agent_memory(
++    company_id: str,
++    agent_instance_id: str,
++    payload: AgentMemoryCreate,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    user = require_company_user(db, company_id, x_user_id)
++    agent = get_owned_agent_or_404(db, company_id, agent_instance_id)
++    require_agent_manage(
++        db, user, company_id=company_id, agent_instance_id=agent.id
++    )
++
++    memory = AgentMemory(
++        company_id=company_id,
++        agent_instance_id=agent.id,
++        title=payload.title,
++        content=payload.content,
++        category=payload.category,
++        source_task_id=payload.source_task_id,
++        expires_at=payload.expires_at,
++        is_active=True,
++    )
++    db.add(memory)
++    db.flush()
++    record_audit(
++        db,
++        company_id=company_id,
++        user_id=user.id,
++        agent_instance_id=agent.id,
++        task_id=payload.source_task_id,
++        action="memory.create",
++        resource_type="agent_memory",
++        resource_id=memory.id,
++        status="success",
++    )
++    db.commit()
++    db.refresh(memory)
++    return memory
++
++
++@router.patch(
++    "/companies/{company_id}/agents/{agent_instance_id}/memories/{memory_id}",
++    response_model=AgentMemoryRead,
++)
++def update_agent_memory(
++    company_id: str,
++    agent_instance_id: str,
++    memory_id: str,
++    payload: AgentMemoryUpdate,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    user = require_company_user(db, company_id, x_user_id)
++    agent = get_owned_agent_or_404(db, company_id, agent_instance_id)
++    require_agent_manage(
++        db, user, company_id=company_id, agent_instance_id=agent.id
++    )
++
++    memory = db.scalar(
++        select(AgentMemory).where(
++            AgentMemory.id == memory_id,
++            AgentMemory.company_id == company_id,
++            AgentMemory.agent_instance_id == agent_instance_id,
++        )
++    )
++    if not memory:
++        raise HTTPException(status_code=404, detail="Memory not found")
++
++    data = payload.model_dump(exclude_unset=True)
++    for key, value in data.items():
++        setattr(memory, key, value)
++
++    record_audit(
++        db,
++        company_id=company_id,
++        user_id=user.id,
++        agent_instance_id=agent.id,
++        action="memory.update",
++        resource_type="agent_memory",
++        resource_id=memory.id,
++        status="success",
++        details=data,
++    )
++    db.commit()
++    db.refresh(memory)
++    return memory
++
++
++@router.delete(
++    "/companies/{company_id}/agents/{agent_instance_id}/memories/{memory_id}",
++    status_code=status.HTTP_204_NO_CONTENT,
++)
++def delete_agent_memory(
++    company_id: str,
++    agent_instance_id: str,
++    memory_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    user = require_company_user(db, company_id, x_user_id)
++    agent = get_owned_agent_or_404(db, company_id, agent_instance_id)
++    require_agent_manage(
++        db, user, company_id=company_id, agent_instance_id=agent.id
++    )
++
++    memory = db.scalar(
++        select(AgentMemory).where(
++            AgentMemory.id == memory_id,
++            AgentMemory.company_id == company_id,
++            AgentMemory.agent_instance_id == agent_instance_id,
++        )
++    )
++    if not memory:
++        raise HTTPException(status_code=404, detail="Memory not found")
++
++    # soft delete via lifecycle
++    memory.is_active = False
++    record_audit(
++        db,
++        company_id=company_id,
++        user_id=user.id,
++        agent_instance_id=agent.id,
++        action="memory.deactivate",
++        resource_type="agent_memory",
++        resource_id=memory.id,
++        status="success",
++    )
++    db.commit()
++    return None
++
++
+ @router.post(
+     "/companies/{company_id}/knowledge",
+     response_model=KnowledgeRead,
+@@ -1246,6 +1448,7 @@ def create_knowledge(
+ 
+     db.add(item)
+     db.flush()
++    replace_chunks_for_item(db, item)
+ 
+     record_audit(
+         db,
+@@ -1303,6 +1506,7 @@ def create_agent_knowledge(
+ 
+     db.add(item)
+     db.flush()
++    replace_chunks_for_item(db, item)
+ 
+     record_audit(
+         db,
+diff --git a/app/knowledge/chunking.py b/app/knowledge/chunking.py
+new file mode 100644
+index 0000000..6aa25ef
+--- /dev/null
++++ b/app/knowledge/chunking.py
+@@ -0,0 +1,67 @@
++"""Simple text chunking — no vector DB required for Phase 6."""
++
++from __future__ import annotations
++
++
++def chunk_text(
++    text: str,
++    *,
++    max_chars: int = 800,
++    overlap: int = 100,
++) -> list[str]:
++    """
++    Split text into overlapping chunks by character budget.
++
++    Prefers paragraph boundaries when possible.
++    """
++    cleaned = (text or "").strip()
++    if not cleaned:
++        return []
++
++    if len(cleaned) <= max_chars:
++        return [cleaned]
++
++    paragraphs = [p.strip() for p in cleaned.split("\n\n") if p.strip()]
++    if not paragraphs:
++        paragraphs = [cleaned]
++
++    chunks: list[str] = []
++    current = ""
++
++    for para in paragraphs:
++        if not current:
++            current = para
++            continue
++        if len(current) + 2 + len(para) <= max_chars:
++            current = current + "\n\n" + para
++        else:
++            chunks.append(current)
++            # overlap tail
++            if overlap > 0 and len(current) > overlap:
++                current = current[-overlap:] + "\n\n" + para
++            else:
++                current = para
++
++    if current:
++        chunks.append(current)
++
++    # hard-split any oversized chunk
++    final: list[str] = []
++    for ch in chunks:
++        if len(ch) <= max_chars:
++            final.append(ch)
++            continue
++        start = 0
++        while start < len(ch):
++            end = min(start + max_chars, len(ch))
++            final.append(ch[start:end])
++            if end >= len(ch):
++                break
++            start = max(end - overlap, start + 1)
++
++    return final
++
++
++def estimate_tokens(text: str) -> int:
++    # rough heuristic ~4 chars per token
++    return max(1, len(text) // 4) if text else 0
+diff --git a/app/knowledge/indexing.py b/app/knowledge/indexing.py
+new file mode 100644
+index 0000000..aa68513
+--- /dev/null
++++ b/app/knowledge/indexing.py
+@@ -0,0 +1,74 @@
++"""Index knowledge items/documents into chunks."""
++
++from __future__ import annotations
++
++from sqlalchemy import select
++from sqlalchemy.orm import Session
++
++from app.knowledge.chunking import chunk_text, estimate_tokens
++from app.models.entities import KnowledgeChunk, KnowledgeDocument, KnowledgeItem
++
++
++def replace_chunks_for_item(db: Session, item: KnowledgeItem) -> list[KnowledgeChunk]:
++    existing = list(
++        db.scalars(
++            select(KnowledgeChunk).where(
++                KnowledgeChunk.knowledge_item_id == item.id
++            )
++        ).all()
++    )
++    for e in existing:
++        db.delete(e)
++    db.flush()
++
++    parts = chunk_text(item.content)
++    created: list[KnowledgeChunk] = []
++    for i, part in enumerate(parts):
++        chunk = KnowledgeChunk(
++            company_id=item.company_id,
++            agent_instance_id=item.agent_instance_id,
++            knowledge_item_id=item.id,
++            knowledge_document_id=None,
++            chunk_index=i,
++            content=part,
++            token_estimate=estimate_tokens(part),
++            is_active=item.is_active,
++        )
++        db.add(chunk)
++        created.append(chunk)
++    db.flush()
++    return created
++
++
++def replace_chunks_for_document(
++    db: Session, document: KnowledgeDocument
++) -> list[KnowledgeChunk]:
++    existing = list(
++        db.scalars(
++            select(KnowledgeChunk).where(
++                KnowledgeChunk.knowledge_document_id == document.id
++            )
++        ).all()
++    )
++    for e in existing:
++        db.delete(e)
++    db.flush()
++
++    text = document.extracted_text or ""
++    parts = chunk_text(text)
++    created: list[KnowledgeChunk] = []
++    for i, part in enumerate(parts):
++        chunk = KnowledgeChunk(
++            company_id=document.company_id,
++            agent_instance_id=document.agent_instance_id,
++            knowledge_item_id=None,
++            knowledge_document_id=document.id,
++            chunk_index=i,
++            content=part,
++            token_estimate=estimate_tokens(part),
++            is_active=True,
++        )
++        db.add(chunk)
++        created.append(chunk)
++    db.flush()
++    return created
+diff --git a/app/knowledge/retrieval.py b/app/knowledge/retrieval.py
+new file mode 100644
+index 0000000..7171cda
+--- /dev/null
++++ b/app/knowledge/retrieval.py
+@@ -0,0 +1,140 @@
++"""Keyword-based knowledge retrieval (Phase 6 baseline)."""
++
++from __future__ import annotations
++
++import re
++from datetime import datetime, timezone
++
++from sqlalchemy import or_, select
++from sqlalchemy.orm import Session
++
++from app.models.entities import AgentMemory, KnowledgeChunk, KnowledgeItem
++
++
++def _tokens(text: str) -> set[str]:
++    return {t for t in re.findall(r"[a-zA-Z0-9_]{2,}", (text or "").lower())}
++
++
++def score_text(query: str, content: str) -> float:
++    q = _tokens(query)
++    if not q:
++        return 0.0
++    c = _tokens(content)
++    if not c:
++        return 0.0
++    overlap = q & c
++    return len(overlap) / len(q)
++
++
++def search_knowledge_chunks(
++    db: Session,
++    *,
++    company_id: str,
++    agent_instance_id: str | None,
++    query: str,
++    limit: int = 5,
++) -> list[dict]:
++    rows = list(
++        db.scalars(
++            select(KnowledgeChunk).where(
++                KnowledgeChunk.company_id == company_id,
++                KnowledgeChunk.is_active.is_(True),
++                or_(
++                    KnowledgeChunk.agent_instance_id.is_(None),
++                    KnowledgeChunk.agent_instance_id == agent_instance_id,
++                ),
++            )
++        ).all()
++    )
++
++    scored = []
++    for row in rows:
++        s = score_text(query, row.content)
++        if s > 0:
++            scored.append((s, row))
++
++    scored.sort(key=lambda x: x[0], reverse=True)
++    results = []
++    for s, row in scored[:limit]:
++        results.append(
++            {
++                "id": row.id,
++                "content": row.content,
++                "score": round(s, 4),
++                "chunk_index": row.chunk_index,
++                "knowledge_item_id": row.knowledge_item_id,
++                "knowledge_document_id": row.knowledge_document_id,
++                "source": "chunk",
++            }
++        )
++    return results
++
++
++def search_knowledge_items(
++    db: Session,
++    *,
++    company_id: str,
++    agent_instance_id: str | None,
++    query: str,
++    limit: int = 5,
++) -> list[dict]:
++    rows = list(
++        db.scalars(
++            select(KnowledgeItem).where(
++                KnowledgeItem.company_id == company_id,
++                KnowledgeItem.is_active.is_(True),
++                or_(
++                    KnowledgeItem.agent_instance_id.is_(None),
++                    KnowledgeItem.agent_instance_id == agent_instance_id,
++                ),
++            )
++        ).all()
++    )
++    scored = []
++    for row in rows:
++        s = score_text(query, f"{row.title} {row.content}")
++        if s > 0:
++            scored.append((s, row))
++    scored.sort(key=lambda x: x[0], reverse=True)
++    return [
++        {
++            "id": row.id,
++            "title": row.title,
++            "content": row.content,
++            "category": row.category,
++            "score": round(s, 4),
++            "source": "item",
++        }
++        for s, row in scored[:limit]
++    ]
++
++
++def active_agent_memories(
++    db: Session,
++    *,
++    company_id: str,
++    agent_instance_id: str,
++    limit: int = 10,
++) -> list[AgentMemory]:
++    now = datetime.now(timezone.utc)
++    rows = list(
++        db.scalars(
++            select(AgentMemory).where(
++                AgentMemory.company_id == company_id,
++                AgentMemory.agent_instance_id == agent_instance_id,
++                AgentMemory.is_active.is_(True),
++            ).order_by(AgentMemory.updated_at.desc())
++        ).all()
++    )
++    result = []
++    for m in rows:
++        if m.expires_at is not None:
++            exp = m.expires_at
++            if exp.tzinfo is None:
++                exp = exp.replace(tzinfo=timezone.utc)
++            if exp <= now:
++                continue
++        result.append(m)
++        if len(result) >= limit:
++            break
++    return result
+diff --git a/app/knowledge/service.py b/app/knowledge/service.py
+index a1d7da1..c53016e 100644
+--- a/app/knowledge/service.py
++++ b/app/knowledge/service.py
+@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
+ 
+ from app.knowledge.extractor import extract_text
+ from app.models.entities import DocumentStatus, KnowledgeDocument
++from app.knowledge.indexing import replace_chunks_for_document
+ 
+ 
+ DOCUMENT_STORAGE_ROOT = Path("storage/documents")
+@@ -63,6 +64,7 @@ def save_document(
+         document.extracted_text = extracted_text
+         document.status = DocumentStatus.READY
+         document.error_message = None
++        replace_chunks_for_document(db, document)
+ 
+     except Exception as exc:
+         document.status = DocumentStatus.FAILED
+diff --git a/app/models/__init__.py b/app/models/__init__.py
+index 75d8ee0..462d5d8 100644
+--- a/app/models/__init__.py
++++ b/app/models/__init__.py
+@@ -1,39 +1,43 @@
+ from app.models.entities import (
+     AgentAccess,
+-    AgentSkill,
+-    Skill,
+     AgentCatalog,
+-    AgentSubscription,
+     AgentInstance,
++    AgentMemory,
++    AgentSkill,
++    AgentSubscription,
++    Approval,
++    ApprovalStatus,
+     AuditLog,
+     Company,
++    KnowledgeChunk,
+     KnowledgeItem,
+     Permission,
++    Policy,
+     Role,
+     RolePermission,
++    Skill,
+     Task,
+     User,
+-    Approval,
+-    ApprovalStatus,
+-    Policy,
+ )
+ 
+ __all__ = [
+     "AgentAccess",
+-    "AgentSkill",
+-    "Skill",
+     "AgentCatalog",
+-    "AgentSubscription",
+     "AgentInstance",
+-    "AuditLog",
++    "AgentMemory",
++    "AgentSkill",
++    "AgentSubscription",
+     "Approval",
+     "ApprovalStatus",
++    "AuditLog",
+     "Company",
++    "KnowledgeChunk",
+     "KnowledgeItem",
+     "Permission",
+     "Policy",
+     "Role",
+     "RolePermission",
++    "Skill",
+     "Task",
+     "User",
+ ]
+diff --git a/app/models/entities.py b/app/models/entities.py
+index 6465b18..dcc8704 100644
+--- a/app/models/entities.py
++++ b/app/models/entities.py
+@@ -392,6 +392,82 @@ class KnowledgeDocument(Base):
+ 
+     agent_instance: Mapped[AgentInstance | None] = relationship()
+     
++
++class KnowledgeChunk(Base):
++    """Chunk of knowledge for retrieval (from item or document)."""
++
++    __tablename__ = "knowledge_chunks"
++
++    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
++    company_id: Mapped[str] = mapped_column(
++        ForeignKey("companies.id", ondelete="CASCADE"),
++        nullable=False,
++        index=True,
++    )
++    agent_instance_id: Mapped[str | None] = mapped_column(
++        ForeignKey("agent_instances.id", ondelete="CASCADE"),
++        nullable=True,
++        index=True,
++    )
++    knowledge_item_id: Mapped[str | None] = mapped_column(
++        ForeignKey("knowledge_items.id", ondelete="CASCADE"),
++        nullable=True,
++        index=True,
++    )
++    knowledge_document_id: Mapped[str | None] = mapped_column(
++        ForeignKey("knowledge_documents.id", ondelete="CASCADE"),
++        nullable=True,
++        index=True,
++    )
++    chunk_index: Mapped[int] = mapped_column(default=0, nullable=False)
++    content: Mapped[str] = mapped_column(Text, nullable=False)
++    token_estimate: Mapped[int] = mapped_column(default=0, nullable=False)
++    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), default=utcnow, nullable=False
++    )
++
++
++class AgentMemory(Base):
++    """
++    Agent-scoped contextual memory with lifecycle controls.
++
++    Distinct from company Knowledge and from Experience (Phase 7).
++    """
++
++    __tablename__ = "agent_memories"
++
++    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
++    company_id: Mapped[str] = mapped_column(
++        ForeignKey("companies.id", ondelete="CASCADE"),
++        nullable=False,
++        index=True,
++    )
++    agent_instance_id: Mapped[str] = mapped_column(
++        ForeignKey("agent_instances.id", ondelete="CASCADE"),
++        nullable=False,
++        index=True,
++    )
++    title: Mapped[str] = mapped_column(String(300), nullable=False)
++    content: Mapped[str] = mapped_column(Text, nullable=False)
++    category: Mapped[str] = mapped_column(String(100), default="context", nullable=False)
++    source_task_id: Mapped[str | None] = mapped_column(
++        ForeignKey("tasks.id", ondelete="SET NULL"),
++        nullable=True,
++        index=True,
++    )
++    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
++    expires_at: Mapped[datetime | None] = mapped_column(
++        DateTime(timezone=True), nullable=True, index=True
++    )
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), default=utcnow, nullable=False
++    )
++    updated_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
++    )
++
++
+ class Task(Base):
+     __tablename__ = "tasks"
+ 
+diff --git a/app/schemas/domain.py b/app/schemas/domain.py
+index dd4b32a..b0322cc 100644
+--- a/app/schemas/domain.py
++++ b/app/schemas/domain.py
+@@ -291,3 +291,63 @@ class PolicyRead(BaseModel):
+     is_active: bool
+     created_at: datetime
+     updated_at: datetime
++
++
++class KnowledgeChunkRead(BaseModel):
++    model_config = ConfigDict(from_attributes=True)
++    id: str
++    company_id: str
++    agent_instance_id: str | None
++    knowledge_item_id: str | None
++    knowledge_document_id: str | None
++    chunk_index: int
++    content: str
++    token_estimate: int
++    is_active: bool
++    created_at: datetime
++
++
++class KnowledgeSearchRequest(BaseModel):
++    query: str = Field(min_length=1, max_length=2000)
++    limit: int = Field(default=5, ge=1, le=20)
++
++
++class KnowledgeSearchHit(BaseModel):
++    id: str
++    content: str
++    score: float
++    source: str
++    title: str | None = None
++    category: str | None = None
++    chunk_index: int | None = None
++
++
++class AgentMemoryCreate(BaseModel):
++    title: str = Field(min_length=1, max_length=300)
++    content: str = Field(min_length=1)
++    category: str = Field(default="context", max_length=100)
++    source_task_id: str | None = None
++    expires_at: datetime | None = None
++
++
++class AgentMemoryUpdate(BaseModel):
++    title: str | None = Field(default=None, max_length=300)
++    content: str | None = None
++    category: str | None = Field(default=None, max_length=100)
++    is_active: bool | None = None
++    expires_at: datetime | None = None
++
++
++class AgentMemoryRead(BaseModel):
++    model_config = ConfigDict(from_attributes=True)
++    id: str
++    company_id: str
++    agent_instance_id: str
++    title: str
++    content: str
++    category: str
++    source_task_id: str | None
++    is_active: bool
++    expires_at: datetime | None
++    created_at: datetime
++    updated_at: datetime
+diff --git a/tests/test_knowledge_memory.py b/tests/test_knowledge_memory.py
+new file mode 100644
+index 0000000..816c1f0
+--- /dev/null
++++ b/tests/test_knowledge_memory.py
+@@ -0,0 +1,202 @@
++"""Phase 6 — Knowledge chunking, retrieval, and agent memory."""
++
++from datetime import datetime, timedelta, timezone
++
++import pytest
++from fastapi.testclient import TestClient
++from sqlalchemy import create_engine, select
++from sqlalchemy.orm import sessionmaker
++
++from app.core.database import Base, get_db
++from app.knowledge.chunking import chunk_text
++from app.knowledge.retrieval import score_text, search_knowledge_chunks
++from app.main import app
++from app.models.entities import KnowledgeChunk
++from app.services.seed import seed_catalog
++
++engine = create_engine(
++    "sqlite:///./test_knowledge_memory.db",
++    connect_args={"check_same_thread": False},
++)
++SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
++
++
++@pytest.fixture()
++def client():
++    Base.metadata.drop_all(bind=engine)
++    Base.metadata.create_all(bind=engine)
++    with SessionLocal() as db:
++        seed_catalog(db)
++
++    def override():
++        db = SessionLocal()
++        try:
++            yield db
++        finally:
++            db.close()
++
++    prev = app.dependency_overrides.get(get_db)
++    app.dependency_overrides[get_db] = override
++    with TestClient(app) as c:
++        yield c
++    if prev is None:
++        app.dependency_overrides.pop(get_db, None)
++    else:
++        app.dependency_overrides[get_db] = prev
++
++
++def setup(client):
++    co = client.post("/api/v1/companies", json={"name": "Know Co"}).json()
++    owner = client.post(
++        f"/api/v1/companies/{co['id']}/users",
++        json={"name": "Owner", "email": "owner@k.test", "role": "owner"},
++    ).json()
++    catalog = client.get("/api/v1/agent-catalog").json()
++    res = next(i for i in catalog if i["slug"] == "reservation")
++    hire = client.post(
++        f"/api/v1/companies/{co['id']}/agents/{res['id']}/hire",
++        json={"name": "Know AI"},
++        headers={"X-User-ID": owner["id"]},
++    )
++    assert hire.status_code == 201
++    return co["id"], owner["id"], hire.json()["id"]
++
++
++def test_chunk_text_splits_long_content():
++    text = ("Paragraph one about pricing.\n\n" * 5) + ("More content on refunds.\n\n" * 5)
++    chunks = chunk_text(text, max_chars=120, overlap=20)
++    assert len(chunks) >= 2
++    assert all(isinstance(c, str) and c for c in chunks)
++
++
++def test_knowledge_create_indexes_chunks(client):
++    company_id, owner_id, agent_id = setup(client)
++    body = {
++        "title": "Pricing Rules",
++        "content": (
++            "Standard room rate is 100 USD.\n\n"
++            "Suite rate is 250 USD.\n\n"
++            "Refund policy requires manager approval above 500 USD."
++        ),
++        "category": "pricing",
++    }
++    resp = client.post(
++        f"/api/v1/companies/{company_id}/knowledge",
++        headers={"X-User-ID": owner_id},
++        json=body,
++    )
++    assert resp.status_code == 201, resp.text
++    item_id = resp.json()["id"]
++
++    with SessionLocal() as db:
++        chunks = list(
++            db.scalars(
++                select(KnowledgeChunk).where(
++                    KnowledgeChunk.knowledge_item_id == item_id
++                )
++            ).all()
++        )
++        assert len(chunks) >= 1
++        assert all(c.company_id == company_id for c in chunks)
++
++
++def test_search_finds_relevant_chunk(client):
++    company_id, owner_id, agent_id = setup(client)
++    client.post(
++        f"/api/v1/companies/{company_id}/knowledge",
++        headers={"X-User-ID": owner_id},
++        json={
++            "title": "Cancellation",
++            "content": "Customers may cancel free within 24 hours. Late cancel incurs fee.",
++            "category": "policy",
++        },
++    )
++    search = client.post(
++        f"/api/v1/companies/{company_id}/knowledge/search",
++        headers={"X-User-ID": owner_id},
++        json={"query": "cancel fee", "limit": 5},
++    )
++    assert search.status_code == 200, search.text
++    hits = search.json()
++    assert len(hits) >= 1
++    assert hits[0]["score"] > 0
++
++
++def test_tenant_isolation_search(client):
++    c1, o1, _ = setup(client)
++    client.post(
++        f"/api/v1/companies/{c1}/knowledge",
++        headers={"X-User-ID": o1},
++        json={"title": "Secret", "content": "UniqueTokenXYZ123 confidential", "category": "x"},
++    )
++    co2 = client.post("/api/v1/companies", json={"name": "OtherKnow"}).json()
++    o2 = client.post(
++        f"/api/v1/companies/{co2['id']}/users",
++        json={"name": "O2", "email": "o2@k.test", "role": "owner"},
++    ).json()
++    search = client.post(
++        f"/api/v1/companies/{co2['id']}/knowledge/search",
++        headers={"X-User-ID": o2["id"]},
++        json={"query": "UniqueTokenXYZ123", "limit": 5},
++    )
++    assert search.status_code == 200
++    assert search.json() == []
++
++
++def test_agent_memory_lifecycle(client):
++    company_id, owner_id, agent_id = setup(client)
++    created = client.post(
++        f"/api/v1/companies/{company_id}/agents/{agent_id}/memories",
++        headers={"X-User-ID": owner_id},
++        json={
++            "title": "Preferred contact",
++            "content": "Customer prefers WhatsApp for follow-up.",
++            "category": "preference",
++        },
++    )
++    assert created.status_code == 201, created.text
++    mem_id = created.json()["id"]
++
++    listed = client.get(
++        f"/api/v1/companies/{company_id}/agents/{agent_id}/memories",
++        headers={"X-User-ID": owner_id},
++    )
++    assert listed.status_code == 200
++    assert any(m["id"] == mem_id for m in listed.json())
++
++    deleted = client.delete(
++        f"/api/v1/companies/{company_id}/agents/{agent_id}/memories/{mem_id}",
++        headers={"X-User-ID": owner_id},
++    )
++    assert deleted.status_code == 204
++
++    listed2 = client.get(
++        f"/api/v1/companies/{company_id}/agents/{agent_id}/memories",
++        headers={"X-User-ID": owner_id},
++    )
++    assert all(m["id"] != mem_id for m in listed2.json())
++
++
++def test_expired_memory_not_listed(client):
++    company_id, owner_id, agent_id = setup(client)
++    past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
++    created = client.post(
++        f"/api/v1/companies/{company_id}/agents/{agent_id}/memories",
++        headers={"X-User-ID": owner_id},
++        json={
++            "title": "Expired note",
++            "content": "Should not appear",
++            "expires_at": past,
++        },
++    )
++    assert created.status_code == 201
++    listed = client.get(
++        f"/api/v1/companies/{company_id}/agents/{agent_id}/memories",
++        headers={"X-User-ID": owner_id},
++    ).json()
++    assert all(m["title"] != "Expired note" for m in listed)
++
++
++def test_score_text_basic():
++    assert score_text("refund policy", "The refund policy requires approval") > 0
++    assert score_text("xyz", "no match here") == 0

@@ -1,0 +1,538 @@
+diff --git a/app/api/routes.py b/app/api/routes.py
+index faa9388..3457d07 100644
+--- a/app/api/routes.py
++++ b/app/api/routes.py
+@@ -87,6 +87,7 @@ from app.services.access import (
+     require_agent_use,
+ )
+ from app.services.approval import ApprovalService
++from app.services.consultation import run_consultation
+ from app.services.experience import (
+     create_candidate_from_task,
+     search_validated_experiences,
+@@ -2004,6 +2005,59 @@ def list_tasks(
+     )
+ 
+ 
++
++
++@router.post(
++    "/companies/{company_id}/tasks/{task_id}/consult",
++    response_model=TaskRead,
++)
++def consult_task(
++    company_id: str,
++    task_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    """
++    Run consultation mode: recommendation only, no side-effect tools.
++    Task must have mode=consult.
++    """
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "task.create")
++
++    task = db.scalar(
++        select(Task).where(
++            Task.id == task_id,
++            Task.company_id == company_id,
++        )
++    )
++    if not task:
++        raise HTTPException(status_code=404, detail="Task not found")
++
++    require_agent_use(
++        db,
++        user,
++        company_id=company_id,
++        agent_instance_id=task.agent_instance_id,
++    )
++
++    if task.mode != "consult":
++        raise HTTPException(
++            status_code=400,
++            detail="Task mode must be 'consult'. Create task with mode=consult.",
++        )
++
++    try:
++        task = run_consultation(
++            db,
++            company_id=company_id,
++            task_id=task_id,
++        )
++    except ValueError as exc:
++        raise HTTPException(status_code=409, detail=str(exc)) from exc
++
++    return task
++
++
+ @router.post(
+     "/companies/{company_id}/tasks/{task_id}/execute",
+     response_model=TaskRead,
+diff --git a/app/models/entities.py b/app/models/entities.py
+index d4b7b54..893fa40 100644
+--- a/app/models/entities.py
++++ b/app/models/entities.py
+@@ -542,6 +542,8 @@ class Task(Base):
+     agent_instance_id: Mapped[str] = mapped_column(ForeignKey("agent_instances.id"), nullable=False, index=True)
+     title: Mapped[str] = mapped_column(String(300), nullable=False)
+     instruction: Mapped[str] = mapped_column(Text, nullable=False)
++    # execute = may run tools; consult = recommendation only (no side-effect tools)
++    mode: Mapped[str] = mapped_column(String(20), default="execute", nullable=False)
+     status: Mapped[str] = mapped_column(String(30), default=TaskStatus.PENDING.value, nullable=False)
+     result: Mapped[str | None] = mapped_column(Text, nullable=True)
+     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+diff --git a/app/runtime/tool_executor.py b/app/runtime/tool_executor.py
+index dea0028..873c1cb 100644
+--- a/app/runtime/tool_executor.py
++++ b/app/runtime/tool_executor.py
+@@ -7,7 +7,9 @@ from app.models.entities import (
+     AgentInstance,
+     Approval,
+     ApprovalStatus,
++    Task,
+ )
++from app.services.consultation import is_read_only_tool
+ from app.security.policy_engine import PolicyEngine
+ from app.services.approval import ApprovalService
+ from app.services.audit import record_audit
+@@ -61,6 +63,31 @@ class ToolExecutor:
+         task_id: str | None = None,
+     ) -> dict[str, Any]:
+ 
++        # ---------------------------------------------------------
++        # Consultation mode: block side-effect tools early
++        # ---------------------------------------------------------
++        if task_id:
++            task = self.db.get(Task, task_id)
++            if (
++                task is not None
++                and task.company_id == company_id
++                and getattr(task, "mode", "execute") == "consult"
++                and not is_read_only_tool(tool_name)
++            ):
++                self._audit_denied(
++                    company_id=company_id,
++                    agent_instance_id=agent_instance_id,
++                    task_id=task_id,
++                    tool_name=tool_name,
++                    reason="consultation_side_effect_blocked",
++                    extra={"mode": "consult"},
++                )
++                self.db.commit()
++                raise ToolExecutionError(
++                    f"Tool '{tool_name}' is not allowed in consultation "
++                    f"mode (side-effect tools are blocked)."
++                )
++
+         agent, tool = self._validate_agent_and_tool(
+             company_id=company_id,
+             agent_instance_id=agent_instance_id,
+diff --git a/app/schemas/domain.py b/app/schemas/domain.py
+index d165101..316c981 100644
+--- a/app/schemas/domain.py
++++ b/app/schemas/domain.py
+@@ -170,6 +170,7 @@ class TaskCreate(BaseModel):
+     agent_instance_id: str
+     title: str = Field(min_length=1, max_length=300)
+     instruction: str = Field(min_length=1)
++    mode: str = Field(default="execute", pattern="^(execute|consult)$")
+ 
+ 
+ class TaskRead(BaseModel):
+@@ -179,11 +180,25 @@ class TaskRead(BaseModel):
+     agent_instance_id: str
+     title: str
+     instruction: str
++    mode: str = "execute"
+     status: str
+     result: str | None
+     created_at: datetime
+ 
+ 
++class ConsultationResult(BaseModel):
++    mode: str = "consult"
++    recommendation: str
++    rationale: str
++    expected_impact: str = ""
++    alternatives: list[str] = []
++    confidence: float = Field(ge=0.0, le=1.0, default=0.5)
++    side_effects_executed: bool = False
++    retrieved_knowledge_count: int = 0
++    experience_count: int = 0
++    notes: str = "Consultation mode: no side-effect tools were executed."
++
++
+ class AuditLogRead(BaseModel):
+     model_config = ConfigDict(from_attributes=True)
+     id: str
+diff --git a/app/services/consultation.py b/app/services/consultation.py
+new file mode 100644
+index 0000000..c4d25bb
+--- /dev/null
++++ b/app/services/consultation.py
+@@ -0,0 +1,186 @@
++"""Job 07 — Consultation mode: recommend without side-effect tools."""
++
++from __future__ import annotations
++
++import json
++from typing import Any
++
++from sqlalchemy.orm import Session
++
++from app.agents.context import load_agent_context
++from app.knowledge.retrieval import search_knowledge_chunks
++from app.models.entities import Task, TaskStatus
++from app.services.audit import record_audit
++from app.services.experience import search_validated_experiences
++
++
++# Tools that are safe during consultation (read-only).
++READ_ONLY_TOOL_PREFIXES = ("search_", "get_", "list_", "read_", "find_")
++READ_ONLY_TOOL_NAMES = frozenset(
++    {
++        "search_contract",
++        "search_availability",
++        "get_reservation",
++        "read_document",
++        "search_knowledge",
++    }
++)
++
++
++def is_read_only_tool(tool_name: str) -> bool:
++    name = (tool_name or "").strip().lower()
++    if name in READ_ONLY_TOOL_NAMES:
++        return True
++    return name.startswith(READ_ONLY_TOOL_PREFIXES)
++
++
++def build_consultation_result(
++    db: Session,
++    *,
++    task: Task,
++) -> dict[str, Any]:
++    """
++    Produce a structured recommendation using context/knowledge/experience.
++
++    Guarantees: side_effects_executed is always False.
++    """
++    from app.models.entities import AgentInstance
++
++    agent = db.get(AgentInstance, task.agent_instance_id)
++    if agent is None:
++        raise ValueError("Agent instance not found.")
++    context = load_agent_context(db, agent, task)
++
++    knowledge = list(context.retrieved_knowledge or [])
++    experiences = list(context.experiences or [])
++    # Extra search if context did not load
++    if not knowledge and task.instruction:
++        knowledge = search_knowledge_chunks(
++            db,
++            company_id=task.company_id,
++            agent_instance_id=task.agent_instance_id,
++            query=f"{task.title} {task.instruction}",
++            limit=5,
++        )
++    if not experiences and task.instruction:
++        experiences = search_validated_experiences(
++            db,
++            company_id=task.company_id,
++            agent_instance_id=task.agent_instance_id,
++            query=f"{task.title} {task.instruction}",
++            limit=3,
++        )
++
++    rationale_parts = []
++    if knowledge:
++        rationale_parts.append(
++            f"Found {len(knowledge)} relevant knowledge chunk(s)."
++        )
++        for k in knowledge[:2]:
++            snippet = (k.get("content") or "")[:200]
++            if snippet:
++                rationale_parts.append(f"- Knowledge: {snippet}")
++    if experiences:
++        rationale_parts.append(
++            f"Found {len(experiences)} validated experience(s)."
++        )
++        for e in experiences[:2]:
++            lesson = e.get("lesson") or e.get("decision") or ""
++            if lesson:
++                rationale_parts.append(f"- Experience: {lesson[:200]}")
++    if context.memories:
++        rationale_parts.append(
++            f"Agent has {len(context.memories)} active memor(ies)."
++        )
++
++    if not rationale_parts:
++        rationale_parts.append(
++            "Limited company knowledge matched this question; "
++            "recommendation is conservative."
++        )
++
++    # Deterministic recommendation template (LLM optional later)
++    recommendation = (
++        f"Regarding '{task.title}': based on available company knowledge "
++        f"and agent scope ({context.agent_role or 'agent'}), "
++        f"prefer a cautious approach aligned with existing policies. "
++        f"Do not take irreversible action until a human confirms "
++        f"an execute-mode task."
++    )
++
++    alternatives = [
++        "Proceed with an execute-mode task after human approval.",
++        "Gather more information with read-only search tools only.",
++        "Escalate to the AI supervisor / manager for a decision.",
++    ]
++
++    confidence = 0.55
++    if knowledge:
++        confidence += 0.15
++    if experiences:
++        confidence += 0.15
++    confidence = min(confidence, 0.9)
++
++    return {
++        "mode": "consult",
++        "recommendation": recommendation,
++        "rationale": "\n".join(rationale_parts),
++        "expected_impact": (
++            "No external systems were changed. "
++            "This is advisory only."
++        ),
++        "alternatives": alternatives,
++        "confidence": confidence,
++        "side_effects_executed": False,
++        "retrieved_knowledge_count": len(knowledge),
++        "experience_count": len(experiences),
++        "notes": (
++            "Consultation mode: no side-effect tools were executed. "
++            "Create a task with mode=execute to perform actions."
++        ),
++    }
++
++
++def run_consultation(
++    db: Session,
++    *,
++    company_id: str,
++    task_id: str,
++) -> Task:
++    task = db.get(Task, task_id)
++    if task is None or task.company_id != company_id:
++        raise ValueError("Task not found for this company.")
++    if task.mode != "consult":
++        raise ValueError("Task is not in consult mode.")
++    if task.status not in (
++        TaskStatus.PENDING.value,
++        TaskStatus.PLANNING.value,
++    ):
++        raise ValueError(
++            f"Task cannot be consulted from status '{task.status}'."
++        )
++
++    task.status = TaskStatus.RUNNING.value
++    db.flush()
++
++    result = build_consultation_result(db, task=task)
++    task.result = json.dumps(result, ensure_ascii=False)
++    task.status = TaskStatus.COMPLETED.value
++
++    record_audit(
++        db,
++        company_id=company_id,
++        agent_instance_id=task.agent_instance_id,
++        task_id=task.id,
++        action="task.consult",
++        resource_type="task",
++        resource_id=task.id,
++        status="success",
++        details={
++            "side_effects_executed": False,
++            "confidence": result["confidence"],
++        },
++    )
++    db.commit()
++    db.refresh(task)
++    return task
+diff --git a/tests/test_consultation.py b/tests/test_consultation.py
+new file mode 100644
+index 0000000..a8cc0c9
+--- /dev/null
++++ b/tests/test_consultation.py
+@@ -0,0 +1,171 @@
++"""Job 07 — Consultation mode tests."""
++
++import json
++
++import pytest
++from fastapi.testclient import TestClient
++from sqlalchemy import create_engine
++from sqlalchemy.orm import sessionmaker
++
++from app.core.database import Base, get_db
++from app.main import app
++from app.runtime.tool_executor import ToolExecutionError, ToolExecutor
++from app.services.consultation import is_read_only_tool
++from app.services.seed import seed_catalog
++
++engine = create_engine(
++    "sqlite:///./test_consultation.db",
++    connect_args={"check_same_thread": False},
++)
++SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
++
++
++@pytest.fixture()
++def client():
++    Base.metadata.drop_all(bind=engine)
++    Base.metadata.create_all(bind=engine)
++    with SessionLocal() as db:
++        seed_catalog(db)
++
++    def override():
++        db = SessionLocal()
++        try:
++            yield db
++        finally:
++            db.close()
++
++    prev = app.dependency_overrides.get(get_db)
++    app.dependency_overrides[get_db] = override
++    with TestClient(app) as c:
++        yield c
++    if prev is None:
++        app.dependency_overrides.pop(get_db, None)
++    else:
++        app.dependency_overrides[get_db] = prev
++
++
++def setup(client):
++    co = client.post("/api/v1/companies", json={"name": "Consult Co"}).json()
++    owner = client.post(
++        f"/api/v1/companies/{co['id']}/users",
++        json={"name": "Owner", "email": "owner@c.test", "role": "owner"},
++    ).json()
++    catalog = client.get("/api/v1/agent-catalog").json()
++    res = next(i for i in catalog if i["slug"] == "reservation")
++    hire = client.post(
++        f"/api/v1/companies/{co['id']}/agents/{res['id']}/hire",
++        json={"name": "Consult AI"},
++        headers={"X-User-ID": owner["id"]},
++    )
++    assert hire.status_code == 201
++    return co["id"], owner["id"], hire.json()["id"]
++
++
++def test_is_read_only_tool():
++    assert is_read_only_tool("search_availability") is True
++    assert is_read_only_tool("get_reservation") is True
++    assert is_read_only_tool("create_reservation") is False
++    assert is_read_only_tool("send_quotation") is False
++
++
++def test_create_consult_task_and_run(client):
++    company_id, owner_id, agent_id = setup(client)
++    # seed some knowledge for rationale
++    client.post(
++        f"/api/v1/companies/{company_id}/knowledge",
++        headers={"X-User-ID": owner_id},
++        json={
++            "title": "Discount policy",
++            "content": "Maximum discretionary discount is 5 percent without manager approval.",
++            "category": "policy",
++        },
++    )
++
++    task = client.post(
++        f"/api/v1/companies/{company_id}/tasks",
++        headers={"X-User-ID": owner_id},
++        json={
++            "agent_instance_id": agent_id,
++            "title": "Discount question",
++            "instruction": "Should we give this customer a 10% discount?",
++            "mode": "consult",
++        },
++    )
++    assert task.status_code == 201, task.text
++    assert task.json()["mode"] == "consult"
++
++    run = client.post(
++        f"/api/v1/companies/{company_id}/tasks/{task.json()['id']}/consult",
++        headers={"X-User-ID": owner_id},
++    )
++    assert run.status_code == 200, run.text
++    body = run.json()
++    assert body["status"] == "completed"
++    result = json.loads(body["result"])
++    assert result["mode"] == "consult"
++    assert result["side_effects_executed"] is False
++    assert "recommendation" in result
++    assert "rationale" in result
++    assert isinstance(result.get("alternatives"), list)
++
++
++def test_consult_endpoint_rejects_execute_mode(client):
++    company_id, owner_id, agent_id = setup(client)
++    task = client.post(
++        f"/api/v1/companies/{company_id}/tasks",
++        headers={"X-User-ID": owner_id},
++        json={
++            "agent_instance_id": agent_id,
++            "title": "Do something",
++            "instruction": "Create a reservation",
++            "mode": "execute",
++        },
++    ).json()
++    run = client.post(
++        f"/api/v1/companies/{company_id}/tasks/{task['id']}/consult",
++        headers={"X-User-ID": owner_id},
++    )
++    assert run.status_code == 400
++
++
++def test_tool_executor_blocks_side_effect_in_consult(client):
++    company_id, owner_id, agent_id = setup(client)
++    task = client.post(
++        f"/api/v1/companies/{company_id}/tasks",
++        headers={"X-User-ID": owner_id},
++        json={
++            "agent_instance_id": agent_id,
++            "title": "Consult only",
++            "instruction": "Advise only",
++            "mode": "consult",
++        },
++    ).json()
++
++    with SessionLocal() as db:
++        executor = ToolExecutor(db)
++        with pytest.raises(ToolExecutionError) as exc:
++            executor.execute(
++                company_id=company_id,
++                agent_instance_id=agent_id,
++                tool_name="create_reservation",
++                arguments={"guest": "A"},
++                task_id=task["id"],
++            )
++        assert "consultation" in str(exc.value).lower() or "side-effect" in str(
++            exc.value
++        ).lower()
++
++
++def test_default_mode_is_execute(client):
++    company_id, owner_id, agent_id = setup(client)
++    task = client.post(
++        f"/api/v1/companies/{company_id}/tasks",
++        headers={"X-User-ID": owner_id},
++        json={
++            "agent_instance_id": agent_id,
++            "title": "Normal",
++            "instruction": "Do work",
++        },
++    )
++    assert task.status_code == 201
++    assert task.json().get("mode", "execute") == "execute"

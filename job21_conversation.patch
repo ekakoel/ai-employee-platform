@@ -1,0 +1,894 @@
+diff --git a/app/api/routes.py b/app/api/routes.py
+index 940169f..48a576f 100644
+--- a/app/api/routes.py
++++ b/app/api/routes.py
+@@ -40,6 +40,11 @@ from app.models import (
+ from app.models.entities import TaskStatus
+ from app.runtime.tool_executor import ToolExecutionError, ToolExecutor
+ from app.schemas.domain import (
++    ConversationCreate,
++    ConversationRead,
++    MessageCreate,
++    MessageRead,
++    ChatPostResponse,
+     AgentAccessCreate,
+     AgentAccessRead,
+     AgentAccessUpdate,
+@@ -2526,6 +2531,136 @@ def mark_all_notifications_read(
+     db.commit()
+     return {"marked": n}
+ 
++
++@router.get(
++    "/companies/{company_id}/conversations",
++    response_model=list[ConversationRead],
++)
++def list_conversations_api(
++    company_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++    agent_instance_id: str | None = None,
++):
++    from app.services.conversation import list_conversations
++
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "agent.read")
++    return list_conversations(
++        db,
++        company_id=company_id,
++        user_id=None,
++        agent_instance_id=agent_instance_id,
++    )
++
++
++@router.post(
++    "/companies/{company_id}/conversations",
++    response_model=ConversationRead,
++    status_code=status.HTTP_201_CREATED,
++)
++def create_conversation_api(
++    company_id: str,
++    payload: ConversationCreate,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    from app.services.conversation import create_conversation
++
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "task.create")
++    agent = get_owned_agent_or_404(db, company_id, payload.agent_instance_id)
++    require_agent_use(
++        db, user, company_id=company_id, agent_instance_id=agent.id
++    )
++    try:
++        conv = create_conversation(
++            db,
++            company_id=company_id,
++            agent_instance_id=agent.id,
++            user_id=user.id,
++            title=payload.title,
++        )
++    except ValueError as exc:
++        raise HTTPException(status_code=400, detail=str(exc)) from exc
++    db.commit()
++    db.refresh(conv)
++    return conv
++
++
++@router.get(
++    "/companies/{company_id}/conversations/{conversation_id}/messages",
++    response_model=list[MessageRead],
++)
++def list_messages_api(
++    company_id: str,
++    conversation_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    from app.services.conversation import get_conversation, list_messages
++
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "agent.read")
++    conv = get_conversation(
++        db, company_id=company_id, conversation_id=conversation_id
++    )
++    if not conv:
++        raise HTTPException(status_code=404, detail="Conversation not found")
++    return list_messages(
++        db, company_id=company_id, conversation_id=conversation_id
++    )
++
++
++@router.post(
++    "/companies/{company_id}/conversations/{conversation_id}/messages",
++    response_model=ChatPostResponse,
++)
++def post_message_api(
++    company_id: str,
++    conversation_id: str,
++    payload: MessageCreate,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    """
++    Post human message + advisory agent reply.
++    Tools are NEVER run here. Optional create_task links a Task for later execution.
++    """
++    from app.services.conversation import get_conversation, post_human_message
++
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "task.create")
++    conv = get_conversation(
++        db, company_id=company_id, conversation_id=conversation_id
++    )
++    if not conv:
++        raise HTTPException(status_code=404, detail="Conversation not found")
++    require_agent_use(
++        db, user, company_id=company_id, agent_instance_id=conv.agent_instance_id
++    )
++    try:
++        result = post_human_message(
++            db,
++            company_id=company_id,
++            conversation_id=conversation_id,
++            user_id=user.id,
++            content=payload.content,
++            create_task=payload.create_task,
++            task_mode=payload.task_mode,
++        )
++    except ValueError as exc:
++        raise HTTPException(status_code=400, detail=str(exc)) from exc
++    db.commit()
++    human = result["human"]
++    agent = result["agent"]
++    task = result["task"]
++    return ChatPostResponse(
++        human=MessageRead.model_validate(human),
++        agent=MessageRead.model_validate(agent),
++        task_id=task.id if task else None,
++    )
++
+ @router.get("/tools")
+ def list_platform_tools():
+     """Job 19 — global tool catalog (metadata: side_effect, risk)."""
+diff --git a/app/models/__init__.py b/app/models/__init__.py
+index 7ae4827..31f37e4 100644
+--- a/app/models/__init__.py
++++ b/app/models/__init__.py
+@@ -1,4 +1,8 @@
+ from app.models.entities import (
++    Conversation,
++    ConversationStatus,
++    Message,
++    MessageRole,
+     Notification,
+     NotificationType,
+     AgentAccess,
+@@ -34,6 +38,10 @@ from app.models.entities import (
+ )
+ 
+ __all__ = [
++    "Conversation",
++    "ConversationStatus",
++    "Message",
++    "MessageRole",
+     "Notification",
+     "NotificationType",
+     "AgentAccess",
+diff --git a/app/models/entities.py b/app/models/entities.py
+index 667ee3d..577fc15 100644
+--- a/app/models/entities.py
++++ b/app/models/entities.py
+@@ -902,6 +902,90 @@ class Notification(Base):
+     company: Mapped[Company] = relationship()
+     user: Mapped[User] = relationship()
+ 
++
++
++class ConversationStatus(str, Enum):
++    ACTIVE = "active"
++    ARCHIVED = "archived"
++    CLOSED = "closed"
++
++
++class MessageRole(str, Enum):
++    HUMAN = "human"
++    AGENT = "agent"
++    SYSTEM = "system"
++
++
++class Conversation(Base):
++    """Human ↔ Agent chat thread (Job 21). No tools without Task."""
++
++    __tablename__ = "conversations"
++
++    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
++    company_id: Mapped[str] = mapped_column(
++        ForeignKey("companies.id", ondelete="CASCADE"),
++        nullable=False,
++        index=True,
++    )
++    agent_instance_id: Mapped[str] = mapped_column(
++        ForeignKey("agent_instances.id", ondelete="CASCADE"),
++        nullable=False,
++        index=True,
++    )
++    user_id: Mapped[str] = mapped_column(
++        ForeignKey("users.id", ondelete="CASCADE"),
++        nullable=False,
++        index=True,
++    )
++    title: Mapped[str] = mapped_column(String(300), default="", nullable=False)
++    status: Mapped[str] = mapped_column(
++        String(20),
++        default=ConversationStatus.ACTIVE.value,
++        nullable=False,
++        index=True,
++    )
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), default=utcnow, nullable=False
++    )
++    updated_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
++    )
++
++    messages: Mapped[list["Message"]] = relationship(
++        back_populates="conversation",
++        cascade="all, delete-orphan",
++        order_by="Message.created_at",
++    )
++
++
++class Message(Base):
++    """Single chat message in a Conversation."""
++
++    __tablename__ = "messages"
++
++    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
++    company_id: Mapped[str] = mapped_column(
++        ForeignKey("companies.id", ondelete="CASCADE"),
++        nullable=False,
++        index=True,
++    )
++    conversation_id: Mapped[str] = mapped_column(
++        ForeignKey("conversations.id", ondelete="CASCADE"),
++        nullable=False,
++        index=True,
++    )
++    role: Mapped[str] = mapped_column(String(20), nullable=False)
++    content: Mapped[str] = mapped_column(Text, nullable=False)
++    # Optional link when human requests execution via task
++    task_id: Mapped[str | None] = mapped_column(
++        String(36), nullable=True, index=True
++    )
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), default=utcnow, nullable=False, index=True
++    )
++
++    conversation: Mapped[Conversation] = relationship(back_populates="messages")
++
+ class Policy(Base):
+     __tablename__ = "policies"
+ 
+diff --git a/app/schemas/domain.py b/app/schemas/domain.py
+index d0ed2ac..086b6e7 100644
+--- a/app/schemas/domain.py
++++ b/app/schemas/domain.py
+@@ -703,3 +703,43 @@ class AgentTeamRead(BaseModel):
+ 
+ class AgentTeamAddMembers(BaseModel):
+     agent_instance_ids: list[str] = Field(min_length=1)
++
++
++class ConversationCreate(BaseModel):
++    agent_instance_id: str
++    title: str = Field(default="Chat", max_length=300)
++
++
++class ConversationRead(BaseModel):
++    model_config = ConfigDict(from_attributes=True)
++    id: str
++    company_id: str
++    agent_instance_id: str
++    user_id: str
++    title: str
++    status: str
++    created_at: datetime
++    updated_at: datetime
++
++
++class MessageCreate(BaseModel):
++    content: str = Field(min_length=1)
++    create_task: bool = False
++    task_mode: str = Field(default="consult", pattern="^(consult|execute)$")
++
++
++class MessageRead(BaseModel):
++    model_config = ConfigDict(from_attributes=True)
++    id: str
++    company_id: str
++    conversation_id: str
++    role: str
++    content: str
++    task_id: str | None = None
++    created_at: datetime
++
++
++class ChatPostResponse(BaseModel):
++    human: MessageRead
++    agent: MessageRead
++    task_id: str | None = None
+diff --git a/app/services/conversation.py b/app/services/conversation.py
+new file mode 100644
+index 0000000..415a2b4
+--- /dev/null
++++ b/app/services/conversation.py
+@@ -0,0 +1,234 @@
++"""Job 21 — Agent conversation / chat (no tool execution without Task)."""
++
++from __future__ import annotations
++
++from typing import Any
++
++from sqlalchemy import select
++from sqlalchemy.orm import Session
++
++from app.models.entities import (
++    AgentInstance,
++    Conversation,
++    ConversationStatus,
++    Message,
++    MessageRole,
++    Task,
++    TaskStatus,
++)
++from app.services.audit import record_audit
++from app.services.consultation import build_consultation_result
++
++
++def create_conversation(
++    db: Session,
++    *,
++    company_id: str,
++    agent_instance_id: str,
++    user_id: str,
++    title: str = "",
++) -> Conversation:
++    agent = db.get(AgentInstance, agent_instance_id)
++    if not agent or agent.company_id != company_id:
++        raise ValueError("Agent not found in company")
++    conv = Conversation(
++        company_id=company_id,
++        agent_instance_id=agent_instance_id,
++        user_id=user_id,
++        title=(title or "Chat")[:300],
++        status=ConversationStatus.ACTIVE.value,
++    )
++    db.add(conv)
++    db.flush()
++    # system welcome
++    db.add(
++        Message(
++            company_id=company_id,
++            conversation_id=conv.id,
++            role=MessageRole.SYSTEM.value,
++            content=(
++                "Conversation started. Chat is advisory only. "
++                "To execute tools, create a Task from this chat."
++            ),
++        )
++    )
++    db.flush()
++    record_audit(
++        db,
++        company_id=company_id,
++        user_id=user_id,
++        agent_instance_id=agent_instance_id,
++        action="conversation.create",
++        resource_type="conversation",
++        resource_id=conv.id,
++        status="success",
++    )
++    return conv
++
++
++def list_conversations(
++    db: Session,
++    *,
++    company_id: str,
++    user_id: str | None = None,
++    agent_instance_id: str | None = None,
++    limit: int = 50,
++) -> list[Conversation]:
++    q = select(Conversation).where(Conversation.company_id == company_id)
++    if user_id:
++        q = q.where(Conversation.user_id == user_id)
++    if agent_instance_id:
++        q = q.where(Conversation.agent_instance_id == agent_instance_id)
++    q = q.order_by(Conversation.updated_at.desc()).limit(min(limit, 100))
++    return list(db.scalars(q).all())
++
++
++def get_conversation(
++    db: Session,
++    *,
++    company_id: str,
++    conversation_id: str,
++) -> Conversation | None:
++    return db.scalar(
++        select(Conversation).where(
++            Conversation.id == conversation_id,
++            Conversation.company_id == company_id,
++        )
++    )
++
++
++def list_messages(
++    db: Session,
++    *,
++    company_id: str,
++    conversation_id: str,
++    limit: int = 200,
++) -> list[Message]:
++    return list(
++        db.scalars(
++            select(Message)
++            .where(
++                Message.company_id == company_id,
++                Message.conversation_id == conversation_id,
++            )
++            .order_by(Message.created_at.asc())
++            .limit(min(limit, 500))
++        ).all()
++    )
++
++
++def _agent_reply_text(db: Session, conv: Conversation, human_text: str) -> str:
++    """
++    Advisory reply only — uses consultation builder when possible.
++    Never calls ToolExecutor.
++    """
++    try:
++        # Build a transient task-like context for consultation helpers
++        task = Task(
++            company_id=conv.company_id,
++            agent_instance_id=conv.agent_instance_id,
++            title=conv.title or "Chat",
++            instruction=human_text,
++            mode="consult",
++            status=TaskStatus.PENDING.value,
++        )
++        # Do not add to session permanently for pure chat
++        result = build_consultation_result(db, task=task)
++        rec = result.get("recommendation") or result.get("rationale") or ""
++        if rec:
++            return (
++                f"{rec}\n\n"
++                "_(Chat mode: no tools executed. "
++                "Use “Create task” to run with policy & tools.)_"
++            )
++    except Exception as exc:
++        return (
++            f"I received your message. "
++            f"(Advisory reply unavailable: {exc})\n"
++            "Create a Task if you need tool execution."
++        )
++    return (
++        "Thanks — I noted your message. "
++        "This chat cannot run tools; create a Task to execute."
++    )
++
++
++def post_human_message(
++    db: Session,
++    *,
++    company_id: str,
++    conversation_id: str,
++    user_id: str,
++    content: str,
++    create_task: bool = False,
++    task_mode: str = "consult",
++) -> dict[str, Any]:
++    conv = get_conversation(
++        db, company_id=company_id, conversation_id=conversation_id
++    )
++    if not conv:
++        raise ValueError("Conversation not found")
++    if conv.user_id != user_id:
++        # allow company members later; MVP: owner of conversation only
++        # still allow same company with permission checked at API layer
++        pass
++    if conv.status != ConversationStatus.ACTIVE.value:
++        raise ValueError("Conversation is not active")
++
++    text = (content or "").strip()
++    if not text:
++        raise ValueError("Message content required")
++
++    human = Message(
++        company_id=company_id,
++        conversation_id=conv.id,
++        role=MessageRole.HUMAN.value,
++        content=text,
++    )
++    db.add(human)
++    db.flush()
++
++    task = None
++    if create_task:
++        task = Task(
++            company_id=company_id,
++            agent_instance_id=conv.agent_instance_id,
++            title=(conv.title or text)[:300],
++            instruction=text,
++            mode=task_mode if task_mode in ("consult", "execute") else "consult",
++            status=TaskStatus.PENDING.value,
++        )
++        db.add(task)
++        db.flush()
++        human.task_id = task.id
++        record_audit(
++            db,
++            company_id=company_id,
++            user_id=user_id,
++            agent_instance_id=conv.agent_instance_id,
++            task_id=task.id,
++            action="conversation.task_created",
++            resource_type="task",
++            resource_id=task.id,
++            status="success",
++            details={"conversation_id": conv.id, "message_id": human.id},
++        )
++
++    reply_text = _agent_reply_text(db, conv, text)
++    agent_msg = Message(
++        company_id=company_id,
++        conversation_id=conv.id,
++        role=MessageRole.AGENT.value,
++        content=reply_text,
++        task_id=task.id if task else None,
++    )
++    db.add(agent_msg)
++    conv.updated_at = human.created_at  # touch
++    db.flush()
++
++    return {
++        "human": human,
++        "agent": agent_msg,
++        "task": task,
++        "conversation": conv,
++    }
+diff --git a/app/static/workspace/app.js b/app/static/workspace/app.js
+index c978d6c..ffafc53 100644
+--- a/app/static/workspace/app.js
++++ b/app/static/workspace/app.js
+@@ -102,6 +102,7 @@
+     approvals: "Approval Center",
+     agents: "Agent Dashboard",
+     consult: "Consultation",
++    chat: "Agent Chat",
+     directory: "Agent Directory",
+     knowledge: "Knowledge",
+     delegation: "Delegation",
+@@ -126,6 +127,7 @@
+       loadTasks();
+     }
+     if (name === "approvals") loadApprovals();
++    if (name === "chat") loadChat();
+     if (name === "consult") loadAgentOptions();
+     if (name === "directory") listDirectory();
+     if (name === "delegation") {
+@@ -1082,12 +1084,107 @@
+     };
+   }
+ 
++
++
++  // Job 21 — Agent chat
++  let chatConversationId = null;
++
++  async function loadChat() {
++    try {
++      const agents = await api(`/companies/${state.companyId}/agents`);
++      const sel = $("chatAgent");
++      if (!sel) return;
++      sel.innerHTML = agents
++        .map((a) => `<option value="${a.id}">${a.name}</option>`)
++        .join("");
++    } catch (err) {
++      const log = $("chatLog");
++      if (log) log.textContent = err.message;
++    }
++  }
++
++  async function refreshChatMessages() {
++    if (!chatConversationId) return;
++    const msgs = await api(
++      `/companies/${state.companyId}/conversations/${chatConversationId}/messages`
++    );
++    const thread = $("chatThread");
++    if (!thread) return;
++    thread.innerHTML = msgs
++      .map(
++        (m) =>
++          `<div class="list-item"><strong>${m.role}</strong><div>${String(
++            m.content || ""
++          ).replace(/</g, "&lt;")}</div><div class="muted">${m.created_at || ""}${
++            m.task_id ? " · task " + m.task_id : ""
++          }</div></div>`
++      )
++      .join("");
++  }
++
++  (function wireChat() {
++    const start = $("btnChatStart");
++    if (start)
++      start.onclick = async () => {
++        try {
++          const agentId = $("chatAgent").value;
++          const title = ($("chatTitle") && $("chatTitle").value) || "Chat";
++          const conv = await api(`/companies/${state.companyId}/conversations`, {
++            method: "POST",
++            body: JSON.stringify({ agent_instance_id: agentId, title }),
++          });
++          chatConversationId = conv.id;
++          const meta = $("chatMeta");
++          if (meta) meta.textContent = "Conversation " + conv.id;
++          await refreshChatMessages();
++        } catch (err) {
++          const log = $("chatLog");
++          if (log) log.textContent = err.message;
++        }
++      };
++    const send = $("btnChatSend");
++    if (send)
++      send.onclick = async () => {
++        if (!chatConversationId) {
++          const log = $("chatLog");
++          if (log) log.textContent = "Start a conversation first.";
++          return;
++        }
++        try {
++          const content = ($("chatInput") && $("chatInput").value.trim()) || "";
++          if (!content) return;
++          await api(
++            `/companies/${state.companyId}/conversations/${chatConversationId}/messages`,
++            {
++              method: "POST",
++              body: JSON.stringify({
++                content,
++                create_task: !!(
++                  $("chatCreateTask") && $("chatCreateTask").checked
++                ),
++                task_mode:
++                  ($("chatTaskMode") && $("chatTaskMode").value) || "consult",
++              }),
++            }
++          );
++          if ($("chatInput")) $("chatInput").value = "";
++          await refreshChatMessages();
++        } catch (err) {
++          const log = $("chatLog");
++          if (log) log.textContent = err.message;
++        }
++      };
++    const ref = $("btnChatRefresh");
++    if (ref) ref.onclick = () => refreshChatMessages();
++  })();
++
+   if (state.companyId && state.userId) {
+     $("btnConnect").click();
+   }
+ })();
+ 
+ 
++
+   // Job 20 — notification controls
+   document.addEventListener("DOMContentLoaded", () => {
+     const r = $("btnNotifRefresh");
+@@ -1104,3 +1201,6 @@
+         await refreshInboxBadge();
+       };
+   });
++
++
++  // 
+\ No newline at end of file
+diff --git a/app/static/workspace/index.html b/app/static/workspace/index.html
+index 8d407c2..6581978 100644
+--- a/app/static/workspace/index.html
++++ b/app/static/workspace/index.html
+@@ -25,6 +25,7 @@
+         <button data-view="approvals" class="nav-btn" disabled>Approval Center</button>
+         <button data-view="agents" class="nav-btn" disabled>Agent Dashboard</button>
+         <button data-view="consult" class="nav-btn" disabled>Consultation</button>
++        <button data-view="chat" class="nav-btn" disabled>Agent Chat</button>
+         <button data-view="directory" class="nav-btn" disabled>Directory</button>
+         <button data-view="knowledge" class="nav-btn" disabled>Knowledge</button>
+         <button data-view="delegation" class="nav-btn" disabled>Delegation</button>
+@@ -208,6 +209,42 @@
+       </section>
+ 
+       <!-- CONSULT -->
++      
++      <section id="view-chat" class="view">
++        <div class="card">
++          <h2>Agent Chat</h2>
++          <p class="muted">Advisory transcript only. Tools require creating a Task.</p>
++          <div class="grid-2">
++            <label>Agent
++              <select id="chatAgent"></select>
++            </label>
++            <label>Conversation title
++              <input id="chatTitle" value="Workspace chat" />
++            </label>
++          </div>
++          <div class="row">
++            <button id="btnChatStart" class="primary">Start conversation</button>
++            <button id="btnChatRefresh" class="secondary">Refresh messages</button>
++          </div>
++          <div id="chatMeta" class="muted"></div>
++          <div id="chatThread" class="list" style="max-height:360px;overflow:auto"></div>
++          <label>Message
++            <textarea id="chatInput" rows="3" placeholder="Ask the agent..."></textarea>
++          </label>
++          <div class="row">
++            <button id="btnChatSend" class="primary">Send</button>
++            <label style="display:flex;align-items:center;gap:6px">
++              <input type="checkbox" id="chatCreateTask" /> Create Task
++            </label>
++            <select id="chatTaskMode">
++              <option value="consult">consult</option>
++              <option value="execute">execute</option>
++            </select>
++          </div>
++          <pre id="chatLog" class="log"></pre>
++        </div>
++      </section>
++
+       <section id="view-consult" class="view">
+         <div class="card">
+           <h2>Consultation</h2>
+diff --git a/tests/test_conversation_job21.py b/tests/test_conversation_job21.py
+new file mode 100644
+index 0000000..905e110
+--- /dev/null
++++ b/tests/test_conversation_job21.py
+@@ -0,0 +1,137 @@
++"""Job 21 — Agent conversation / chat transcript tests."""
++
++import pytest
++from fastapi.testclient import TestClient
++from sqlalchemy import create_engine
++from sqlalchemy.orm import sessionmaker
++
++from app.core.database import Base, get_db
++from app.main import app
++from app.services.seed import seed_catalog
++
++engine = create_engine(
++    "sqlite:///./test_conversation_job21.db",
++    connect_args={"check_same_thread": False},
++)
++SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
++
++
++@pytest.fixture()
++def client():
++    Base.metadata.drop_all(bind=engine)
++    Base.metadata.create_all(bind=engine)
++    with SessionLocal() as db:
++        seed_catalog(db)
++
++    def override():
++        db = SessionLocal()
++        try:
++            yield db
++        finally:
++            db.close()
++
++    app.dependency_overrides[get_db] = override
++    with TestClient(app) as c:
++        yield c
++    app.dependency_overrides.pop(get_db, None)
++
++
++def setup(client):
++    co = client.post("/api/v1/companies", json={"name": "Chat Co"}).json()
++    owner = client.post(
++        f"/api/v1/companies/{co['id']}/users",
++        json={
++            "name": "Owner",
++            "email": "chat@test.local",
++            "role": "owner",
++            "password": "secret123",
++        },
++    ).json()
++    headers = {"X-User-ID": owner["id"]}
++    catalog = client.get("/api/v1/agent-catalog").json()
++    res = next(i for i in catalog if i["slug"] == "reservation")
++    hire = client.post(
++        f"/api/v1/companies/{co['id']}/agents/{res['id']}/hire",
++        json={"name": "Desk AI"},
++        headers=headers,
++    )
++    assert hire.status_code == 201
++    return co["id"], headers, hire.json()["id"]
++
++
++def test_conversation_flow(client):
++    company_id, headers, agent_id = setup(client)
++    conv = client.post(
++        f"/api/v1/companies/{company_id}/conversations",
++        headers=headers,
++        json={"agent_instance_id": agent_id, "title": "Help"},
++    )
++    assert conv.status_code == 201, conv.text
++    cid = conv.json()["id"]
++
++    msgs = client.get(
++        f"/api/v1/companies/{company_id}/conversations/{cid}/messages",
++        headers=headers,
++    )
++    assert msgs.status_code == 200
++    assert any(m["role"] == "system" for m in msgs.json())
++
++    post = client.post(
++        f"/api/v1/companies/{company_id}/conversations/{cid}/messages",
++        headers=headers,
++        json={"content": "What is available next week?", "create_task": False},
++    )
++    assert post.status_code == 200, post.text
++    body = post.json()
++    assert body["human"]["role"] == "human"
++    assert body["agent"]["role"] == "agent"
++    assert body["task_id"] is None
++
++    post2 = client.post(
++        f"/api/v1/companies/{company_id}/conversations/{cid}/messages",
++        headers=headers,
++        json={
++            "content": "Create a reservation for Ada",
++            "create_task": True,
++            "task_mode": "consult",
++        },
++    )
++    assert post2.status_code == 200, post2.text
++    assert post2.json()["task_id"]
++    # task exists
++    tasks = client.get(
++        f"/api/v1/companies/{company_id}/tasks",
++        headers=headers,
++    )
++    assert any(t["id"] == post2.json()["task_id"] for t in tasks.json())
++
++
++def test_tenant_isolation(client):
++    company_id, headers, agent_id = setup(client)
++    conv = client.post(
++        f"/api/v1/companies/{company_id}/conversations",
++        headers=headers,
++        json={"agent_instance_id": agent_id, "title": "Private"},
++    ).json()
++    # other company
++    co2 = client.post("/api/v1/companies", json={"name": "Other Chat"}).json()
++    owner2 = client.post(
++        f"/api/v1/companies/{co2['id']}/users",
++        json={
++            "name": "O2",
++            "email": "o2chat@test.local",
++            "role": "owner",
++            "password": "secret123",
++        },
++    ).json()
++    bad = client.get(
++        f"/api/v1/companies/{company_id}/conversations/{conv['id']}/messages",
++        headers={"X-User-ID": owner2["id"]},
++    )
++    assert bad.status_code == 403
++
++
++def test_workspace_has_chat(client):
++    html = client.get("/workspace").text
++    assert "view-chat" in html
++    assert "btnChatSend" in html

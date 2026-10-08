@@ -1,0 +1,380 @@
+diff --git a/.env.example b/.env.example
+index 5049998..a242008 100644
+--- a/.env.example
++++ b/.env.example
+@@ -33,3 +33,9 @@ LOG_JSON=false
+ LLM_PROVIDER=ollama
+ OLLAMA_BASE_URL=http://127.0.0.1:11434
+ OLLAMA_MODEL=qwen3:1.7b
++
++# Platform admin (Job 23)
++PLATFORM_ADMIN_EMAILS=
++ALLOW_IMPERSONATION=false
++
++# Migrations: production containers run `alembic upgrade head` on start (Job 24)
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+new file mode 100644
+index 0000000..05c39d4
+--- /dev/null
++++ b/.github/workflows/ci.yml
+@@ -0,0 +1,61 @@
++name: CI
++
++on:
++  push:
++    branches: [development, main]
++  pull_request:
++    branches: [development, main]
++
++jobs:
++  test-sqlite:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-python@v5
++        with:
++          python-version: "3.12"
++      - name: Install dependencies
++        run: |
++          python -m pip install --upgrade pip
++          pip install -r requirements.txt
++          pip install pytest httpx
++      - name: Pytest (SQLite)
++        env:
++          DATABASE_URL: sqlite:///./ci_test.db
++        run: pytest -q
++
++  test-postgres:
++    runs-on: ubuntu-latest
++    services:
++      postgres:
++        image: postgres:16-alpine
++        env:
++          POSTGRES_USER: aiep
++          POSTGRES_PASSWORD: aiep
++          POSTGRES_DB: aiep
++        ports:
++          - 5432:5432
++        options: >-
++          --health-cmd "pg_isready -U aiep -d aiep"
++          --health-interval 5s
++          --health-timeout 5s
++          --health-retries 10
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-python@v5
++        with:
++          python-version: "3.12"
++      - name: Install dependencies
++        run: |
++          python -m pip install --upgrade pip
++          pip install -r requirements.txt
++          pip install pytest httpx
++      - name: Alembic upgrade head
++        env:
++          DATABASE_URL: postgresql+psycopg://aiep:aiep@localhost:5432/aiep
++        run: alembic upgrade head
++      - name: Pytest subset (Postgres)
++        env:
++          DATABASE_URL: postgresql+psycopg://aiep:aiep@localhost:5432/aiep
++        run: |
++          pytest -q tests/test_production_infra.py tests/test_quotas_job22.py tests/test_admin_job23.py tests/test_alembic_job24.py
+diff --git a/Dockerfile b/Dockerfile
+index baf65a1..dd07652 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -14,6 +14,9 @@ RUN pip install --no-cache-dir -r requirements.txt
+ 
+ COPY . .
+ 
++RUN chmod +x scripts/docker-entrypoint.sh scripts/backup_postgres.sh scripts/restore_postgres.sh
++
+ EXPOSE 8000
+ 
++ENTRYPOINT ["./scripts/docker-entrypoint.sh"]
+ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+diff --git a/alembic/versions/0002_schema_sync_job24.py b/alembic/versions/0002_schema_sync_job24.py
+new file mode 100644
+index 0000000..3e33f76
+--- /dev/null
++++ b/alembic/versions/0002_schema_sync_job24.py
+@@ -0,0 +1,62 @@
++"""schema sync Job 15–23 tables and columns
++
++Revision ID: 0002_schema_sync
++Revises: 0001_initial
++Create Date: 2026-10-08
++
++Idempotent sync for production Postgres cutover after MVP growth.
++Uses SQLAlchemy metadata create_all (safe if tables exist) and
++explicit column adds for common drift cases.
++"""
++
++from typing import Sequence, Union
++
++from alembic import op
++import sqlalchemy as sa
++from sqlalchemy import inspect, text
++
++revision: str = "0002_schema_sync"
++down_revision: Union[str, None] = "0001_initial"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def _add_column_if_missing(table: str, column: str, ddl: str) -> None:
++    bind = op.get_bind()
++    inspector = inspect(bind)
++    if table not in inspector.get_table_names():
++        return
++    cols = {c["name"] for c in inspector.get_columns(table)}
++    if column in cols:
++        return
++    bind.execute(text(f"ALTER TABLE {table} ADD COLUMN {ddl}"))
++
++
++def upgrade() -> None:
++    bind = op.get_bind()
++    from app.core.database import Base
++    import app.models  # noqa: F401
++
++    # Create any tables added after baseline (notifications, plans, etc.)
++    Base.metadata.create_all(bind=bind)
++
++    # Column drift that create_all does not fix on existing tables
++    _add_column_if_missing("users", "password_hash", "password_hash VARCHAR(255)")
++    _add_column_if_missing("users", "department_id", "department_id VARCHAR(36)")
++    _add_column_if_missing(
++        "users", "is_platform_admin", "is_platform_admin BOOLEAN DEFAULT FALSE"
++    )
++    _add_column_if_missing(
++        "companies", "is_active", "is_active BOOLEAN DEFAULT TRUE"
++    )
++    _add_column_if_missing(
++        "agent_instances", "department_id", "department_id VARCHAR(36)"
++    )
++    _add_column_if_missing(
++        "agent_instances", "supervisor_user_id", "supervisor_user_id VARCHAR(36)"
++    )
++
++
++def downgrade() -> None:
++    # Non-destructive downgrade: leave columns/tables in place.
++    pass
+diff --git a/app/core/database.py b/app/core/database.py
+index a5b1416..f1b1f11 100644
+--- a/app/core/database.py
++++ b/app/core/database.py
+@@ -38,7 +38,11 @@ SessionLocal = sessionmaker(
+ 
+ 
+ def init_db() -> None:
+-    """Create tables and run lightweight SQLite column migrations."""
++    """Create tables and run lightweight SQLite column migrations.
++
++    Production Postgres should rely on Alembic (`alembic upgrade head`
++    via Docker entrypoint). create_all remains a safety net for local/dev.
++    """
+     import app.models  # noqa: F401
+ 
+     Base.metadata.create_all(bind=engine)
+diff --git a/docs/BACKUP_RESTORE.md b/docs/BACKUP_RESTORE.md
+new file mode 100644
+index 0000000..12b5999
+--- /dev/null
++++ b/docs/BACKUP_RESTORE.md
+@@ -0,0 +1,55 @@
++# Backup & Restore (PostgreSQL)
++
++**Job 24 — Production cutover**
++
++## Prerequisites
++
++- PostgreSQL 14+ (compose uses 16)
++- `pg_dump` / `psql` client tools
++- `DATABASE_URL=postgresql+psycopg://USER:PASS@HOST:5432/DB`
++
++## Backup
++
++```bash
++export DATABASE_URL=postgresql+psycopg://aiep:aiep@localhost:5432/aiep
++./scripts/backup_postgres.sh ./backups
++```
++
++Produces: `backups/aiep_YYYYMMDDTHHMMSSZ.sql.gz`
++
++### Recommended cadence
++
++| Environment | Cadence |
++|-------------|---------|
++| Production | Daily full + WAL if using continuous archiving |
++| Staging | Weekly |
++| Before migration | Always |
++
++## Restore
++
++```bash
++export DATABASE_URL=postgresql+psycopg://aiep:aiep@localhost:5432/aiep
++./scripts/restore_postgres.sh ./backups/aiep_....sql.gz
++alembic upgrade head
++```
++
++## Docker Compose
++
++```bash
++docker compose exec db pg_dump -U aiep aiep | gzip > backup.sql.gz
++gunzip -c backup.sql.gz | docker compose exec -T db psql -U aiep aiep
++```
++
++## Cutover checklist (SQLite → Postgres)
++
++1. Start Postgres (`docker compose up -d db`).
++2. Set `DATABASE_URL` to Postgres URL.
++3. `alembic upgrade head`
++4. (Optional) Export critical SQLite rows and import via scripts/app.
++5. Point API/worker at Postgres; smoke-test `/health/ready`.
++6. Keep SQLite file as cold backup for 7 days.
++
++## Notes
++
++- Application still supports SQLite for local/dev via `create_all` + `migrate_sqlite_schema`.
++- Production containers run `alembic upgrade head` in the entrypoint before uvicorn.
+diff --git a/scripts/backup_postgres.sh b/scripts/backup_postgres.sh
+new file mode 100755
+index 0000000..2c8eb67
+--- /dev/null
++++ b/scripts/backup_postgres.sh
+@@ -0,0 +1,17 @@
++#!/usr/bin/env sh
++# Logical backup for AI Employee Platform (Postgres).
++# Usage: ./scripts/backup_postgres.sh [output_dir]
++set -e
++OUT_DIR="${1:-./backups}"
++mkdir -p "$OUT_DIR"
++STAMP=$(date -u +%Y%m%dT%H%M%SZ)
++FILE="$OUT_DIR/aiep_${STAMP}.sql.gz"
++
++: "${DATABASE_URL:?Set DATABASE_URL (postgresql+psycopg://...)}"
++
++# Strip SQLAlchemy driver prefix for pg_dump
++PG_URL=$(echo "$DATABASE_URL" | sed 's#postgresql+psycopg://#postgresql://#')
++
++echo "Backing up to $FILE"
++pg_dump "$PG_URL" | gzip > "$FILE"
++echo "Done: $FILE"
+diff --git a/scripts/docker-entrypoint.sh b/scripts/docker-entrypoint.sh
+new file mode 100755
+index 0000000..cafe359
+--- /dev/null
++++ b/scripts/docker-entrypoint.sh
+@@ -0,0 +1,16 @@
++#!/usr/bin/env sh
++set -e
++
++echo "[entrypoint] Waiting for database migrations..."
++
++# Run Alembic to head (Postgres production path)
++if command -v alembic >/dev/null 2>&1; then
++  alembic upgrade head
++  echo "[entrypoint] alembic upgrade head — OK"
++else
++  echo "[entrypoint] alembic not found; skipping migrations" >&2
++fi
++
++# Optional seed of catalog/plans is handled at API startup / first request
++
++exec "$@"
+diff --git a/scripts/restore_postgres.sh b/scripts/restore_postgres.sh
+new file mode 100755
+index 0000000..c766ac5
+--- /dev/null
++++ b/scripts/restore_postgres.sh
+@@ -0,0 +1,12 @@
++#!/usr/bin/env sh
++# Restore logical dump. WARNING: overwrites target database objects.
++# Usage: ./scripts/restore_postgres.sh path/to/aiep_....sql.gz
++set -e
++DUMP="${1:?Usage: $0 path/to/dump.sql.gz}"
++: "${DATABASE_URL:?Set DATABASE_URL}"
++
++PG_URL=$(echo "$DATABASE_URL" | sed 's#postgresql+psycopg://#postgresql://#')
++
++echo "Restoring $DUMP into $PG_URL"
++gunzip -c "$DUMP" | psql "$PG_URL"
++echo "Restore complete. Run: alembic upgrade head"
+diff --git a/tests/test_alembic_job24.py b/tests/test_alembic_job24.py
+new file mode 100644
+index 0000000..5511a4f
+--- /dev/null
++++ b/tests/test_alembic_job24.py
+@@ -0,0 +1,70 @@
++"""Job 24 — Alembic migration path tests."""
++
++from pathlib import Path
++import os
++
++import pytest
++from alembic import command
++from alembic.config import Config
++from sqlalchemy import create_engine, inspect, text
++
++
++ROOT = Path(__file__).resolve().parents[1]
++
++
++def _alembic_cfg(url: str) -> Config:
++    cfg = Config(str(ROOT / "alembic.ini"))
++    cfg.set_main_option("script_location", str(ROOT / "alembic"))
++    cfg.set_main_option("sqlalchemy.url", url)
++    return cfg
++
++
++def test_alembic_upgrade_head_sqlite(tmp_path, monkeypatch):
++    db_path = tmp_path / "alembic_job24.db"
++    url = f"sqlite:///{db_path}"
++    monkeypatch.setenv("DATABASE_URL", url)
++    # settings may already be imported — force via alembic env reading os.environ
++    # Reload is heavy; alembic env.py calls settings.database_url each run
++    # pydantic settings may cache — clear if needed
++    from app.core import config as cfg_mod
++    cfg_mod.settings = cfg_mod.Settings()
++
++    cfg = _alembic_cfg(url)
++    command.upgrade(cfg, "head")
++
++    engine = create_engine(url)
++    tables = set(inspect(engine).get_table_names())
++    for required in (
++        "companies",
++        "users",
++        "agent_instances",
++        "tasks",
++        "notifications",
++        "plans",
++        "conversations",
++        "alembic_version",
++    ):
++        assert required in tables, f"missing table {required} in {tables}"
++
++    with engine.connect() as conn:
++        ver = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
++    assert ver == "0002_schema_sync"
++
++
++def test_docker_entrypoint_script_exists():
++    script = ROOT / "scripts" / "docker-entrypoint.sh"
++    assert script.is_file()
++    text_body = script.read_text()
++    assert "alembic upgrade head" in text_body
++
++
++def test_backup_docs_exist():
++    assert (ROOT / "docs" / "BACKUP_RESTORE.md").is_file()
++    assert (ROOT / "scripts" / "backup_postgres.sh").is_file()
++    assert (ROOT / "scripts" / "restore_postgres.sh").is_file()
++
++
++def test_dockerfile_uses_entrypoint():
++    docker = (ROOT / "Dockerfile").read_text()
++    assert "docker-entrypoint.sh" in docker
++    assert "ENTRYPOINT" in docker

@@ -1,0 +1,590 @@
+diff --git a/app/api/routes.py b/app/api/routes.py
+index ed734dd..79d1877 100644
+--- a/app/api/routes.py
++++ b/app/api/routes.py
+@@ -103,6 +103,9 @@ from app.schemas.domain import (
+     TaskRead,
+     UserCreate,
+     UserRead,
++    MarketplaceTemplateRead,
++    MarketplaceInstallationRead,
++    MarketplaceInstallResponse,
+ )
+ from app.services.skills import (
+     assign_skill,
+@@ -4347,3 +4350,100 @@ async def upload_agent_knowledge_document(
+     db.refresh(document)
+ 
+     return document
++
++
++# ---------------------------------------------------------------------------
++# Job 30 — Marketplace read-model
++# ---------------------------------------------------------------------------
++
++
++@router.get(
++    "/marketplace/templates",
++    response_model=list[MarketplaceTemplateRead],
++)
++def marketplace_list_templates(
++    db: Session = Depends(get_db),
++):
++    """Public catalog of published agent templates (no auth required)."""
++    from app.services.marketplace import list_public_templates
++
++    return list_public_templates(db)
++
++
++@router.get(
++    "/marketplace/templates/{catalog_id}",
++    response_model=MarketplaceTemplateRead,
++)
++def marketplace_get_template(
++    catalog_id: str,
++    db: Session = Depends(get_db),
++):
++    from app.services.marketplace import get_public_template
++
++    catalog = get_public_template(db, catalog_id)
++    if not catalog:
++        raise HTTPException(status_code=404, detail="Template not found or not published")
++    return catalog
++
++
++@router.post(
++    "/companies/{company_id}/marketplace/install/{catalog_id}",
++    response_model=MarketplaceInstallResponse,
++    status_code=status.HTTP_201_CREATED,
++)
++def marketplace_install_template(
++    company_id: str,
++    catalog_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None, alias="X-User-ID"),
++    authorization: str | None = Header(default=None),
++):
++    """Install published template into company: copy platform skills → company skills."""
++    from app.services.marketplace import install_template
++    from app.schemas.domain import MarketplaceInstallResponse, MarketplaceInstallationRead
++
++    user = require_company_user(db, company_id, x_user_id, authorization=authorization)
++    try:
++        installation = install_template(
++            db,
++            company_id=company_id,
++            catalog_id=catalog_id,
++            user_id=user.id,
++        )
++    except ValueError as exc:
++        msg = str(exc)
++        if "already installed" in msg.lower():
++            raise HTTPException(status_code=409, detail=msg) from exc
++        raise HTTPException(status_code=404, detail=msg) from exc
++
++    skill_rows = []
++    for sid in installation.installed_skill_ids or []:
++        sk = db.get(Skill, sid)
++        if sk:
++            skill_rows.append(sk)
++
++    db.commit()
++    db.refresh(installation)
++
++    return MarketplaceInstallResponse(
++        installation=MarketplaceInstallationRead.model_validate(installation),
++        skills=[SkillRead.model_validate(s) for s in skill_rows],
++    )
++
++
++@router.get(
++    "/companies/{company_id}/marketplace/installations",
++    response_model=list[MarketplaceInstallationRead],
++)
++def marketplace_list_installations(
++    company_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None, alias="X-User-ID"),
++    authorization: str | None = Header(default=None),
++):
++    from app.services.marketplace import list_installations
++    from app.schemas.domain import MarketplaceInstallationRead
++
++    require_company_user(db, company_id, x_user_id, authorization=authorization)
++    rows = list_installations(db, company_id=company_id)
++    return [MarketplaceInstallationRead.model_validate(r) for r in rows]
+diff --git a/app/models/__init__.py b/app/models/__init__.py
+index 62add67..cbcd328 100644
+--- a/app/models/__init__.py
++++ b/app/models/__init__.py
+@@ -1,4 +1,5 @@
+ from app.models.entities import (
++    MarketplaceInstallation,
+     Integration,
+     IntegrationStatus,
+     LLMUsage,
+@@ -47,6 +48,7 @@ from app.models.entities import (
+ )
+ 
+ __all__ = [
++    "MarketplaceInstallation",
+     "Integration",
+     "IntegrationStatus",
+     "LLMUsage",
+diff --git a/app/models/entities.py b/app/models/entities.py
+index 52c27e3..a54be25 100644
+--- a/app/models/entities.py
++++ b/app/models/entities.py
+@@ -1338,4 +1338,44 @@ class Approval(Base):
+         nullable=False,
+     )
+ 
+-    company: Mapped[Company] = relationship()
+\ No newline at end of file
++    company: Mapped[Company] = relationship()
++class MarketplaceInstallation(Base):
++    """Record of installing a platform AgentCatalog template into a company (Job 30).
++
++    Install copies platform skills referenced by the template into company-scoped
++    skills so they become company-visible and customizable. No payments.
++    """
++
++    __tablename__ = "marketplace_installations"
++    __table_args__ = (
++        UniqueConstraint(
++            "company_id",
++            "catalog_agent_id",
++            name="uq_company_marketplace_catalog",
++        ),
++    )
++
++    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
++    company_id: Mapped[str] = mapped_column(
++        ForeignKey("companies.id", ondelete="CASCADE"),
++        nullable=False,
++        index=True,
++    )
++    catalog_agent_id: Mapped[str] = mapped_column(
++        ForeignKey("agent_catalog.id"),
++        nullable=False,
++        index=True,
++    )
++    installed_by_user_id: Mapped[str | None] = mapped_column(
++        ForeignKey("users.id", ondelete="SET NULL"),
++        nullable=True,
++        index=True,
++    )
++    # IDs of company-scoped Skill rows created or reused by this install
++    installed_skill_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
++    template_version: Mapped[str] = mapped_column(String(32), default="1.0.0", nullable=False)
++    catalog_slug: Mapped[str] = mapped_column(String(100), nullable=False)
++    catalog_name: Mapped[str] = mapped_column(String(200), nullable=False)
++    installed_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), default=utcnow, nullable=False
++    )
+diff --git a/app/schemas/domain.py b/app/schemas/domain.py
+index 69899bb..cf7997d 100644
+--- a/app/schemas/domain.py
++++ b/app/schemas/domain.py
+@@ -748,3 +748,43 @@ class ChatPostResponse(BaseModel):
+     human: MessageRead
+     agent: MessageRead
+     task_id: str | None = None
++
++
++# --- Job 30 Marketplace ---
++
++class MarketplaceTemplateRead(BaseModel):
++    """Public catalog metadata for marketplace listing."""
++
++    model_config = ConfigDict(from_attributes=True)
++    id: str
++    slug: str
++    name: str
++    description: str
++    role: str
++    skills: list
++    allowed_tools: list
++    version: str = "1.0.0"
++    scope: list = []
++    responsibilities: list = []
++    evaluation_criteria: list = []
++    is_published: bool = True
++    published_at: datetime | None = None
++    changelog: str = ""
++
++
++class MarketplaceInstallationRead(BaseModel):
++    model_config = ConfigDict(from_attributes=True)
++    id: str
++    company_id: str
++    catalog_agent_id: str
++    installed_by_user_id: str | None = None
++    installed_skill_ids: list
++    template_version: str
++    catalog_slug: str
++    catalog_name: str
++    installed_at: datetime
++
++
++class MarketplaceInstallResponse(BaseModel):
++    installation: MarketplaceInstallationRead
++    skills: list[SkillRead]
+diff --git a/app/services/marketplace.py b/app/services/marketplace.py
+new file mode 100644
+index 0000000..5d8a3d7
+--- /dev/null
++++ b/app/services/marketplace.py
+@@ -0,0 +1,154 @@
++"""Job 30 — Marketplace read-model: public templates + install (copy) into company."""
++
++from __future__ import annotations
++
++from sqlalchemy import select
++from sqlalchemy.orm import Session
++
++from app.models.entities import AgentCatalog, MarketplaceInstallation, Skill
++from app.services.audit import record_audit
++
++
++def list_public_templates(db: Session) -> list[AgentCatalog]:
++    """Published platform agent templates (marketplace catalog)."""
++    return list(
++        db.scalars(
++            select(AgentCatalog).where(
++                AgentCatalog.status == "active",
++                AgentCatalog.is_published.is_(True),
++            ).order_by(AgentCatalog.name)
++        ).all()
++    )
++
++
++def get_public_template(db: Session, catalog_id: str) -> AgentCatalog | None:
++    catalog = db.get(AgentCatalog, catalog_id)
++    if not catalog or catalog.status != "active" or not catalog.is_published:
++        return None
++    return catalog
++
++
++def _copy_skill_to_company(
++    db: Session,
++    *,
++    company_id: str,
++    platform_skill: Skill,
++) -> Skill:
++    """Ensure a company-scoped copy of a platform skill exists; return it."""
++    existing = db.scalar(
++        select(Skill).where(
++            Skill.company_id == company_id,
++            Skill.slug == platform_skill.slug,
++            Skill.is_active.is_(True),
++        )
++    )
++    if existing:
++        return existing
++
++    company_skill = Skill(
++        company_id=company_id,
++        slug=platform_skill.slug,
++        name=platform_skill.name,
++        description=platform_skill.description or "",
++        objective=platform_skill.objective or "",
++        instructions=platform_skill.instructions or "",
++        required_knowledge=list(platform_skill.required_knowledge or []),
++        allowed_tools=list(platform_skill.allowed_tools or []),
++        workflow=list(platform_skill.workflow or []),
++        evaluation_criteria=list(platform_skill.evaluation_criteria or []),
++        version=platform_skill.version or "1.0.0",
++        is_active=True,
++    )
++    db.add(company_skill)
++    db.flush()
++    return company_skill
++
++
++def install_template(
++    db: Session,
++    *,
++    company_id: str,
++    catalog_id: str,
++    user_id: str | None,
++) -> MarketplaceInstallation:
++    """
++    Install a published platform template into a company.
++
++    Copies each platform skill referenced by the template into company-scoped
++    skills (idempotent per slug). Records MarketplaceInstallation.
++    Re-install of same catalog for company is rejected (unique constraint).
++    """
++    catalog = get_public_template(db, catalog_id)
++    if not catalog:
++        raise ValueError("Template not found or not published")
++
++    existing_install = db.scalar(
++        select(MarketplaceInstallation).where(
++            MarketplaceInstallation.company_id == company_id,
++            MarketplaceInstallation.catalog_agent_id == catalog_id,
++        )
++    )
++    if existing_install:
++        raise ValueError("Template already installed for this company")
++
++    skill_keys = list(catalog.skills or [])
++    installed_ids: list[str] = []
++
++    for key in skill_keys:
++        platform_skill = db.scalar(
++            select(Skill).where(
++                Skill.slug == key,
++                Skill.company_id.is_(None),
++                Skill.is_active.is_(True),
++            )
++        )
++        if not platform_skill:
++            # Template may reference a skill not yet seeded; skip silently
++            continue
++        company_skill = _copy_skill_to_company(
++            db, company_id=company_id, platform_skill=platform_skill
++        )
++        installed_ids.append(company_skill.id)
++
++    installation = MarketplaceInstallation(
++        company_id=company_id,
++        catalog_agent_id=catalog.id,
++        installed_by_user_id=user_id,
++        installed_skill_ids=installed_ids,
++        template_version=catalog.version or "1.0.0",
++        catalog_slug=catalog.slug,
++        catalog_name=catalog.name,
++    )
++    db.add(installation)
++    db.flush()
++
++    record_audit(
++        db,
++        company_id=company_id,
++        user_id=user_id,
++        agent_instance_id=None,
++        action="marketplace.install",
++        resource_type="marketplace_installation",
++        resource_id=installation.id,
++        status="success",
++        details={
++            "catalog_slug": catalog.slug,
++            "catalog_id": catalog.id,
++            "template_version": catalog.version,
++            "skill_count": len(installed_ids),
++            "installed_skill_ids": installed_ids,
++        },
++    )
++    return installation
++
++
++def list_installations(
++    db: Session, *, company_id: str
++) -> list[MarketplaceInstallation]:
++    return list(
++        db.scalars(
++            select(MarketplaceInstallation)
++            .where(MarketplaceInstallation.company_id == company_id)
++            .order_by(MarketplaceInstallation.installed_at.desc())
++        ).all()
++    )
+diff --git a/tests/test_marketplace_job30.py b/tests/test_marketplace_job30.py
+new file mode 100644
+index 0000000..9054e94
+--- /dev/null
++++ b/tests/test_marketplace_job30.py
+@@ -0,0 +1,192 @@
++"""Job 30 — Marketplace read-model tests."""
++
++import pytest
++from fastapi.testclient import TestClient
++from sqlalchemy import create_engine, select
++from sqlalchemy.orm import sessionmaker
++
++from app.core.database import Base, get_db
++from app.main import app
++from app.models.entities import MarketplaceInstallation, Skill
++from app.services.seed import seed_catalog
++
++engine = create_engine(
++    "sqlite:///./test_marketplace_job30.db",
++    connect_args={"check_same_thread": False},
++)
++SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
++
++
++@pytest.fixture()
++def client():
++    Base.metadata.drop_all(bind=engine)
++    Base.metadata.create_all(bind=engine)
++    with SessionLocal() as db:
++        seed_catalog(db)
++
++    def override():
++        db = SessionLocal()
++        try:
++            yield db
++        finally:
++            db.close()
++
++    prev = app.dependency_overrides.get(get_db)
++    app.dependency_overrides[get_db] = override
++    with TestClient(app) as c:
++        yield c
++    if prev is None:
++        app.dependency_overrides.pop(get_db, None)
++    else:
++        app.dependency_overrides[get_db] = prev
++
++
++def setup(client):
++    co = client.post("/api/v1/companies", json={"name": "Market Co"}).json()
++    owner = client.post(
++        f"/api/v1/companies/{co['id']}/users",
++        json={
++            "name": "Owner",
++            "email": "market@test.local",
++            "role": "owner",
++            "password": "secret123",
++        },
++    ).json()
++    return co["id"], {"X-User-ID": owner["id"]}
++
++
++def test_list_public_templates(client):
++    r = client.get("/api/v1/marketplace/templates")
++    assert r.status_code == 200, r.text
++    items = r.json()
++    assert len(items) >= 2
++    slugs = {t["slug"] for t in items}
++    assert "reservation" in slugs
++    assert "contract-manager" in slugs
++    for t in items:
++        assert t["is_published"] is True
++        assert "name" in t
++        assert "skills" in t
++
++
++def test_get_public_template(client):
++    listing = client.get("/api/v1/marketplace/templates").json()
++    catalog_id = listing[0]["id"]
++    r = client.get(f"/api/v1/marketplace/templates/{catalog_id}")
++    assert r.status_code == 200
++    assert r.json()["id"] == catalog_id
++
++    bad = client.get("/api/v1/marketplace/templates/does-not-exist")
++    assert bad.status_code == 404
++
++
++def test_install_creates_company_skills(client):
++    company_id, headers = setup(client)
++    templates = client.get("/api/v1/marketplace/templates").json()
++    reservation = next(t for t in templates if t["slug"] == "reservation")
++    catalog_id = reservation["id"]
++
++    # Before install: company skills list empty (or no platform copies)
++    before = client.get(
++        f"/api/v1/companies/{company_id}/skills", headers=headers
++    ).json()
++    before_slugs = {s["slug"] for s in before}
++
++    inst = client.post(
++        f"/api/v1/companies/{company_id}/marketplace/install/{catalog_id}",
++        headers=headers,
++    )
++    assert inst.status_code == 201, inst.text
++    body = inst.json()
++    assert body["installation"]["catalog_slug"] == "reservation"
++    assert body["installation"]["company_id"] == company_id
++    assert len(body["installation"]["installed_skill_ids"]) >= 1
++    assert len(body["skills"]) >= 1
++    for sk in body["skills"]:
++        assert sk["company_id"] == company_id
++        assert sk["is_active"] is True
++
++    # Response skills must be company-scoped copies
++    company_skills = [s for s in body["skills"] if s["company_id"] == company_id]
++    assert len(company_skills) >= 1
++    # And appear in company skill list with company_id set
++    after = client.get(
++        f"/api/v1/companies/{company_id}/skills", headers=headers
++    ).json()
++    company_only = [s for s in after if s.get("company_id") == company_id]
++    assert len(company_only) >= 1
++    assert {s["slug"] for s in company_skills} <= {s["slug"] for s in company_only}
++
++
++def test_install_idempotent_conflict(client):
++    company_id, headers = setup(client)
++    templates = client.get("/api/v1/marketplace/templates").json()
++    catalog_id = next(t for t in templates if t["slug"] == "reservation")["id"]
++
++    first = client.post(
++        f"/api/v1/companies/{company_id}/marketplace/install/{catalog_id}",
++        headers=headers,
++    )
++    assert first.status_code == 201
++
++    second = client.post(
++        f"/api/v1/companies/{company_id}/marketplace/install/{catalog_id}",
++        headers=headers,
++    )
++    assert second.status_code == 409
++
++
++def test_list_installations(client):
++    company_id, headers = setup(client)
++    templates = client.get("/api/v1/marketplace/templates").json()
++    catalog_id = next(t for t in templates if t["slug"] == "contract-manager")["id"]
++
++    client.post(
++        f"/api/v1/companies/{company_id}/marketplace/install/{catalog_id}",
++        headers=headers,
++    )
++    listing = client.get(
++        f"/api/v1/companies/{company_id}/marketplace/installations",
++        headers=headers,
++    )
++    assert listing.status_code == 200
++    rows = listing.json()
++    assert len(rows) == 1
++    assert rows[0]["catalog_slug"] == "contract-manager"
++
++
++def test_tenant_isolation_installations(client):
++    co1, h1 = setup(client)
++    # second company
++    co2 = client.post("/api/v1/companies", json={"name": "Other Market Co"}).json()
++    owner2 = client.post(
++        f"/api/v1/companies/{co2['id']}/users",
++        json={
++            "name": "Owner2",
++            "email": "market2@test.local",
++            "role": "owner",
++            "password": "secret123",
++        },
++    ).json()
++    h2 = {"X-User-ID": owner2["id"]}
++
++    templates = client.get("/api/v1/marketplace/templates").json()
++    catalog_id = templates[0]["id"]
++    client.post(
++        f"/api/v1/companies/{co1}/marketplace/install/{catalog_id}",
++        headers=h1,
++    )
++
++    # Company 2 cannot see company 1 installations
++    other = client.get(
++        f"/api/v1/companies/{co1}/marketplace/installations",
++        headers=h2,
++    )
++    assert other.status_code == 403
++
++    empty = client.get(
++        f"/api/v1/companies/{co2['id']}/marketplace/installations",
++        headers=h2,
++    )
++    assert empty.status_code == 200
++    assert empty.json() == []

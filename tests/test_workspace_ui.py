@@ -1,4 +1,4 @@
-"""Phase 8 + Job 12 — Human workspace UI smoke tests."""
+"""Phase 8 + Job 12 + Workspace v1 — Human workspace UI smoke tests."""
 
 from pathlib import Path
 
@@ -13,22 +13,21 @@ def test_workspace_page_served():
     res = client.get("/workspace")
     assert res.status_code == 200
     assert "text/html" in res.headers.get("content-type", "")
-    assert b"AI Employee Workspace" in res.content
+    assert b"AI Employee Workspace" in res.content or b"AI Employee Platform" in res.content
 
 
-def test_job12_nav_surfaces_present():
-    """Job 12: task center, approval center, AI inbox, agent dashboard, workforce."""
+def test_v1_nav_surfaces_present():
+    """v1 product shell: home, inbox, chat, tasks, approvals, agents, marketplace."""
     html = client.get("/workspace").content
-    assert b"Workforce Overview" in html
-    assert b"AI Inbox" in html
-    assert b"Task Center" in html
-    assert b"Approval Center" in html
-    assert b"Agent Dashboard" in html
-    assert b'data-view="workforce"' in html
-    assert b'data-view="inbox"' in html
-    assert b'data-view="tasks"' in html
-    assert b'data-view="approvals"' in html
-    assert b'data-view="agents"' in html
+    assert b"AI Inbox" in html or b"Inbox" in html
+    assert b"data-view=\"inbox\"" in html
+    assert b"data-view=\"tasks\"" in html
+    assert b"data-view=\"approvals\"" in html
+    assert b"data-view=\"agents\"" in html
+    assert b"data-view=\"chat\"" in html
+    assert b"data-view=\"marketplace\"" in html
+    assert b"data-view=\"home\"" in html
+    assert b"loginGate" in html or b"Quick start" in html
 
 
 def test_workspace_assets_css_js():
@@ -39,7 +38,8 @@ def test_workspace_assets_css_js():
     js = client.get("/workspace/assets/app.js")
     assert js.status_code == 200
     assert b"loadInbox" in js.content
-    assert b"loadWorkforce" in js.content
+    assert b"loadHome" in js.content
+    assert b"loadMarketplace" in js.content
     assert b"btnConsult" in js.content or b"consult" in js.content
     assert b"delegation" in js.content
     assert b"automations" in js.content
