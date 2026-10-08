@@ -24,6 +24,15 @@
     automation: ["Automation", "Rules and triggers"],
     notifications: ["Notifications", "Alerts and updates"],
     governance: ["Governance", "Metrics and audit"],
+    policies: ["Policy Simulator", "Dry-run ALLOW / APPROVAL / DENY"],
+    departments: ["Departments", "Org structure for agents and users"],
+    skills: ["Skills", "Platform and company capabilities"],
+    usage: ["Plan & Usage", "Quotas and metering"],
+    tools: ["Tools", "Catalog side-effect and risk"],
+    integrations: ["Integrations", "Webhooks, email, calendar"],
+    workflows: ["Workflows", "Multi-step automation"],
+    cost: ["LLM Cost", "Token usage and spend"],
+    scopecheck: ["Scope Check", "Out-of-scope detection"],
   };
 
   function clearSession() {
@@ -159,6 +168,15 @@
     if (name === "notifications") loadNotifications();
     if (name === "governance") loadGovernance();
     if (name === "directory") listDirectory();
+    if (name === "policies") { loadAgentOptions(); }
+    if (name === "departments") loadDepartments();
+    if (name === "skills") loadSkills();
+    if (name === "usage") loadUsage();
+    if (name === "tools") loadTools();
+    if (name === "integrations") loadIntegrations();
+    if (name === "workflows") { loadAgentOptions(); loadWorkflows(); }
+    if (name === "cost") loadCost();
+    if (name === "scopecheck") loadAgentOptions();
   }
 
   document.querySelectorAll(".nav-btn").forEach((btn) => {
@@ -349,7 +367,7 @@
       const opts = (agents || [])
         .map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`)
         .join("");
-      ["taskAgent", "consultAgent", "chatAgent", "delSource", "delTarget", "autoAgent"].forEach(
+      ["taskAgent", "consultAgent", "chatAgent", "delSource", "delTarget", "autoAgent", "simAgent", "scopeAgent", "wfAgent"].forEach(
         (id) => {
           const el = $(id);
           if (el) el.innerHTML = opts;
@@ -1114,6 +1132,260 @@
       log.textContent = err.message;
     }
   };
+
+
+  // ----- Policy simulate -----
+  if ($("btnSimulate"))
+    $("btnSimulate").onclick = async () => {
+      const log = $("simResult");
+      try {
+        let args = {};
+        try {
+          args = JSON.parse($("simArgs").value || "{}");
+        } catch {
+          throw new Error("Arguments must be valid JSON");
+        }
+        const res = await api(`/companies/${state.companyId}/policies/simulate`, {
+          method: "POST",
+          body: JSON.stringify({
+            agent_instance_id: $("simAgent").value,
+            tool_name: $("simTool").value.trim(),
+            arguments: args,
+            context: {},
+          }),
+        });
+        log.textContent = JSON.stringify(res, null, 2);
+      } catch (err) {
+        log.textContent = err.message;
+      }
+    };
+
+  // ----- Departments -----
+  async function loadDepartments() {
+    if (!state.companyId) return;
+    try {
+      const list = await api(`/companies/${state.companyId}/departments`);
+      $("deptList").innerHTML =
+        (list || [])
+          .map(
+            (d) =>
+              `<div class="item"><strong>${escapeHtml(d.name)}</strong><div class="meta">${escapeHtml(d.id)}</div></div>`
+          )
+          .join("") || `<div class="empty">No departments.</div>`;
+    } catch (err) {
+      $("deptList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+    }
+  }
+  if ($("btnRefreshDept")) $("btnRefreshDept").onclick = loadDepartments;
+  if ($("btnCreateDept"))
+    $("btnCreateDept").onclick = async () => {
+      try {
+        await api(`/companies/${state.companyId}/departments`, {
+          method: "POST",
+          body: JSON.stringify({ name: $("deptName").value.trim() }),
+        });
+        $("deptName").value = "";
+        loadDepartments();
+      } catch (err) {
+        alert(err.message);
+      }
+    };
+
+  // ----- Skills -----
+  async function loadSkills() {
+    if (!state.companyId) return;
+    try {
+      const list = await api(`/companies/${state.companyId}/skills`);
+      $("skillsList").innerHTML =
+        (list || [])
+          .map(
+            (s) => `<div class="agent-card">
+          <h4>${escapeHtml(s.name)}</h4>
+          <div class="muted" style="font-size:.8rem">${escapeHtml(s.slug)} · ${s.company_id ? "company" : "platform"} · v${escapeHtml(s.version || "")}</div>
+          <p style="font-size:.85rem;color:var(--muted)">${escapeHtml((s.description || "").slice(0, 100))}</p>
+        </div>`
+          )
+          .join("") || `<div class="empty">No skills.</div>`;
+    } catch (err) {
+      $("skillsList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+    }
+  }
+  if ($("btnRefreshSkills")) $("btnRefreshSkills").onclick = loadSkills;
+
+  // ----- Usage -----
+  async function loadUsage() {
+    if (!state.companyId) return;
+    try {
+      const u = await api(`/companies/${state.companyId}/usage`);
+      const plan = u.plan || u.plan_code || "—";
+      $("usageStats").innerHTML = [
+        ["Plan", plan],
+        ["Agents", `${u.agents_used ?? u.agent_count ?? "—"} / ${u.max_agents ?? "∞"}`],
+        ["Tasks today", `${u.tasks_today ?? "—"} / ${u.max_tasks_day ?? "∞"}`],
+        ["Automations", `${u.automations_used ?? "—"} / ${u.max_automations ?? "∞"}`],
+      ]
+        .map(
+          ([l, n]) =>
+            `<div class="stat"><div class="n" style="font-size:1.1rem">${escapeHtml(String(n))}</div><div class="l">${l}</div></div>`
+        )
+        .join("");
+      $("usageDetail").textContent = JSON.stringify(u, null, 2);
+    } catch (err) {
+      $("usageStats").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+    }
+  }
+  if ($("btnRefreshUsage")) $("btnRefreshUsage").onclick = loadUsage;
+
+  // ----- Tools -----
+  async function loadTools() {
+    try {
+      const list = await api("/tools");
+      $("toolsList").innerHTML =
+        (list || [])
+          .map(
+            (t) => `<div class="item">
+          <strong>${escapeHtml(t.name || t.id)}</strong>
+          <div class="meta">side_effect: ${escapeHtml(String(t.side_effect ?? "—"))} · risk: ${escapeHtml(String(t.risk ?? "—"))}</div>
+        </div>`
+          )
+          .join("") || `<div class="empty">No tools registered.</div>`;
+    } catch (err) {
+      $("toolsList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+    }
+  }
+  if ($("btnRefreshTools")) $("btnRefreshTools").onclick = loadTools;
+
+  // ----- Integrations -----
+  async function loadIntegrations() {
+    if (!state.companyId) return;
+    try {
+      const list = await api(`/companies/${state.companyId}/integrations`);
+      $("integList").innerHTML =
+        (list || [])
+          .map(
+            (i) => `<div class="item">
+          <strong>${escapeHtml(i.name)}</strong>
+          <div class="meta">${escapeHtml(i.type)} · ${escapeHtml(i.status || "")}</div>
+        </div>`
+          )
+          .join("") || `<div class="empty">No integrations.</div>`;
+    } catch (err) {
+      $("integList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+    }
+  }
+  if ($("btnRefreshInteg")) $("btnRefreshInteg").onclick = loadIntegrations;
+  if ($("btnCreateInteg"))
+    $("btnCreateInteg").onclick = async () => {
+      const log = $("integLog");
+      try {
+        const body = await api(`/companies/${state.companyId}/integrations`, {
+          method: "POST",
+          body: JSON.stringify({
+            name: $("integName").value.trim() || "Integration",
+            type: $("integType").value,
+            config: {},
+            event_map: {},
+          }),
+        });
+        log.textContent =
+          "Created " +
+          body.name +
+          (body.webhook_secret ? "\nWebhook secret (once): " + body.webhook_secret : "");
+        loadIntegrations();
+      } catch (err) {
+        log.textContent = err.message;
+      }
+    };
+
+  // ----- Workflows -----
+  async function loadWorkflows() {
+    if (!state.companyId) return;
+    try {
+      const list = await api(`/companies/${state.companyId}/workflows`);
+      $("wfList").innerHTML =
+        (list || [])
+          .map(
+            (w) => `<div class="item">
+          <strong>${escapeHtml(w.name || w.id)}</strong>
+          <div class="meta">steps: ${escapeHtml(String((w.steps || []).length))} · ${escapeHtml(w.id || "")}</div>
+        </div>`
+          )
+          .join("") || `<div class="empty">No workflows.</div>`;
+    } catch (err) {
+      $("wfList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+    }
+  }
+  if ($("btnRefreshWf")) $("btnRefreshWf").onclick = loadWorkflows;
+  if ($("btnCreateWf"))
+    $("btnCreateWf").onclick = async () => {
+      const log = $("wfLog");
+      try {
+        const agentId = $("wfAgent").value;
+        const body = await api(`/companies/${state.companyId}/workflows`, {
+          method: "POST",
+          body: JSON.stringify({
+            name: $("wfName").value.trim() || "Demo workflow",
+            steps: [
+              {
+                type: "create_task",
+                agent_instance_id: agentId,
+                title: "Workflow task",
+                instruction: "Automated step from workflow",
+                mode: "consult",
+              },
+              { type: "wait_approval" },
+            ],
+          }),
+        });
+        log.textContent = "Created " + JSON.stringify(body, null, 2);
+        loadWorkflows();
+      } catch (err) {
+        log.textContent = err.message;
+      }
+    };
+
+  // ----- Cost -----
+  async function loadCost() {
+    if (!state.companyId) return;
+    try {
+      const c = await api(`/companies/${state.companyId}/governance/cost`);
+      $("costStats").innerHTML = [
+        ["Calls", c.total_calls ?? c.call_count ?? "—"],
+        ["Tokens", c.total_tokens ?? "—"],
+        ["Est. cost", c.estimated_cost ?? c.total_cost ?? "—"],
+        ["Budget", c.budget_status ?? c.soft_limit ?? "—"],
+      ]
+        .map(
+          ([l, n]) =>
+            `<div class="stat"><div class="n" style="font-size:1.1rem">${escapeHtml(String(n))}</div><div class="l">${l}</div></div>`
+        )
+        .join("");
+      $("costDetail").textContent = JSON.stringify(c, null, 2);
+    } catch (err) {
+      $("costStats").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+    }
+  }
+  if ($("btnRefreshCost")) $("btnRefreshCost").onclick = loadCost;
+
+  // ----- Scope check -----
+  if ($("btnScopeCheck"))
+    $("btnScopeCheck").onclick = async () => {
+      const log = $("scopeResult");
+      try {
+        const res = await api(`/companies/${state.companyId}/scope-check`, {
+          method: "POST",
+          body: JSON.stringify({
+            agent_instance_id: $("scopeAgent").value,
+            instruction: $("scopeInstruction").value.trim(),
+            auto_delegate: !!$("scopeAutoDel").checked,
+          }),
+        });
+        log.textContent = JSON.stringify(res, null, 2);
+      } catch (err) {
+        log.textContent = err.message;
+      }
+    };
+
 
   // ----- Boot -----
   if ($("apiBase")) $("apiBase").value = state.apiBase;

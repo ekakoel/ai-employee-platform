@@ -28,6 +28,12 @@ def test_v1_nav_surfaces_present():
     assert b"data-view=\"marketplace\"" in html
     assert b"data-view=\"home\"" in html
     assert b"loginGate" in html or b"Quick start" in html
+    assert b"data-view=\"policies\"" in html
+    assert b"data-view=\"tools\"" in html
+    assert b"data-view=\"integrations\"" in html
+    assert b"data-view=\"workflows\"" in html
+    assert b"data-view=\"cost\"" in html
+    assert b"data-view=\"scopecheck\"" in html
 
 
 def test_workspace_assets_css_js():
@@ -40,6 +46,10 @@ def test_workspace_assets_css_js():
     assert b"loadInbox" in js.content
     assert b"loadHome" in js.content
     assert b"loadMarketplace" in js.content
+    assert b"loadTools" in js.content
+    assert b"loadIntegrations" in js.content
+    assert b"loadCost" in js.content
+    assert b"btnSimulate" in js.content
     assert b"btnConsult" in js.content or b"consult" in js.content
     assert b"delegation" in js.content
     assert b"automations" in js.content

@@ -100,6 +100,17 @@
         <div class="nav-group">Company</div>
         <button data-view="notifications" class="nav-btn">Notifications</button>
         <button data-view="governance" class="nav-btn">Governance</button>
+        <button data-view="policies" class="nav-btn">Policy Simulator</button>
+        <button data-view="departments" class="nav-btn">Departments</button>
+        <button data-view="skills" class="nav-btn">Skills</button>
+        <button data-view="usage" class="nav-btn">Plan & Usage</button>
+
+        <div class="nav-group">Developer</div>
+        <button data-view="tools" class="nav-btn">Tools</button>
+        <button data-view="integrations" class="nav-btn">Integrations</button>
+        <button data-view="workflows" class="nav-btn">Workflows</button>
+        <button data-view="cost" class="nav-btn">LLM Cost</button>
+        <button data-view="scopecheck" class="nav-btn">Scope Check</button>
       </nav>
 
       <div class="session" id="sessionBox">
@@ -435,6 +446,168 @@
           <div id="notifList" class="list"></div>
         </div>
       </section>
+
+
+      <!-- POLICIES -->
+      <section id="view-policies" class="view">
+        <div class="card">
+          <h2>Policy simulator</h2>
+          <p class="muted">Dry-run ALLOW / APPROVAL / DENY without executing tools.</p>
+          <div class="grid-2">
+            <label>Agent
+              <select id="simAgent"></select>
+            </label>
+            <label>Tool name
+              <input id="simTool" placeholder="send_quotation" />
+            </label>
+            <label class="full">Arguments (JSON)
+              <textarea id="simArgs" rows="3">{}</textarea>
+            </label>
+          </div>
+          <button id="btnSimulate" class="primary">Simulate</button>
+          <pre id="simResult" class="log"></pre>
+        </div>
+      </section>
+
+      <!-- DEPARTMENTS -->
+      <section id="view-departments" class="view">
+        <div class="card">
+          <h2>Departments</h2>
+          <div class="row">
+            <input id="deptName" placeholder="Department name" />
+            <button id="btnCreateDept" class="primary">Create</button>
+            <button id="btnRefreshDept" class="secondary">Refresh</button>
+          </div>
+          <div id="deptList" class="list"></div>
+        </div>
+      </section>
+
+      <!-- SKILLS -->
+      <section id="view-skills" class="view">
+        <div class="card">
+          <div class="row between">
+            <div>
+              <h2>Skills</h2>
+              <p class="muted">Platform + company-scoped skills available to agents.</p>
+            </div>
+            <button id="btnRefreshSkills" class="secondary">Refresh</button>
+          </div>
+          <div id="skillsList" class="cards"></div>
+        </div>
+      </section>
+
+      <!-- USAGE -->
+      <section id="view-usage" class="view">
+        <div class="card">
+          <div class="row between">
+            <h2>Plan & usage</h2>
+            <button id="btnRefreshUsage" class="secondary">Refresh</button>
+          </div>
+          <div id="usageStats" class="stats"></div>
+          <pre id="usageDetail" class="log"></pre>
+        </div>
+      </section>
+
+      <!-- TOOLS -->
+      <section id="view-tools" class="view">
+        <div class="card">
+          <div class="row between">
+            <div>
+              <h2>Tool catalog</h2>
+              <p class="muted">Platform tools with side-effect and risk metadata.</p>
+            </div>
+            <button id="btnRefreshTools" class="secondary">Refresh</button>
+          </div>
+          <div id="toolsList" class="list"></div>
+        </div>
+      </section>
+
+      <!-- INTEGRATIONS -->
+      <section id="view-integrations" class="view">
+        <div class="card">
+          <h2>Create integration</h2>
+          <div class="grid-2">
+            <label>Name
+              <input id="integName" placeholder="Mailer" />
+            </label>
+            <label>Type
+              <select id="integType">
+                <option value="email_outbound">email_outbound</option>
+                <option value="calendar">calendar</option>
+                <option value="webhook_generic">webhook_generic</option>
+              </select>
+            </label>
+          </div>
+          <button id="btnCreateInteg" class="primary">Create</button>
+          <pre id="integLog" class="log"></pre>
+        </div>
+        <div class="card">
+          <div class="row between">
+            <h3>Integrations</h3>
+            <button id="btnRefreshInteg" class="secondary">Refresh</button>
+          </div>
+          <div id="integList" class="list"></div>
+        </div>
+      </section>
+
+      <!-- WORKFLOWS -->
+      <section id="view-workflows" class="view">
+        <div class="card">
+          <div class="row between">
+            <div>
+              <h2>Workflows</h2>
+              <p class="muted">Multi-step automation definitions and runs.</p>
+            </div>
+            <button id="btnRefreshWf" class="secondary">Refresh</button>
+          </div>
+          <div id="wfList" class="list"></div>
+        </div>
+        <div class="card">
+          <h3>Create simple workflow</h3>
+          <div class="grid-2">
+            <label>Name
+              <input id="wfName" placeholder="Onboarding flow" />
+            </label>
+            <label>Agent for task step
+              <select id="wfAgent"></select>
+            </label>
+          </div>
+          <button id="btnCreateWf" class="primary">Create (task → wait_approval)</button>
+          <pre id="wfLog" class="log"></pre>
+        </div>
+      </section>
+
+      <!-- COST -->
+      <section id="view-cost" class="view">
+        <div class="card">
+          <div class="row between">
+            <h2>LLM cost</h2>
+            <button id="btnRefreshCost" class="secondary">Refresh</button>
+          </div>
+          <div id="costStats" class="stats"></div>
+          <pre id="costDetail" class="log"></pre>
+        </div>
+      </section>
+
+      <!-- SCOPE CHECK -->
+      <section id="view-scopecheck" class="view">
+        <div class="card">
+          <h2>Scope check</h2>
+          <p class="muted">Test whether an instruction is in-scope; get directory matches if not.</p>
+          <div class="grid-2">
+            <label>Agent
+              <select id="scopeAgent"></select>
+            </label>
+            <label class="full">Instruction
+              <textarea id="scopeInstruction" rows="3" placeholder="Analyze this supplier contract…"></textarea>
+            </label>
+          </div>
+          <label class="check-row"><input type="checkbox" id="scopeAutoDel" /> Suggest auto-delegate</label>
+          <button id="btnScopeCheck" class="primary">Check scope</button>
+          <pre id="scopeResult" class="log"></pre>
+        </div>
+      </section>
+
 
       <!-- GOVERNANCE -->
       <section id="view-governance" class="view">
