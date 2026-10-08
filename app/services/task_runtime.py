@@ -1,4 +1,5 @@
 
+import json
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
@@ -495,7 +496,7 @@ class TaskRuntimeService:
         # LLM EXECUTION
         # ---------------------------------------------------------
         try:
-            self.executor.execute_with_llm(
+            runtime_result = self.executor.execute_with_llm(
                 db,
                 context=context,
                 provider=self.provider,

@@ -898,6 +898,40 @@
             (t) => `<div class="item">
           <strong>${escapeHtml(t.title || t.id)}</strong>
           <div class="meta">${escapeHtml(t.status)} · ${escapeHtml(t.mode || "")}</div>
+          <div class="actions">
+            ${
+              t.result
+                ? `<button
+                    class="secondary btn-view-output"
+                    data-id="${t.id}"
+                  >
+                    View output
+                  </button>`
+                : ""
+            }
+
+            ${
+              t.status === "pending" && t.mode === "consult"
+                ? `<button
+                    class="primary btn-run-t"
+                    data-id="${t.id}"
+                  >
+                    Run consult
+                  </button>`
+                : ""
+            }
+
+            ${
+              t.status === "pending" && t.mode === "execute"
+                ? `<button
+                    class="primary btn-run-execute"
+                    data-id="${t.id}"
+                  >
+                    Execute
+                  </button>`
+                : ""
+            }
+          </div>
           ${t.mode === "consult" && t.status === "pending"
                 ? `<div class="actions">
                   <button
@@ -940,6 +974,25 @@
           loadTasks();
         };
       });
+      document.querySelectorAll(".btn-run-execute").forEach((b) => {
+        b.onclick = async () => {
+          try {
+            const result = await api(
+              `/companies/${state.companyId}/tasks/${b.dataset.id}/execute-llm`,
+              {
+                method: "POST",
+                body: "{}",
+              }
+            );
+
+            showOutputCenter(result);
+            await loadTasks();
+            refreshInboxBadge();
+          } catch (err) {
+            alert(err.message);
+          }
+        };
+      });
     } catch (err) {
       $("taskList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
     }
@@ -948,7 +1001,7 @@
   $("taskFilter").onchange = loadTasks;
   $("btnCreateTask").onclick = async () => {
     try {
-      await api(`/companies/${state.companyId}/tasks`, {
+      const task = await api(`/companies/${state.companyId}/tasks`, {
         method: "POST",
         body: JSON.stringify({
           agent_instance_id: $("taskAgent").value,
