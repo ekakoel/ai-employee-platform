@@ -1,4 +1,7 @@
 from app.models.entities import (
+    WorkflowDefinition,
+    WorkflowRun,
+    WorkflowRunStatus,
     Plan,
     CompanyPlanSubscription,
     UsageCounter,
@@ -41,6 +44,9 @@ from app.models.entities import (
 )
 
 __all__ = [
+    "WorkflowDefinition",
+    "WorkflowRun",
+    "WorkflowRunStatus",
     "Plan",
     "CompanyPlanSubscription",
     "UsageCounter",

@@ -2724,6 +2724,219 @@ def set_company_plan_api(
     db.commit()
     return usage_summary(db, company_id)
 
+
+@router.get("/companies/{company_id}/workflows")
+def list_workflows(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    from app.models.entities import WorkflowDefinition
+
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    rows = list(
+        db.scalars(
+            select(WorkflowDefinition)
+            .where(WorkflowDefinition.company_id == company_id)
+            .order_by(WorkflowDefinition.created_at.desc())
+        ).all()
+    )
+    return [
+        {
+            "id": w.id,
+            "company_id": w.company_id,
+            "name": w.name,
+            "description": w.description,
+            "steps": w.steps,
+            "is_active": w.is_active,
+            "created_at": w.created_at.isoformat() if w.created_at else None,
+        }
+        for w in rows
+    ]
+
+
+@router.post("/companies/{company_id}/workflows", status_code=status.HTTP_201_CREATED)
+def create_workflow(
+    company_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    from app.services.workflow import create_definition
+
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.manage")
+    name = str(payload.get("name") or "").strip()
+    steps = payload.get("steps") or []
+    if not name:
+        raise HTTPException(status_code=400, detail="name required")
+    try:
+        wf = create_definition(
+            db,
+            company_id=company_id,
+            name=name,
+            steps=steps,
+            description=str(payload.get("description") or ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(wf)
+    return {
+        "id": wf.id,
+        "name": wf.name,
+        "steps": wf.steps,
+        "is_active": wf.is_active,
+    }
+
+
+@router.post(
+    "/companies/{company_id}/workflows/{workflow_id}/runs",
+    status_code=status.HTTP_201_CREATED,
+)
+def start_workflow_run(
+    company_id: str,
+    workflow_id: str,
+    payload: dict | None = None,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    from app.models.entities import WorkflowDefinition
+    from app.services.workflow import start_run
+
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "task.create")
+    wf = db.scalar(
+        select(WorkflowDefinition).where(
+            WorkflowDefinition.id == workflow_id,
+            WorkflowDefinition.company_id == company_id,
+        )
+    )
+    if not wf:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    body = payload or {}
+    try:
+        run = start_run(
+            db,
+            definition=wf,
+            context=dict(body.get("context") or {}),
+            user_id=user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(run)
+    return {
+        "id": run.id,
+        "definition_id": run.definition_id,
+        "status": run.status,
+        "current_step": run.current_step,
+        "context": run.context,
+        "step_results": run.step_results,
+        "error_message": run.error_message,
+    }
+
+
+@router.get("/companies/{company_id}/workflow-runs/{run_id}")
+def get_workflow_run(
+    company_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    from app.models.entities import WorkflowRun
+
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    run = db.scalar(
+        select(WorkflowRun).where(
+            WorkflowRun.id == run_id,
+            WorkflowRun.company_id == company_id,
+        )
+    )
+    if not run:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
+    return {
+        "id": run.id,
+        "definition_id": run.definition_id,
+        "status": run.status,
+        "current_step": run.current_step,
+        "context": run.context,
+        "step_results": run.step_results,
+        "error_message": run.error_message,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+    }
+
+
+@router.post("/companies/{company_id}/workflow-runs/{run_id}/resume")
+def resume_workflow_run(
+    company_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    from app.models.entities import WorkflowRun
+    from app.services.workflow import resume_run
+
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "task.create")
+    run = db.scalar(
+        select(WorkflowRun).where(
+            WorkflowRun.id == run_id,
+            WorkflowRun.company_id == company_id,
+        )
+    )
+    if not run:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
+    try:
+        run = resume_run(db, run=run, user_id=user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(run)
+    return {
+        "id": run.id,
+        "status": run.status,
+        "current_step": run.current_step,
+        "context": run.context,
+        "step_results": run.step_results,
+        "error_message": run.error_message,
+    }
+
+
+@router.post("/companies/{company_id}/workflow-runs/{run_id}/advance")
+def advance_workflow_run(
+    company_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    from app.models.entities import WorkflowRun
+    from app.services.workflow import advance_run
+
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "task.create")
+    run = db.scalar(
+        select(WorkflowRun).where(
+            WorkflowRun.id == run_id,
+            WorkflowRun.company_id == company_id,
+        )
+    )
+    if not run:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
+    run = advance_run(db, run=run, user_id=user.id)
+    db.commit()
+    db.refresh(run)
+    return {
+        "id": run.id,
+        "status": run.status,
+        "current_step": run.current_step,
+        "step_results": run.step_results,
+        "error_message": run.error_message,
+    }
+
 @router.get("/tools")
 def list_platform_tools():
     """Job 19 — global tool catalog (metadata: side_effect, risk)."""
