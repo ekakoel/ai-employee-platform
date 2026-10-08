@@ -158,6 +158,11 @@ class ToolExecutor:
                 action=tool_name,
                 reason=decision.reason,
                 payload=arguments,
+                policy_id=decision.policy_id,
+                approval_level=decision.approval_level,
+                route_to_role=decision.route_to_role,
+                route_to_user_id=decision.route_to_user_id,
+                route_explanation=decision.route_explanation,
             )
 
             raise ApprovalRequiredError(

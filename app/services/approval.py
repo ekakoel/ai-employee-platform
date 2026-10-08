@@ -21,14 +21,29 @@ class ApprovalService:
         reason: str,
         payload: dict | None = None,
         policy_id: str | None = None,
+        approval_level: str | None = None,
+        route_to_role: str | None = None,
+        route_to_user_id: str | None = None,
+        route_explanation: str | None = None,
     ) -> Approval:
+        body = dict(payload or {})
+        # Job 17 — embed routing metadata for Approval Center / notify later
+        if approval_level or route_to_role or route_to_user_id:
+            body["_routing"] = {
+                "policy_id": policy_id,
+                "approval_level": approval_level,
+                "route_to_role": route_to_role,
+                "route_to_user_id": route_to_user_id,
+                "route_explanation": route_explanation,
+            }
+
         approval = Approval(
             company_id=company_id,
             task_id=task_id,
             agent_instance_id=agent_instance_id,
             action=action,
             reason=reason,
-            payload=payload or {},
+            payload=body,
             status=ApprovalStatus.PENDING.value,
         )
 
@@ -47,6 +62,10 @@ class ApprovalService:
             details={
                 "action": action,
                 "reason": reason,
+                "policy_id": policy_id,
+                "approval_level": approval_level,
+                "route_to_role": route_to_role,
+                "route_to_user_id": route_to_user_id,
             },
         )
 

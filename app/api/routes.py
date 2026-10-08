@@ -45,6 +45,7 @@ from app.schemas.domain import (
     SkillCreate,
     SkillRead,
     PolicyCreate,
+    PolicySimulateRequest,
     PolicyRead,
     PolicyUpdate,
     AgentMemoryCreate,
@@ -95,6 +96,7 @@ from app.services.skills import (
     list_available_skills,
 )
 from app.services.scope_guard import check_scope, enforce_scope_on_task
+from app.security.policy_engine import get_policy_engine
 from app.services.governance import (
     agent_performance,
     approval_metrics,
@@ -2122,6 +2124,30 @@ def delete_knowledge(
     db.commit()
 
 
+
+
+@router.post(
+    "/companies/{company_id}/policies/simulate",
+)
+def simulate_policy(
+    company_id: str,
+    payload: PolicySimulateRequest,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """Job 17 — dry-run policy decision with explanation trail."""
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    agent = get_owned_agent_or_404(db, company_id, payload.agent_instance_id)
+    engine = get_policy_engine(db)
+    result = engine.simulate(
+        company_id=company_id,
+        agent_instance_id=agent.id,
+        tool_name=payload.tool_name,
+        arguments=payload.arguments,
+        context=payload.context,
+    )
+    return result
 
 @router.post(
     "/companies/{company_id}/scope-check",

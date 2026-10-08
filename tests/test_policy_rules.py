@@ -65,10 +65,14 @@ def setup_company(client):
 
 
 def test_conditions_match_amount():
-    assert conditions_match({"amount_gt": 1000}, {"amount": 1500}) is True
-    assert conditions_match({"amount_gt": 1000}, {"amount": 500}) is False
-    assert conditions_match({"amount_lte": 100}, {"amount": 100}) is True
-    assert conditions_match({}, {"amount": 1}) is True
+    ok, _ = conditions_match({"amount_gt": 1000}, {"amount": 1500})
+    assert ok is True
+    ok, _ = conditions_match({"amount_gt": 1000}, {"amount": 500})
+    assert ok is False
+    ok, _ = conditions_match({"amount_lte": 100}, {"amount": 100})
+    assert ok is True
+    ok, _ = conditions_match({}, {"amount": 1})
+    assert ok is True
 
 
 def test_low_risk_automatic_allow(client):

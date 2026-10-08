@@ -607,3 +607,30 @@ class ScopeCheckResponse(BaseModel):
     suggested_target_id: str | None = None
     auto_delegated: bool = False
     delegation_request_id: str | None = None
+
+
+class PolicySimulateRequest(BaseModel):
+    agent_instance_id: str
+    tool_name: str = Field(min_length=1, max_length=150)
+    arguments: dict = Field(default_factory=dict)
+    context: dict = Field(default_factory=dict)
+
+
+class PolicySimulateResponse(BaseModel):
+    simulation: bool = True
+    effect: str
+    reason: str
+    tool_name: str
+    policy_id: str | None = None
+    policy_name: str | None = None
+    approval_level: str | None = None
+    route_to_role: str | None = None
+    route_to_user_id: str | None = None
+    route_explanation: str | None = None
+    matched_conditions: dict = Field(default_factory=dict)
+    considered_policies: list[dict] = Field(default_factory=list)
+    allowed: bool = False
+    requires_approval: bool = False
+    denied: bool = False
+    arguments: dict = Field(default_factory=dict)
+    context: dict = Field(default_factory=dict)
