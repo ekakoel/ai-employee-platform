@@ -47,10 +47,32 @@ class OllamaProvider(LLMProvider):
 
         response: Any = self.client.chat(**kwargs)
 
+        prompt_tokens = None
+        completion_tokens = None
+        total_tokens = None
+        # Ollama may expose eval counts
+        if isinstance(response, dict):
+            prompt_tokens = response.get("prompt_eval_count")
+            completion_tokens = response.get("eval_count")
+            if prompt_tokens is not None or completion_tokens is not None:
+                total_tokens = int(prompt_tokens or 0) + int(completion_tokens or 0)
+        if total_tokens is None:
+            # rough estimate from message sizes
+            chars = sum(len(m.content or "") for m in messages)
+            chars += len(response.get("message", {}).get("content", "") or "")
+            total_tokens = max(1, chars // 4)
+            prompt_tokens = prompt_tokens or max(1, chars // 5)
+            completion_tokens = completion_tokens or max(
+                0, total_tokens - int(prompt_tokens)
+            )
+
         return LLMResponse(
             content=response["message"].get("content", ""),
             model=self.model,
             raw=response,
+            prompt_tokens=int(prompt_tokens or 0),
+            completion_tokens=int(completion_tokens or 0),
+            total_tokens=int(total_tokens or 0),
         )
 
     @staticmethod

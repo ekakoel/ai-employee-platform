@@ -254,7 +254,9 @@ def test_execute_with_llm_uses_agent_runtime(monkeypatch):
             tool_executor,
             tool_registry,
         ):
-            assert provider is provider_instance
+            # Job 28 wraps provider in RecordingLLMProvider
+            inner = getattr(provider, "inner", provider)
+            assert inner is provider_instance
             assert tool_executor is not None
             assert tool_registry is tool_executor.registry
 

@@ -1140,6 +1140,33 @@ class WorkflowRun(Base):
         DateTime(timezone=True), default=utcnow, nullable=False
     )
 
+
+
+class LLMUsage(Base):
+    """Per-call LLM token / cost record (Job 28)."""
+
+    __tablename__ = "llm_usage"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    agent_instance_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True
+    )
+    task_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    model: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    prompt_tokens: Mapped[int] = mapped_column(default=0, nullable=False)
+    completion_tokens: Mapped[int] = mapped_column(default=0, nullable=False)
+    total_tokens: Mapped[int] = mapped_column(default=0, nullable=False)
+    estimated_cost_usd: Mapped[float] = mapped_column(default=0.0, nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), default="ollama", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False, index=True
+    )
+
 class Policy(Base):
     __tablename__ = "policies"
 

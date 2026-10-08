@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     hybrid_keyword_weight: float = 0.4
     hybrid_vector_weight: float = 0.6
 
+    # Job 28 — LLM cost / budget (USD estimates; local models ≈ 0)
+    llm_cost_per_1k_prompt_tokens: float = 0.0
+    llm_cost_per_1k_completion_tokens: float = 0.0
+    llm_daily_budget_usd: float = 0.0  # 0 = no soft limit
+
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",

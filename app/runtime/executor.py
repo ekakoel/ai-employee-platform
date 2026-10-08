@@ -141,8 +141,19 @@ class AgentExecutor:
 
         tool_executor = ToolExecutor(db)
 
+        from app.services.llm_usage import RecordingLLMProvider
+
+        recorded_provider = RecordingLLMProvider(
+            provider,
+            db,
+            company_id=context.company_id,
+            agent_instance_id=context.agent_instance_id,
+            task_id=context.task_id,
+            enforce_budget=True,
+        )
+
         runtime = AgentRuntime(
-            provider=provider,
+            provider=recorded_provider,
             tool_executor=tool_executor,
             tool_registry=tool_executor.registry,
         )

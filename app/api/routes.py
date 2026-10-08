@@ -3701,6 +3701,22 @@ def governance_experiences(
     return experience_quality(db, company_id=company_id)
 
 
+
+@router.get(
+    "/companies/{company_id}/governance/cost",
+)
+def governance_cost(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """Job 28 — LLM token/cost dashboard."""
+    from app.services.governance import llm_cost_dashboard
+
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    return llm_cost_dashboard(db, company_id=company_id)
+
 @router.get(
     "/companies/{company_id}/governance/audit",
 )

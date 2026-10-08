@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.entities import (
+    LLMUsage,
     AgentInstance,
     Approval,
     AuditLog,
@@ -307,3 +308,11 @@ def audit_analytics(
             for a in rows[:25]
         ],
     }
+
+
+
+def llm_cost_dashboard(db: Session, *, company_id: str) -> dict[str, Any]:
+    """Job 28 — cost & token usage for governance UI."""
+    from app.services.llm_usage import cost_summary
+
+    return cost_summary(db, company_id=company_id)
