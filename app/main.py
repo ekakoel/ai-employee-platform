@@ -6,6 +6,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.auth_routes import router as auth_router
+from app.api.admin_routes import router as admin_router
 from app.api.routes import router
 from app.core.config import settings
 from app.core.database import (
@@ -42,6 +43,7 @@ app = FastAPI(
 app.add_middleware(RequestIdMiddleware)
 app.add_middleware(AuthBootstrapMiddleware)
 app.include_router(auth_router)
+app.include_router(admin_router)
 app.include_router(router)
 
 if WORKSPACE_DIR.exists():

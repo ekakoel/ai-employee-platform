@@ -31,6 +31,7 @@ class UserRead(BaseModel):
     role_id: str
     department_id: str | None = None
     status: str
+    is_platform_admin: bool = False
     created_at: datetime
 
 

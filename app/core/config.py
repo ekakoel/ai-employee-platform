@@ -27,6 +27,11 @@ class Settings(BaseSettings):
 
     worker_poll_seconds: int = 30
 
+    # Job 23 — platform admin / support
+    # Comma-separated emails granted platform admin on login/bootstrap
+    platform_admin_emails: str = ""
+    allow_impersonation: bool = False
+
     log_level: str = "INFO"
     log_json: bool = False
 

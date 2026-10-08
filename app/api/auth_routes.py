@@ -17,6 +17,7 @@ from app.core.security import (
 from app.models.entities import Company, Role, User
 from app.services.audit import record_audit
 from app.services.seed import get_or_create_role
+from app.services.platform_admin import sync_platform_admin_flag
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -106,6 +107,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials",
         )
+    sync_platform_admin_flag(db, user)
     record_audit(
         db,
         company_id=user.company_id,

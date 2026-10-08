@@ -84,6 +84,15 @@ def migrate_sqlite_schema() -> None:
                     )
                 )
 
+        if "is_platform_admin" not in user_cols:
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "ALTER TABLE users "
+                        "ADD COLUMN is_platform_admin BOOLEAN DEFAULT 0"
+                    )
+                )
+
     if "agent_instances" in table_names:
         ai_cols = {c["name"] for c in inspector.get_columns("agent_instances")}
         if "department_id" not in ai_cols:
@@ -92,6 +101,17 @@ def migrate_sqlite_schema() -> None:
                     text(
                         "ALTER TABLE agent_instances "
                         "ADD COLUMN department_id VARCHAR(36)"
+                    )
+                )
+
+    if "companies" in table_names:
+        co_cols = {c["name"] for c in inspector.get_columns("companies")}
+        if "is_active" not in co_cols:
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "ALTER TABLE companies "
+                        "ADD COLUMN is_active BOOLEAN DEFAULT 1"
                     )
                 )
 

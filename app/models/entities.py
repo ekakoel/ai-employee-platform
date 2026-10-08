@@ -88,6 +88,7 @@ class Company(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     users: Mapped[list["User"]] = relationship(back_populates="company", cascade="all, delete-orphan")
@@ -240,6 +241,7 @@ class User(Base):
         index=True,
     )
     status: Mapped[str] = mapped_column(String(20), default=UserStatus.ACTIVE.value, nullable=False)
+    is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     company: Mapped[Company] = relationship(back_populates="users")
