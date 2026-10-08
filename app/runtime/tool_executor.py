@@ -14,7 +14,7 @@ from app.security.policy_engine import PolicyEngine
 from app.services.approval import ApprovalService
 from app.services.audit import record_audit
 from app.tools.base import ToolContext
-from app.tools.contract import SearchContractTool
+from app.tools.domain import build_default_tools
 from app.tools.registry import ToolRegistry
 
 
@@ -42,10 +42,8 @@ class ToolExecutor:
         # Tool registry
         # ---------------------------------------------------------
         self.registry = ToolRegistry()
-
-        self.registry.register(
-            SearchContractTool(db)
-        )
+        for tool in build_default_tools(db):
+            self.registry.register(tool)
 
         # ---------------------------------------------------------
         # Security / approval services
@@ -72,7 +70,7 @@ class ToolExecutor:
                 task is not None
                 and task.company_id == company_id
                 and getattr(task, "mode", "execute") == "consult"
-                and not is_read_only_tool(tool_name)
+                and not is_read_only_tool(tool_name, self.registry)
             ):
                 self._audit_denied(
                     company_id=company_id,

@@ -27,8 +27,12 @@ READ_ONLY_TOOL_NAMES = frozenset(
 )
 
 
-def is_read_only_tool(tool_name: str) -> bool:
+def is_read_only_tool(tool_name: str, registry=None) -> bool:
     name = (tool_name or "").strip().lower()
+    if registry is not None:
+        tool = registry.get(name)
+        if tool is not None:
+            return not bool(getattr(tool, "side_effect", True))
     if name in READ_ONLY_TOOL_NAMES:
         return True
     return name.startswith(READ_ONLY_TOOL_PREFIXES)

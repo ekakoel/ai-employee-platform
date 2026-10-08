@@ -2431,6 +2431,18 @@ def add_team_members(
     )
 
 
+
+@router.get("/tools")
+def list_platform_tools():
+    """Job 19 — global tool catalog (metadata: side_effect, risk)."""
+    from app.tools.domain import build_default_tools
+    from app.core.database import SessionLocal
+
+    with SessionLocal() as db:
+        tools = build_default_tools(db)
+        return [t.to_catalog_dict() for t in tools]
+
+
 @router.post(
     "/companies/{company_id}/policies/simulate",
 )

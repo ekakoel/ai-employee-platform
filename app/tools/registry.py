@@ -17,23 +17,15 @@ class ToolRegistry:
     def all(self) -> list[AgentTool]:
         return list(self._tools.values())
 
+    def catalog(self) -> list[dict]:
+        return [t.to_catalog_dict() for t in self.all()]
+
     def llm_tools(
         self,
         allowed_tools: list[str] | None = None,
     ) -> list[LLMTool]:
-
         tools = self.all()
-
         if allowed_tools is not None:
             allowed = set(allowed_tools)
-
-            tools = [
-                tool
-                for tool in tools
-                if tool.name in allowed
-            ]
-
-        return [
-            tool.to_llm_tool()
-            for tool in tools
-        ]
+            tools = [tool for tool in tools if tool.name in allowed]
+        return [tool.to_llm_tool() for tool in tools]
