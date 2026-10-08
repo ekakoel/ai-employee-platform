@@ -1,8 +1,11 @@
-Hotel Example
+Hotel Canggu
 Contract valid from 1 January 2026 until 31 December 2026.
 
 Room Category:
 Deluxe
+
+Price:
+$450 / night
 
 Meal Plan:
 Breakfast Included

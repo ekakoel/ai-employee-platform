@@ -1,4 +1,4 @@
-Hotel Example
+Hotel Ayana
 Contract valid from 1 January 2026 until 31 December 2026.
 
 Room Category:
