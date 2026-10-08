@@ -25,6 +25,7 @@
         <button data-view="approvals" class="nav-btn" disabled>Approval Center</button>
         <button data-view="agents" class="nav-btn" disabled>Agent Dashboard</button>
         <button data-view="consult" class="nav-btn" disabled>Consultation</button>
+        <button data-view="chat" class="nav-btn" disabled>Agent Chat</button>
         <button data-view="directory" class="nav-btn" disabled>Directory</button>
         <button data-view="knowledge" class="nav-btn" disabled>Knowledge</button>
         <button data-view="delegation" class="nav-btn" disabled>Delegation</button>
@@ -208,6 +209,42 @@
       </section>
 
       <!-- CONSULT -->
+      
+      <section id="view-chat" class="view">
+        <div class="card">
+          <h2>Agent Chat</h2>
+          <p class="muted">Advisory transcript only. Tools require creating a Task.</p>
+          <div class="grid-2">
+            <label>Agent
+              <select id="chatAgent"></select>
+            </label>
+            <label>Conversation title
+              <input id="chatTitle" value="Workspace chat" />
+            </label>
+          </div>
+          <div class="row">
+            <button id="btnChatStart" class="primary">Start conversation</button>
+            <button id="btnChatRefresh" class="secondary">Refresh messages</button>
+          </div>
+          <div id="chatMeta" class="muted"></div>
+          <div id="chatThread" class="list" style="max-height:360px;overflow:auto"></div>
+          <label>Message
+            <textarea id="chatInput" rows="3" placeholder="Ask the agent..."></textarea>
+          </label>
+          <div class="row">
+            <button id="btnChatSend" class="primary">Send</button>
+            <label style="display:flex;align-items:center;gap:6px">
+              <input type="checkbox" id="chatCreateTask" /> Create Task
+            </label>
+            <select id="chatTaskMode">
+              <option value="consult">consult</option>
+              <option value="execute">execute</option>
+            </select>
+          </div>
+          <pre id="chatLog" class="log"></pre>
+        </div>
+      </section>
+
       <section id="view-consult" class="view">
         <div class="card">
           <h2>Consultation</h2>

@@ -102,6 +102,7 @@
     approvals: "Approval Center",
     agents: "Agent Dashboard",
     consult: "Consultation",
+    chat: "Agent Chat",
     directory: "Agent Directory",
     knowledge: "Knowledge",
     delegation: "Delegation",
@@ -126,6 +127,7 @@
       loadTasks();
     }
     if (name === "approvals") loadApprovals();
+    if (name === "chat") loadChat();
     if (name === "consult") loadAgentOptions();
     if (name === "directory") listDirectory();
     if (name === "delegation") {
@@ -1082,10 +1084,105 @@
     };
   }
 
+
+
+  // Job 21 — Agent chat
+  let chatConversationId = null;
+
+  async function loadChat() {
+    try {
+      const agents = await api(`/companies/${state.companyId}/agents`);
+      const sel = $("chatAgent");
+      if (!sel) return;
+      sel.innerHTML = agents
+        .map((a) => `<option value="${a.id}">${a.name}</option>`)
+        .join("");
+    } catch (err) {
+      const log = $("chatLog");
+      if (log) log.textContent = err.message;
+    }
+  }
+
+  async function refreshChatMessages() {
+    if (!chatConversationId) return;
+    const msgs = await api(
+      `/companies/${state.companyId}/conversations/${chatConversationId}/messages`
+    );
+    const thread = $("chatThread");
+    if (!thread) return;
+    thread.innerHTML = msgs
+      .map(
+        (m) =>
+          `<div class="list-item"><strong>${m.role}</strong><div>${String(
+            m.content || ""
+          ).replace(/</g, "&lt;")}</div><div class="muted">${m.created_at || ""}${
+            m.task_id ? " · task " + m.task_id : ""
+          }</div></div>`
+      )
+      .join("");
+  }
+
+  (function wireChat() {
+    const start = $("btnChatStart");
+    if (start)
+      start.onclick = async () => {
+        try {
+          const agentId = $("chatAgent").value;
+          const title = ($("chatTitle") && $("chatTitle").value) || "Chat";
+          const conv = await api(`/companies/${state.companyId}/conversations`, {
+            method: "POST",
+            body: JSON.stringify({ agent_instance_id: agentId, title }),
+          });
+          chatConversationId = conv.id;
+          const meta = $("chatMeta");
+          if (meta) meta.textContent = "Conversation " + conv.id;
+          await refreshChatMessages();
+        } catch (err) {
+          const log = $("chatLog");
+          if (log) log.textContent = err.message;
+        }
+      };
+    const send = $("btnChatSend");
+    if (send)
+      send.onclick = async () => {
+        if (!chatConversationId) {
+          const log = $("chatLog");
+          if (log) log.textContent = "Start a conversation first.";
+          return;
+        }
+        try {
+          const content = ($("chatInput") && $("chatInput").value.trim()) || "";
+          if (!content) return;
+          await api(
+            `/companies/${state.companyId}/conversations/${chatConversationId}/messages`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                content,
+                create_task: !!(
+                  $("chatCreateTask") && $("chatCreateTask").checked
+                ),
+                task_mode:
+                  ($("chatTaskMode") && $("chatTaskMode").value) || "consult",
+              }),
+            }
+          );
+          if ($("chatInput")) $("chatInput").value = "";
+          await refreshChatMessages();
+        } catch (err) {
+          const log = $("chatLog");
+          if (log) log.textContent = err.message;
+        }
+      };
+    const ref = $("btnChatRefresh");
+    if (ref) ref.onclick = () => refreshChatMessages();
+  })();
+
   if (state.companyId && state.userId) {
     $("btnConnect").click();
   }
 })();
+
 
 
   // Job 20 — notification controls
@@ -1104,3 +1201,6 @@
         await refreshInboxBadge();
       };
   });
+
+
+  // 

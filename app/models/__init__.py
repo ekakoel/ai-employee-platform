@@ -1,4 +1,8 @@
 from app.models.entities import (
+    Conversation,
+    ConversationStatus,
+    Message,
+    MessageRole,
     Notification,
     NotificationType,
     AgentAccess,
@@ -34,6 +38,10 @@ from app.models.entities import (
 )
 
 __all__ = [
+    "Conversation",
+    "ConversationStatus",
+    "Message",
+    "MessageRole",
     "Notification",
     "NotificationType",
     "AgentAccess",

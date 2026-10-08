@@ -40,6 +40,11 @@ from app.models import (
 from app.models.entities import TaskStatus
 from app.runtime.tool_executor import ToolExecutionError, ToolExecutor
 from app.schemas.domain import (
+    ConversationCreate,
+    ConversationRead,
+    MessageCreate,
+    MessageRead,
+    ChatPostResponse,
     AgentAccessCreate,
     AgentAccessRead,
     AgentAccessUpdate,
@@ -2525,6 +2530,136 @@ def mark_all_notifications_read(
     n = mark_all_read(db, company_id=company_id, user_id=user.id)
     db.commit()
     return {"marked": n}
+
+
+@router.get(
+    "/companies/{company_id}/conversations",
+    response_model=list[ConversationRead],
+)
+def list_conversations_api(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+    agent_instance_id: str | None = None,
+):
+    from app.services.conversation import list_conversations
+
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    return list_conversations(
+        db,
+        company_id=company_id,
+        user_id=None,
+        agent_instance_id=agent_instance_id,
+    )
+
+
+@router.post(
+    "/companies/{company_id}/conversations",
+    response_model=ConversationRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_conversation_api(
+    company_id: str,
+    payload: ConversationCreate,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    from app.services.conversation import create_conversation
+
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "task.create")
+    agent = get_owned_agent_or_404(db, company_id, payload.agent_instance_id)
+    require_agent_use(
+        db, user, company_id=company_id, agent_instance_id=agent.id
+    )
+    try:
+        conv = create_conversation(
+            db,
+            company_id=company_id,
+            agent_instance_id=agent.id,
+            user_id=user.id,
+            title=payload.title,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(conv)
+    return conv
+
+
+@router.get(
+    "/companies/{company_id}/conversations/{conversation_id}/messages",
+    response_model=list[MessageRead],
+)
+def list_messages_api(
+    company_id: str,
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    from app.services.conversation import get_conversation, list_messages
+
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.read")
+    conv = get_conversation(
+        db, company_id=company_id, conversation_id=conversation_id
+    )
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return list_messages(
+        db, company_id=company_id, conversation_id=conversation_id
+    )
+
+
+@router.post(
+    "/companies/{company_id}/conversations/{conversation_id}/messages",
+    response_model=ChatPostResponse,
+)
+def post_message_api(
+    company_id: str,
+    conversation_id: str,
+    payload: MessageCreate,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """
+    Post human message + advisory agent reply.
+    Tools are NEVER run here. Optional create_task links a Task for later execution.
+    """
+    from app.services.conversation import get_conversation, post_human_message
+
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "task.create")
+    conv = get_conversation(
+        db, company_id=company_id, conversation_id=conversation_id
+    )
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    require_agent_use(
+        db, user, company_id=company_id, agent_instance_id=conv.agent_instance_id
+    )
+    try:
+        result = post_human_message(
+            db,
+            company_id=company_id,
+            conversation_id=conversation_id,
+            user_id=user.id,
+            content=payload.content,
+            create_task=payload.create_task,
+            task_mode=payload.task_mode,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    human = result["human"]
+    agent = result["agent"]
+    task = result["task"]
+    return ChatPostResponse(
+        human=MessageRead.model_validate(human),
+        agent=MessageRead.model_validate(agent),
+        task_id=task.id if task else None,
+    )
 
 @router.get("/tools")
 def list_platform_tools():

@@ -703,3 +703,43 @@ class AgentTeamRead(BaseModel):
 
 class AgentTeamAddMembers(BaseModel):
     agent_instance_ids: list[str] = Field(min_length=1)
+
+
+class ConversationCreate(BaseModel):
+    agent_instance_id: str
+    title: str = Field(default="Chat", max_length=300)
+
+
+class ConversationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    company_id: str
+    agent_instance_id: str
+    user_id: str
+    title: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class MessageCreate(BaseModel):
+    content: str = Field(min_length=1)
+    create_task: bool = False
+    task_mode: str = Field(default="consult", pattern="^(consult|execute)$")
+
+
+class MessageRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    company_id: str
+    conversation_id: str
+    role: str
+    content: str
+    task_id: str | None = None
+    created_at: datetime
+
+
+class ChatPostResponse(BaseModel):
+    human: MessageRead
+    agent: MessageRead
+    task_id: str | None = None

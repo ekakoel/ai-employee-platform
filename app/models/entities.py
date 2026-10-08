@@ -902,6 +902,90 @@ class Notification(Base):
     company: Mapped[Company] = relationship()
     user: Mapped[User] = relationship()
 
+
+
+class ConversationStatus(str, Enum):
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+    CLOSED = "closed"
+
+
+class MessageRole(str, Enum):
+    HUMAN = "human"
+    AGENT = "agent"
+    SYSTEM = "system"
+
+
+class Conversation(Base):
+    """Human ↔ Agent chat thread (Job 21). No tools without Task."""
+
+    __tablename__ = "conversations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    agent_instance_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_instances.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(300), default="", nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20),
+        default=ConversationStatus.ACTIVE.value,
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+    messages: Mapped[list["Message"]] = relationship(
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="Message.created_at",
+    )
+
+
+class Message(Base):
+    """Single chat message in a Conversation."""
+
+    __tablename__ = "messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    conversation_id: Mapped[str] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    # Optional link when human requests execution via task
+    task_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False, index=True
+    )
+
+    conversation: Mapped[Conversation] = relationship(back_populates="messages")
+
 class Policy(Base):
     __tablename__ = "policies"
 
