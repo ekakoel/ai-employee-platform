@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     s3_bucket: str = ""
     s3_region: str = "us-east-1"
     s3_endpoint_url: str = ""
+    s3_access_key_id: str = ""
+    s3_secret_access_key: str = ""
 
     worker_poll_seconds: int = 30
 

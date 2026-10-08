@@ -68,7 +68,12 @@ class LocalObjectStorage(ObjectStorage):
 
 
 def get_storage() -> ObjectStorage:
-    if settings.storage_backend == "local":
-        return LocalObjectStorage()
-    # Future: S3ObjectStorage
-    return LocalObjectStorage()
+    # Re-read settings each call so tests/env changes apply
+    from app.core.config import settings as live_settings
+
+    backend = (live_settings.storage_backend or "local").lower().strip()
+    if backend in ("s3", "minio", "aws"):
+        from app.storage.s3 import S3ObjectStorage
+
+        return S3ObjectStorage()
+    return LocalObjectStorage(root=live_settings.storage_local_path)

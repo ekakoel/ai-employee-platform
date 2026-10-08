@@ -1,43 +1,36 @@
 from __future__ import annotations
 
-from pathlib import Path
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
 from app.knowledge.extractor import extract_text
-from app.models.entities import DocumentStatus, KnowledgeDocument
 from app.knowledge.indexing import replace_chunks_for_document
-
-
-DOCUMENT_STORAGE_ROOT = Path("storage/documents")
-
-
-def ensure_storage_directory() -> None:
-    DOCUMENT_STORAGE_ROOT.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+from app.models.entities import DocumentStatus, KnowledgeDocument
+from app.storage import get_storage
 
 
 def save_document(
     db: Session,
     *,
     company_id: str,
-    agent_instance_id: str | None,
-    original_filename: str,
-    content_type: str,
     data: bytes,
+    original_filename: str,
+    content_type: str | None = None,
+    agent_instance_id: str | None = None,
 ) -> KnowledgeDocument:
-    ensure_storage_directory()
-
+    """
+    Persist uploaded document bytes via ObjectStorage (local or S3)
+    and extract text for indexing.
+    """
     document_id = str(uuid4())
-
-    extension = Path(original_filename).suffix.lower()
+    extension = ""
+    if "." in original_filename:
+        extension = "." + original_filename.rsplit(".", 1)[-1].lower()
 
     stored_filename = f"{document_id}{extension}"
-
-    stored_path = DOCUMENT_STORAGE_ROOT / stored_filename
+    # Tenant-prefixed key for multi-tenant isolation in shared buckets
+    storage_key = f"documents/{company_id}/{stored_filename}"
 
     document = KnowledgeDocument(
         id=document_id,
@@ -53,8 +46,13 @@ def save_document(
     db.add(document)
     db.flush()
 
+    storage = get_storage()
     try:
-        stored_path.write_bytes(data)
+        storage.put_bytes(
+            storage_key,
+            data,
+            content_type=document.content_type,
+        )
 
         extracted_text = extract_text(
             original_filename,
@@ -69,6 +67,11 @@ def save_document(
     except Exception as exc:
         document.status = DocumentStatus.FAILED
         document.error_message = str(exc)
+        # best-effort cleanup
+        try:
+            storage.delete(storage_key)
+        except Exception:
+            pass
 
     db.flush()
 
