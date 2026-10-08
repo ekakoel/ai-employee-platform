@@ -38,7 +38,11 @@ SessionLocal = sessionmaker(
 
 
 def init_db() -> None:
-    """Create tables and run lightweight SQLite column migrations."""
+    """Create tables and run lightweight SQLite column migrations.
+
+    Production Postgres should rely on Alembic (`alembic upgrade head`
+    via Docker entrypoint). create_all remains a safety net for local/dev.
+    """
     import app.models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)

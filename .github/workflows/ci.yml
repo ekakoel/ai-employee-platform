@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [development, main]
+  pull_request:
+    branches: [development, main]
+
+jobs:
+  test-sqlite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest httpx
+      - name: Pytest (SQLite)
+        env:
+          DATABASE_URL: sqlite:///./ci_test.db
+        run: pytest -q
+
+  test-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: aiep
+          POSTGRES_PASSWORD: aiep
+          POSTGRES_DB: aiep
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aiep -d aiep"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest httpx
+      - name: Alembic upgrade head
+        env:
+          DATABASE_URL: postgresql+psycopg://aiep:aiep@localhost:5432/aiep
+        run: alembic upgrade head
+      - name: Pytest subset (Postgres)
+        env:
+          DATABASE_URL: postgresql+psycopg://aiep:aiep@localhost:5432/aiep
+        run: |
+          pytest -q tests/test_production_infra.py tests/test_quotas_job22.py tests/test_admin_job23.py tests/test_alembic_job24.py
