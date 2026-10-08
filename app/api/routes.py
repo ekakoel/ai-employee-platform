@@ -94,6 +94,7 @@ from app.services.skills import (
     list_agent_skills,
     list_available_skills,
 )
+from app.services.scope_guard import check_scope, enforce_scope_on_task
 from app.services.governance import (
     agent_performance,
     approval_metrics,
@@ -2121,6 +2122,35 @@ def delete_knowledge(
     db.commit()
 
 
+
+@router.post(
+    "/companies/{company_id}/scope-check",
+)
+def scope_check_endpoint(
+    company_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """Job 16 — check whether instruction fits agent scope; suggest specialists."""
+    from app.schemas.domain import ScopeCheckRequest
+
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "task.create")
+    body = ScopeCheckRequest.model_validate(payload)
+    agent = get_owned_agent_or_404(db, company_id, body.agent_instance_id)
+    result = check_scope(
+        db,
+        company_id=company_id,
+        agent=agent,
+        instruction=body.instruction,
+        auto_delegate=body.auto_delegate,
+        user_id=user.id,
+    )
+    db.commit()
+    return result.to_dict()
+
+
 @router.post(
     "/companies/{company_id}/tasks",
     response_model=TaskRead,
@@ -2156,9 +2186,14 @@ def create_task(
         agent_instance_id=agent.id,
     )
 
+    data = payload.model_dump()
+    check_scope_flag = bool(data.pop("check_scope", False))
+    auto_delegate_flag = bool(data.pop("auto_delegate", False))
+    block_oos = bool(data.pop("block_out_of_scope", True))
+
     task = Task(
         company_id=company_id,
-        **payload.model_dump(),
+        **data,
         status=TaskStatus.PENDING.value,
     )
 
@@ -2176,6 +2211,17 @@ def create_task(
         resource_id=task.id,
         status="success",
     )
+
+    if check_scope_flag:
+        enforce_scope_on_task(
+            db,
+            company_id=company_id,
+            agent=agent,
+            task=task,
+            auto_delegate=auto_delegate_flag,
+            user_id=user.id,
+            block_out_of_scope=block_oos,
+        )
 
     db.commit()
     db.refresh(task)
@@ -2837,6 +2883,8 @@ def consult_task(
             db,
             company_id=company_id,
             task_id=task_id,
+            user_id=user.id,
+            check_scope=True,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

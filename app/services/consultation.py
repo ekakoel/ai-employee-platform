@@ -146,6 +146,10 @@ def run_consultation(
     *,
     company_id: str,
     task_id: str,
+    check_scope: bool = True,
+    auto_delegate: bool = False,
+    user_id: str | None = None,
+    block_out_of_scope: bool = True,
 ) -> Task:
     task = db.get(Task, task_id)
     if task is None or task.company_id != company_id:
@@ -159,6 +163,39 @@ def run_consultation(
         raise ValueError(
             f"Task cannot be consulted from status '{task.status}'."
         )
+
+    # Job 16 — scope first (P2)
+    if check_scope:
+        from app.models.entities import AgentInstance
+        from app.services.scope_guard import enforce_scope_on_task
+
+        agent = db.get(AgentInstance, task.agent_instance_id)
+        if agent is not None:
+            scope_result = enforce_scope_on_task(
+                db,
+                company_id=company_id,
+                agent=agent,
+                task=task,
+                auto_delegate=auto_delegate,
+                user_id=user_id,
+                block_out_of_scope=block_out_of_scope,
+            )
+            if not scope_result.in_scope and block_out_of_scope:
+                record_audit(
+                    db,
+                    company_id=company_id,
+                    user_id=user_id,
+                    agent_instance_id=task.agent_instance_id,
+                    task_id=task.id,
+                    action="task.consult.out_of_scope",
+                    resource_type="task",
+                    resource_id=task.id,
+                    status="warning",
+                    details=scope_result.to_dict(),
+                )
+                db.commit()
+                db.refresh(task)
+                return task
 
     task.status = TaskStatus.RUNNING.value
     db.flush()

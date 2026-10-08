@@ -172,6 +172,10 @@ class TaskCreate(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     instruction: str = Field(min_length=1)
     mode: str = Field(default="execute", pattern="^(execute|consult)$")
+    # Job 16 — optional scope enforcement at create time
+    check_scope: bool = False
+    auto_delegate: bool = False
+    block_out_of_scope: bool = True
 
 
 class TaskRead(BaseModel):
@@ -585,3 +589,21 @@ class GovernanceOverview(BaseModel):
     automation: dict
     delegation: dict
     audit: dict
+
+
+class ScopeCheckRequest(BaseModel):
+    agent_instance_id: str
+    instruction: str = Field(min_length=1)
+    auto_delegate: bool = False
+
+
+class ScopeCheckResponse(BaseModel):
+    in_scope: bool
+    status: str
+    reason: str
+    agent_instance_id: str
+    agent_score: float
+    alternatives: list[dict] = []
+    suggested_target_id: str | None = None
+    auto_delegated: bool = False
+    delegation_request_id: str | None = None
