@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status, Request
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -2936,6 +2936,171 @@ def advance_workflow_run(
         "step_results": run.step_results,
         "error_message": run.error_message,
     }
+
+
+@router.get("/companies/{company_id}/integrations")
+def list_integrations(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    from app.models.entities import Integration
+    from app.services.integrations import public_view
+
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.manage")
+    rows = list(
+        db.scalars(
+            select(Integration)
+            .where(Integration.company_id == company_id)
+            .order_by(Integration.created_at.desc())
+        ).all()
+    )
+    return [public_view(r) for r in rows]
+
+
+@router.post(
+    "/companies/{company_id}/integrations",
+    status_code=status.HTTP_201_CREATED,
+)
+def create_integration_api(
+    company_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    from app.services.integrations import create_integration, public_view
+
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.manage")
+    name = str(payload.get("name") or "").strip()
+    itype = str(payload.get("type") or "").strip()
+    if not name or not itype:
+        raise HTTPException(status_code=400, detail="name and type required")
+    try:
+        integration, secret = create_integration(
+            db,
+            company_id=company_id,
+            name=name,
+            type=itype,
+            config=payload.get("config") or {},
+            event_map=payload.get("event_map") or {},
+            webhook_secret=payload.get("webhook_secret"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(integration)
+    view = public_view(integration)
+    # Return secret only once at creation
+    view["webhook_secret"] = secret
+    return view
+
+
+@router.post("/companies/{company_id}/integrations/{integration_id}/webhook")
+async def integration_webhook(
+    company_id: str,
+    integration_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    x_signature: str | None = Header(default=None, alias="X-Signature"),
+    x_hub_signature_256: str | None = Header(
+        default=None, alias="X-Hub-Signature-256"
+    ),
+    event_name: str | None = None,
+):
+    """
+    Public webhook ingress (signature required).
+    No X-User-ID — authenticated by HMAC shared secret.
+    """
+    from app.services.integrations import handle_webhook
+
+    raw = await request.body()
+    signature = x_signature or x_hub_signature_256
+    try:
+        result = handle_webhook(
+            db,
+            company_id=company_id,
+            integration_id=integration_id,
+            raw_body=raw,
+            signature_header=signature,
+            event_name=event_name,
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Integration not found")
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    return result
+
+
+@router.post(
+    "/companies/{company_id}/integrations/{integration_id}/actions/email-send"
+)
+def integration_email_send(
+    company_id: str,
+    integration_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    from app.models.entities import Integration
+    from app.services.integrations import email_outbound_send, public_view
+
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.manage")
+    integration = db.scalar(
+        select(Integration).where(
+            Integration.id == integration_id,
+            Integration.company_id == company_id,
+        )
+    )
+    if not integration:
+        raise HTTPException(status_code=404, detail="Integration not found")
+    try:
+        result = email_outbound_send(
+            integration,
+            to=str(payload.get("to") or ""),
+            subject=str(payload.get("subject") or ""),
+            body=str(payload.get("body") or ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return result
+
+
+@router.post(
+    "/companies/{company_id}/integrations/{integration_id}/actions/calendar-list"
+)
+def integration_calendar_list(
+    company_id: str,
+    integration_id: str,
+    payload: dict | None = None,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    from app.models.entities import Integration
+    from app.services.integrations import calendar_stub_list_events
+
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "agent.manage")
+    integration = db.scalar(
+        select(Integration).where(
+            Integration.id == integration_id,
+            Integration.company_id == company_id,
+        )
+    )
+    if not integration:
+        raise HTTPException(status_code=404, detail="Integration not found")
+    body = payload or {}
+    try:
+        return calendar_stub_list_events(
+            integration, days_ahead=int(body.get("days_ahead") or 7)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 @router.get("/tools")
 def list_platform_tools():

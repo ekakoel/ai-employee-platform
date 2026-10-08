@@ -1,4 +1,6 @@
 from app.models.entities import (
+    Integration,
+    IntegrationStatus,
     LLMUsage,
     WorkflowDefinition,
     WorkflowRun,
@@ -45,6 +47,8 @@ from app.models.entities import (
 )
 
 __all__ = [
+    "Integration",
+    "IntegrationStatus",
     "LLMUsage",
     "WorkflowDefinition",
     "WorkflowRun",

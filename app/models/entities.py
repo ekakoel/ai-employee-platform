@@ -1167,6 +1167,50 @@ class LLMUsage(Base):
         DateTime(timezone=True), default=utcnow, nullable=False, index=True
     )
 
+
+
+class IntegrationStatus(str, Enum):
+    ACTIVE = "active"
+    DISABLED = "disabled"
+    ERROR = "error"
+
+
+class Integration(Base):
+    """External system connection for company (Job 29)."""
+
+    __tablename__ = "integrations"
+    __table_args__ = (
+        UniqueConstraint("company_id", "name", name="uq_company_integration_name"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    # Opaque config JSON (secrets should be written via service encrypt helper)
+    config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    # Webhook shared secret (stored hashed)
+    webhook_secret_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Maps inbound event names → automation event_type
+    event_map: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20),
+        default=IntegrationStatus.ACTIVE.value,
+        nullable=False,
+        index=True,
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
 class Policy(Base):
     __tablename__ = "policies"
 
