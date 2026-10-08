@@ -1106,6 +1106,18 @@
     }
   };
 
+  function setChatBusy(busy) {
+    const typing = $("chatTyping");
+    const btn = $("btnChatSend");
+    const input = $("chatInput");
+    if (typing) typing.classList.toggle("hidden", !busy);
+    if (btn) {
+      btn.disabled = !!busy;
+      btn.textContent = busy ? "Sending…" : "Send";
+    }
+    if (input) input.disabled = !!busy;
+  }
+
   $("btnChatSend").onclick = async () => {
     if (!chatConversationId) {
       const log = $("chatLog");
@@ -1113,9 +1125,25 @@
       log.textContent = "Start a conversation first.";
       return;
     }
+    const content = $("chatInput").value.trim();
+    if (!content) return;
+    setChatBusy(true);
+    const log = $("chatLog");
+    if (log) {
+      log.classList.add("hidden-log");
+      log.textContent = "";
+    }
+    // Optimistic human bubble while waiting for agent
+    const thread = $("chatThread");
+    if (thread) {
+      thread.insertAdjacentHTML(
+        "beforeend",
+        `<div class="bubble human"><div class="who">human</div>${escapeHtml(content)}</div>`
+      );
+      thread.scrollTop = thread.scrollHeight;
+    }
+    $("chatInput").value = "";
     try {
-      const content = $("chatInput").value.trim();
-      if (!content) return;
       await api(`/companies/${state.companyId}/conversations/${chatConversationId}/messages`, {
         method: "POST",
         body: JSON.stringify({
@@ -1124,12 +1152,18 @@
           task_mode: $("chatTaskMode").value || "consult",
         }),
       });
-      $("chatInput").value = "";
       await refreshChatMessages();
     } catch (err) {
-      const log = $("chatLog");
-      log.classList.remove("hidden-log");
-      log.textContent = err.message;
+      if (log) {
+        log.classList.remove("hidden-log");
+        log.textContent = err.message || "Chat failed";
+      }
+      // Refresh to drop optimistic-only state if server rejected
+      try {
+        await refreshChatMessages();
+      } catch (_) {}
+    } finally {
+      setChatBusy(false);
     }
   };
 

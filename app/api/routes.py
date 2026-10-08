@@ -2659,6 +2659,12 @@ def post_message_api(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        # LLM / storage failures should not become opaque 500 HTML
+        raise HTTPException(
+            status_code=502,
+            detail=f"Chat reply failed: {exc}",
+        ) from exc
     db.commit()
     human = result["human"]
     agent = result["agent"]

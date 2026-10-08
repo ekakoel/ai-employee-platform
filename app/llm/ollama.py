@@ -8,6 +8,41 @@ from app.core.config import Settings
 from app.llm.base import LLMMessage, LLMProvider, LLMResponse, LLMTool
 
 
+def _msg_content(response: Any) -> str:
+    """Normalize Ollama chat response (dict or object) to content string."""
+    if response is None:
+        return ""
+    if isinstance(response, dict):
+        msg = response.get("message") or {}
+        if isinstance(msg, dict):
+            return str(msg.get("content") or "")
+        return str(getattr(msg, "content", "") or "")
+    # ChatResponse-like object
+    msg = getattr(response, "message", None)
+    if msg is None:
+        return ""
+    if isinstance(msg, dict):
+        return str(msg.get("content") or "")
+    return str(getattr(msg, "content", "") or "")
+
+
+def _token_counts(response: Any) -> tuple[int | None, int | None, int | None]:
+    prompt = completion = total = None
+    if isinstance(response, dict):
+        prompt = response.get("prompt_eval_count")
+        completion = response.get("eval_count")
+    else:
+        prompt = getattr(response, "prompt_eval_count", None)
+        completion = getattr(response, "eval_count", None)
+    if prompt is not None or completion is not None:
+        total = int(prompt or 0) + int(completion or 0)
+    return (
+        int(prompt) if prompt is not None else None,
+        int(completion) if completion is not None else None,
+        int(total) if total is not None else None,
+    )
+
+
 class OllamaProvider(LLMProvider):
     """LLM provider implementation backed by a local Ollama server."""
 
@@ -46,20 +81,11 @@ class OllamaProvider(LLMProvider):
             ]
 
         response: Any = self.client.chat(**kwargs)
+        content = _msg_content(response)
+        prompt_tokens, completion_tokens, total_tokens = _token_counts(response)
 
-        prompt_tokens = None
-        completion_tokens = None
-        total_tokens = None
-        # Ollama may expose eval counts
-        if isinstance(response, dict):
-            prompt_tokens = response.get("prompt_eval_count")
-            completion_tokens = response.get("eval_count")
-            if prompt_tokens is not None or completion_tokens is not None:
-                total_tokens = int(prompt_tokens or 0) + int(completion_tokens or 0)
         if total_tokens is None:
-            # rough estimate from message sizes
-            chars = sum(len(m.content or "") for m in messages)
-            chars += len(response.get("message", {}).get("content", "") or "")
+            chars = sum(len(m.content or "") for m in messages) + len(content)
             total_tokens = max(1, chars // 4)
             prompt_tokens = prompt_tokens or max(1, chars // 5)
             completion_tokens = completion_tokens or max(
@@ -67,7 +93,7 @@ class OllamaProvider(LLMProvider):
             )
 
         return LLMResponse(
-            content=response["message"].get("content", ""),
+            content=content,
             model=self.model,
             raw=response,
             prompt_tokens=int(prompt_tokens or 0),

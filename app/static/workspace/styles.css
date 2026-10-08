@@ -238,3 +238,23 @@ code { background: #070b12; padding: 0.1rem 0.3rem; border-radius: 4px; font-siz
   .stats { grid-template-columns: repeat(2, 1fr); }
   .grid-2, .chat-layout { grid-template-columns: 1fr; }
 }
+
+/* Chat loading */
+.chat-typing {
+  display: flex; align-items: center; gap: 0.55rem;
+  color: var(--muted); font-size: 0.85rem;
+  padding: 0.35rem 0.25rem 0.65rem;
+}
+.chat-typing.hidden { display: none; }
+.spinner {
+  width: 16px; height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+button.primary:disabled, button:disabled {
+  opacity: 0.55; cursor: not-allowed;
+}
