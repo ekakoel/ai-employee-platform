@@ -95,6 +95,7 @@
         <button data-view="agents" class="nav-btn">AI Employees</button>
         <button data-view="directory" class="nav-btn">Directory</button>
         <button data-view="marketplace" class="nav-btn">Marketplace</button>
+        <button data-view="inventory" class="nav-btn">Inventory</button>
 
         <div class="nav-group">Collaborate</div>
         <button data-view="consult" class="nav-btn">Consult</button>
@@ -210,7 +211,7 @@
 
       <!-- CHAT -->
       <section id="view-chat" class="view">
-        <p id="chatModeNotice" class="home-notice" role="status">Chat is advisory only — tools are not executed here. Check <strong>Create task</strong> to run with policy, or open results in <strong>Tasks / Results</strong>.</p>
+        <p id="chatModeNotice" class="home-notice" role="status">Chat is <strong>advisory only</strong> (no tools). Tick <strong>Also create Task</strong> to open a policy-gated work item, then run it from <strong>Tasks</strong>. Finished outputs appear in <strong>Results</strong> (quotations, availability, …).</p>
         <div class="chat-layout">
           <aside class="card chat-history" aria-label="Conversation history">
             <div class="chat-history-heading"><h3>Conversations</h3><button id="btnRefreshChat" class="icon-btn secondary" title="Refresh conversations" aria-label="Refresh conversations">&#8635;</button></div>
@@ -237,13 +238,15 @@
               <button id="btnChatSend" class="primary">Send</button>
             </div>
             <div class="chat-task-options">
-              <label class="check-row"><input type="checkbox" id="chatCreateTask" /> Create task</label>
+              <label class="check-row"><input type="checkbox" id="chatCreateTask" /> Also create Task (does not run tools yet)</label>
               <select id="chatTaskMode" aria-label="Created task mode" disabled>
-                <option value="consult">Consultation task</option>
-                <option value="execute">Execution task</option>
+                <option value="consult">Consult — plan only</option>
+                <option value="execute">Execute — tools + policy</option>
               </select>
-              <button id="chatLinkedTask" class="link-btn hidden">Open created task</button>
+              <button id="chatLinkedTask" class="link-btn hidden">Open task</button>
+              <button id="chatRunTask" class="primary hidden">Run task now</button>
             </div>
+            <p id="chatTaskHint" class="muted hidden" role="status"></p>
           </div>
         </div>
       </section>
@@ -347,6 +350,31 @@
             <button id="btnRefreshSubs" class="secondary">Refresh</button>
           </div>
           <div id="subList" class="list"></div>
+        </div>
+      </section>
+
+
+      <!-- INVENTORY Job 44 -->
+      <section id="view-inventory" class="view">
+        <div class="card">
+          <div class="row between">
+            <div>
+              <h2>Inventory</h2>
+              <p class="muted">Durable availability products used by <code>search_availability</code>. Survives server restart (DB).</p>
+            </div>
+            <button id="btnRefreshInventory" class="secondary">Refresh</button>
+          </div>
+          <div id="inventoryStats" class="stats"></div>
+          <div id="inventoryList" class="list"></div>
+        </div>
+        <div class="card">
+          <h3>Actions</h3>
+          <p class="muted">Seed loads Alila / City Hotel demo rates. Hydrate reloads DB rows into the process connector after restart.</p>
+          <div class="row">
+            <button id="btnInvSeed" class="primary">Seed reservation demo</button>
+            <button id="btnInvHydrate" class="secondary">Hydrate connector from DB</button>
+          </div>
+          <pre id="inventoryLog" class="log"></pre>
         </div>
       </section>
 

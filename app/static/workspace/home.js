@@ -51,12 +51,14 @@
         { id: "chat", title: "Ask availability", desc: "Advisory chat first" },
         { id: "tasks", title: "Run reservation task", desc: "Search / quote / book" },
         { id: "results", title: "Quotations & results", desc: "Find drafts & rates" },
+        { id: "inventory", title: "Inventory", desc: "See room rates" },
         { id: "inbox", title: "Approvals", desc: "Pending bookings" },
       ];
     }
     if (role === "ai_admin") {
       return [
         { id: "agents", title: "AI Employees", desc: "Hire & access" },
+        { id: "inventory", title: "Inventory", desc: "Rates & rooms" },
         { id: "policy-management", title: "Policies", desc: "Allow / approve tools" },
         { id: "users", title: "Users & roles", desc: "Team access" },
         { id: "tasks", title: "Tasks", desc: "Operational work" },

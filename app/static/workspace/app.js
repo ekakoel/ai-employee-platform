@@ -31,6 +31,7 @@
 
   /** View → any of these permissions required (empty = always for authenticated). */
   const VIEW_PERMISSIONS = {
+    inventory: ["agent.read", "agent.manage", "task.create"],
     home: [],
     inbox: ["task.read", "approval.read"],
     chat: ["task.create", "task.read", "agent.read"],
@@ -134,6 +135,7 @@
     tasks: ["Tasks", "Create and track work"],
     approvals: ["Approvals", "Human authority queue"],
     agents: ["AI Employees", "Hire and manage workforce"],
+    inventory: ["Inventory", "Availability products"],
     marketplace: ["Marketplace", "Install public templates"],
     consult: ["Consult", "Recommendations without side effects"],
     directory: ["Directory", "Find capability across agents"],
@@ -350,6 +352,7 @@
     if (name === "home") loadHome();
     if (name === "inbox") loadInbox();
     if (name === "agents") loadAgents();
+    if (name === "inventory") loadInventory();
     if (name === "tasks") {
       loadAgentOptions();
       loadTasks();
@@ -739,6 +742,60 @@
   }
 
   // ----- Agents -----
+
+  async function loadInventory() {
+    if (!state.companyId) return;
+    const log = $("inventoryLog");
+    try {
+      const data = await api(`/companies/${state.companyId}/inventory`);
+      const items = data.items || [];
+      if ($("inventoryStats")) {
+        $("inventoryStats").innerHTML = `<div class="stat"><span class="n">${items.length}</span><span class="l">Products</span></div>`;
+      }
+      $("inventoryList").innerHTML =
+        items
+          .map(
+            (row) => `<div class="item">
+          <strong>${escapeHtml(row.location || row.room_type || row.id || "Product")}</strong>
+          <div class="meta">${escapeHtml(row.room_type || "")} · cap ${escapeHtml(String(row.capacity ?? ""))} · ${escapeHtml(String(row.rate ?? ""))} ${escapeHtml(row.currency || "")}</div>
+          <div class="meta">${escapeHtml(row.valid_from || "")} → ${escapeHtml(row.valid_to || "")} · <code>${escapeHtml(row.id || "")}</code></div>
+        </div>`
+          )
+          .join("") || `<div class="empty">No inventory. Seed demo data below.</div>`;
+    } catch (err) {
+      $("inventoryList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+    }
+  }
+  if ($("btnRefreshInventory")) $("btnRefreshInventory").onclick = loadInventory;
+  if ($("btnInvSeed"))
+    $("btnInvSeed").onclick = async () => {
+      const log = $("inventoryLog");
+      try {
+        const res = await api(`/companies/${state.companyId}/demo/seed-reservation`, {
+          method: "POST",
+          body: "{}",
+        });
+        if (log) log.textContent = JSON.stringify(res, null, 2);
+        loadInventory();
+      } catch (err) {
+        if (log) log.textContent = err.message;
+      }
+    };
+  if ($("btnInvHydrate"))
+    $("btnInvHydrate").onclick = async () => {
+      const log = $("inventoryLog");
+      try {
+        const res = await api(`/companies/${state.companyId}/inventory/hydrate`, {
+          method: "POST",
+          body: "{}",
+        });
+        if (log) log.textContent = JSON.stringify(res, null, 2);
+        loadInventory();
+      } catch (err) {
+        if (log) log.textContent = err.message;
+      }
+    };
+
   async function loadAgents() {
     if (!state.companyId) return;
     try {
