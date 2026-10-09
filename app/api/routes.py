@@ -4667,6 +4667,36 @@ def seed_reservation_demo_api(
     return result
 
 
+
+@router.post("/companies/{company_id}/demo/playbook-reservation")
+def playbook_reservation_demo_api(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """Job 49 — Seed demo data and create a pending execute task for Alila availability."""
+    user = require_company_user(db, company_id, x_user_id)
+    from app.services.access import user_permission_keys
+    keys = user_permission_keys(user)
+    if not (keys & {"agent.manage", "task.create", "knowledge.write"}):
+        raise HTTPException(status_code=403, detail="Permission denied: demo playbook")
+    from app.services.demo_reservation import run_reservation_playbook
+
+    result = run_reservation_playbook(db, company_id=company_id, user_id=user.id)
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        action="demo.playbook_reservation",
+        resource_type="task",
+        resource_id=result.get("task_id"),
+        status="success" if result.get("task_id") else "partial",
+        details={k: v for k, v in result.items() if k != "instruction"},
+    )
+    db.commit()
+    return result
+
+
 @router.get("/companies/{company_id}/inventory")
 def list_company_inventory(
     company_id: str,

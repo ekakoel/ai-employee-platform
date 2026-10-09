@@ -338,6 +338,17 @@ def post_human_message(
         )
 
     reply_text = _agent_reply_text(db, conv, text)
+    if task is not None:
+        mode_label = "consultation (plan only)" if task.mode == "consult" else "execution (tools + policy)"
+        reply_text = (
+            (reply_text or "").rstrip()
+            + "\n\n---\n"
+            + f"**Task created** (`{task.id[:8]}…`, mode: {mode_label}).\n"
+            + "Chat still does **not** run tools. "
+            + "Open **Tasks**, then **Consult** or **Execute** on that task "
+            + "(or use the link under the composer). "
+            + "Results appear under **Results** when the task completes."
+        )
     agent_msg = Message(
         company_id=company_id,
         conversation_id=conv.id,

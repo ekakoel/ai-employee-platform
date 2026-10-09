@@ -164,6 +164,10 @@
         <div class="home-section" id="homeInventorySection">
           <div class="row between"><h3>Reservation data</h3><button type="button" class="link-btn" id="btnHomeRefreshInventory">Refresh</button></div>
           <div id="homeInventoryStatus" class="list"></div>
+          <div class="row" style="margin-top:.75rem">
+            <button id="btnDemoPlaybook" class="primary">Demo playbook (seed + task)</button>
+          </div>
+          <pre id="playbookLog" class="log" style="display:none"></pre>
         </div>
         <div class="home-section">
           <div class="row between"><h3>Needs attention</h3><button data-jump="inbox" class="link-btn">Open inbox</button></div>
@@ -383,6 +387,7 @@
           <p class="muted">Seed loads Alila / City Hotel demo rates. Hydrate reloads DB rows into the process connector after restart.</p>
           <div class="row">
             <button id="btnInvSeed" class="primary">Seed reservation demo</button>
+            <button id="btnInvPlaybook" class="secondary">Demo playbook</button>
             <button id="btnInvHydrate" class="secondary">Hydrate connector from DB</button>
           </div>
           <pre id="inventoryLog" class="log"></pre>

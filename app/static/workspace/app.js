@@ -817,6 +817,46 @@
 
   // ----- Agents -----
 
+
+  async function runDemoPlaybook() {
+    if (!state.companyId) return;
+    const log = $("playbookLog") || $("inventoryLog") || $("homeNotice");
+    try {
+      if (log && log.id === "homeNotice") {
+        log.classList.remove("hidden");
+        log.textContent = "Running demo playbook…";
+      } else if (log) {
+        log.textContent = "Running demo playbook…";
+      }
+      const res = await api(`/companies/${state.companyId}/demo/playbook-reservation`, {
+        method: "POST",
+        body: "{}",
+      });
+      const msg =
+        (res.task_id
+          ? "Playbook ready. Task: " + res.task_id + " (" + (res.agent_name || "agent") + "). " + (res.next_step || "")
+          : "Playbook partial: " + (res.error || JSON.stringify(res)));
+      if (log && log.id === "homeNotice") {
+        log.textContent = msg;
+      } else if (log) {
+        log.textContent = JSON.stringify(res, null, 2);
+      }
+      if (res.task_id) {
+        focusedTaskId = res.task_id;
+        if ($("taskFilter")) $("taskFilter").selectedIndex = 0;
+        showView("tasks");
+        loadTasks();
+      }
+      if (typeof loadInventory === "function") loadInventory();
+      refreshInboxBadge();
+    } catch (err) {
+      if (log) log.textContent = err.message;
+      else alert(err.message);
+    }
+  }
+  if ($("btnDemoPlaybook")) $("btnDemoPlaybook").onclick = runDemoPlaybook;
+  if ($("btnInvPlaybook")) $("btnInvPlaybook").onclick = runDemoPlaybook;
+
   async function loadInventory() {
     if (!state.companyId) return;
     const log = $("inventoryLog");

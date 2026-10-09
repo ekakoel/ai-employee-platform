@@ -50,6 +50,7 @@
       return [
         { id: "chat", title: "Ask availability", desc: "Advisory chat first" },
         { id: "tasks", title: "Run reservation task", desc: "Search / quote / book" },
+        { id: "__playbook__", title: "Demo playbook", desc: "Seed + create Alila task" },
         { id: "results", title: "Quotations & results", desc: "Find drafts & rates" },
         { id: "inventory", title: "Inventory", desc: "See room rates" },
         { id: "inbox", title: "Approvals", desc: "Pending bookings" },
@@ -141,7 +142,9 @@
         const actions = roleQuickActions(role);
         if ($("homeQuickActions")) {
           $("homeQuickActions").innerHTML = actions.map((a) =>
-            `<button type="button" data-home-view="${esc(a.id)}"><span class="hq-title">${esc(a.title)}</span><span class="hq-desc">${esc(a.desc)}</span></button>`
+            a.id === "__playbook__"
+              ? `<button type="button" data-home-playbook="1"><span class="hq-title">${esc(a.title)}</span><span class="hq-desc">${esc(a.desc)}</span></button>`
+              : `<button type="button" data-home-view="${esc(a.id)}"><span class="hq-title">${esc(a.title)}</span><span class="hq-desc">${esc(a.desc)}</span></button>`
           ).join("");
         }
         const showInv = ["owner", "ai_admin", "manager", "reservation"].includes(role);
@@ -171,6 +174,21 @@
         });
 
         $("view-home").querySelectorAll("[data-home-view]").forEach((button) => { button.onclick = () => navigate(button.dataset.homeView); });
+        $("homeQuickActions")?.querySelectorAll("[data-home-playbook]").forEach((button) => {
+          button.onclick = async () => {
+            try {
+              const res = await api(`/companies/${session.companyId}/demo/playbook-reservation`, { method: "POST", body: "{}" });
+              if (res.task_id) {
+                openTask({ id: res.task_id });
+              } else {
+                alert(res.error || "Playbook finished without a task (hire an agent first).");
+              }
+              await load();
+            } catch (err) {
+              alert(err.message);
+            }
+          };
+        });
         $("homeInbox").querySelectorAll("[data-home-attention]").forEach((button) => {
           button.onclick = () => { const entry = summary.attention[Number(button.dataset.homeAttention)]; if (entry.task) openTask(entry.task); else navigate(entry.view); };
         });
