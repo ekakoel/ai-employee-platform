@@ -968,6 +968,23 @@
   if ($("btnRefreshMarket")) $("btnRefreshMarket").onclick = loadMarketplace;
 
   // ----- Tasks -----
+
+  function taskArtifactTags(task) {
+    if (!task || !task.result) return "";
+    let value = task.result;
+    try { value = JSON.parse(task.result); } catch (_) { return ""; }
+    if (!value || typeof value !== "object") return "";
+    const tools = Array.isArray(value.tool_results) ? value.tool_results : [];
+    const tags = [];
+    for (const item of tools) {
+      const name = item.tool || item.name || "";
+      if (name === "draft_quotation") tags.push("quotation");
+      else if (name === "search_availability") tags.push("availability");
+      else if (name === "create_reservation") tags.push("reservation");
+    }
+    return [...new Set(tags)].map((t) => `<span class="tag">${t}</span>`).join(" ");
+  }
+
   async function loadTasks() {
     if (!state.companyId) return;
     try {
@@ -982,7 +999,7 @@
           .map(
             (t) => `<div class="item" data-task-id="${escapeHtml(t.id)}" tabindex="-1">
           <strong>${escapeHtml(t.title || t.id)}</strong>
-          <div class="meta">${escapeHtml(t.status)} · ${escapeHtml(t.mode || "")}</div>
+          <div class="meta">${escapeHtml(t.status)} · ${escapeHtml(t.mode || "")} ${taskArtifactTags(t)}</div>
           <div class="actions">
             ${
               t.result

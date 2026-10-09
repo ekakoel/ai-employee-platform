@@ -570,3 +570,12 @@ button.primary:disabled, button:disabled {
   #homeStats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+
+/* Job 40 — task artifacts */
+.artifact-list { display: flex; flex-direction: column; gap: 0.75rem; margin: 0.75rem 0; }
+.artifact-card { border: 1px solid var(--border, #e2e8f0); border-radius: 8px; padding: 0.75rem 1rem; background: var(--card, #fff); }
+.artifact-card h3 { margin: 0 0 0.35rem; font-size: 0.95rem; }
+.artifact-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.artifact-table th, .artifact-table td { border-bottom: 1px solid #e2e8f0; padding: 0.35rem 0.4rem; text-align: left; }
+.result-tags { display: inline-flex; gap: 0.25rem; margin-top: 0.25rem; }

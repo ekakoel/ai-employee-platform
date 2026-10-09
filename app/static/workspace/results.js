@@ -3,17 +3,90 @@
     try { return JSON.parse(value); } catch (_) { return value; }
   }
 
+  function extractArtifacts(value) {
+    const artifacts = [];
+    if (!value || typeof value !== "object") return artifacts;
+    const tools = Array.isArray(value.tool_results)
+      ? value.tool_results
+      : Array.isArray(value.tools)
+        ? value.tools
+        : [];
+    for (const item of tools) {
+      const name = item.tool || item.name || "";
+      const res = item.result != null ? item.result : item.output != null ? item.output : item;
+      if (name === "search_availability") {
+        const opts = (res && res.options) || [];
+        artifacts.push({
+          type: "availability",
+          title: "Availability",
+          summary: `${res?.count ?? opts.length} option(s)` + (opts[0]?.location ? ` · ${opts[0].location}` : ""),
+          options: opts,
+          data: res,
+        });
+      } else if (name === "draft_quotation") {
+        const draft = res?.draft || res?.text || "";
+        artifacts.push({
+          type: "quotation",
+          title: "Quotation",
+          summary: draft ? String(draft).slice(0, 160) : "Quotation draft",
+          text: draft,
+          data: res,
+        });
+      } else if (name === "create_reservation" || name === "get_reservation") {
+        artifacts.push({
+          type: "reservation",
+          title: "Reservation",
+          summary: res?.confirmation || res?.id || "Reservation record",
+          data: res,
+        });
+      } else if (name) {
+        artifacts.push({
+          type: "tool",
+          title: name,
+          summary: typeof res === "string" ? res.slice(0, 120) : JSON.stringify(res || {}).slice(0, 120),
+          data: res,
+        });
+      }
+    }
+    if (value.recommendation && !artifacts.some((a) => a.type === "analysis")) {
+      artifacts.push({
+        type: "analysis",
+        title: "Recommendation",
+        summary: String(value.recommendation).slice(0, 180),
+        text: String(value.recommendation),
+      });
+    }
+    return artifacts;
+  }
+
   function describe(task) {
     const value = parseResult(task.result);
     const structured = value !== null && typeof value === "object";
-    const documentText = structured && Array.isArray(value.tool_results)
-      ? value.tool_results.filter(item => item.tool === "draft_quotation" && typeof item.result?.draft === "string")
-        .map(item => item.result.draft).join("\n\n") : "";
+    const artifacts = structured ? extractArtifacts(value) : [];
+    const quotation = artifacts.find((a) => a.type === "quotation");
+    const availability = artifacts.find((a) => a.type === "availability");
+    let kind = "text";
+    if (quotation) kind = "quotation";
+    else if (availability) kind = "availability";
+    else if (artifacts.some((a) => a.type === "reservation")) kind = "reservation";
+    else if (structured && value.recommendation) kind = "analysis";
+    else if (structured) kind = "structured";
+    const documentText = quotation?.text
+      || artifacts.filter((a) => a.text).map((a) => a.text).join("\n\n")
+      || "";
+    const summary =
+      quotation?.summary ||
+      availability?.summary ||
+      documentText ||
+      (structured
+        ? String(value.recommendation || value.summary || JSON.stringify(value)).slice(0, 240)
+        : String(value ?? ""));
     return {
       ...task,
-      kind: structured ? (value.recommendation ? "analysis" : "structured") : "text",
-      summary: documentText || (structured ? String(value.recommendation || value.summary || JSON.stringify(value)) : String(value)),
+      kind,
+      summary,
       documentText,
+      artifacts,
       value,
     };
   }
@@ -40,7 +113,7 @@
     let selectedTaskId = "";
     const parsedTaskDate = (task) => task.created_at && !task.created_at.endsWith("Z") && !/[+-]\d{2}:\d{2}$/.test(task.created_at)
       ? task.created_at + "Z" : task.created_at;
-    const typeNames = { analysis: "Analysis", text: "Text", structured: "Structured data" };
+    const typeNames = { analysis: "Analysis", text: "Text", structured: "Structured data", quotation: "Quotation", availability: "Availability", reservation: "Reservation" };
     const statusNames = { completed: "Completed", pending: "Pending", waiting_approval: "Awaiting approval", failed: "Failed" };
     const date = (value) => new Date(value).toLocaleString("en-US");
     const message = (text) => { $("outputContent").innerHTML = `<div class="empty">${esc(text)}</div>`; };
@@ -55,15 +128,19 @@
       const shown = tab === "recent" ? filtered.slice(0, 20) : filtered;
       $("resultCount").textContent = `${shown.length} / ${filtered.length} results`;
       $("outputContent").innerHTML = `${context ? '<button class="link-btn" id="btnAllResults">All results</button>' : ""}` +
-        shown.map((item) => `<article class="result-item">
+        shown.map((item) => {
+          const tags = (item.artifacts || []).map((a) => `<span class="tag">${esc(a.type)}</span>`).join("");
+          return `<article class="result-item">
           <button class="result-open" data-result-id="${esc(item.id)}">
-            <span class="result-kind">${esc(typeNames[item.kind])}${pins.has(item.id) ? " / Pinned" : ""}</span>
+            <span class="result-kind">${esc(typeNames[item.kind] || item.kind)}${pins.has(item.id) ? " / Pinned" : ""}</span>
             <strong>${esc(item.title)}</strong>
-            <span class="result-summary">${esc(item.summary.slice(0, 180))}</span>
+            <span class="result-summary">${esc((item.summary || "").slice(0, 180))}</span>
             <span class="meta">${esc(item.agentName)} / ${esc(date(item.created_at))}</span>
             <span class="meta">Task: ${esc(statusNames[item.status] || item.status)}</span>
+            ${tags ? `<span class="result-tags">${tags}</span>` : ""}
           </button>
-        </article>`).join("") + (!shown.length ? '<div class="empty">No matching results.</div>' : "");
+        </article>`;
+        }).join("") + (!shown.length ? '<div class="empty">No matching results.</div>' : "");
       $("btnAllResults")?.addEventListener("click", () => { context = ""; render(); });
       $("outputContent").querySelectorAll("[data-result-id]").forEach((button) => {
         button.onclick = () => preview(items.find((item) => item.id === button.dataset.resultId));
@@ -99,14 +176,41 @@
       }
     }
 
+    function renderArtifactCards(artifacts) {
+      if (!artifacts || !artifacts.length) return "";
+      return `<div class="artifact-list">` + artifacts.map((a) => {
+        if (a.type === "availability" && Array.isArray(a.options) && a.options.length) {
+          const rows = a.options.map((o) =>
+            `<tr><td>${esc(o.location || "")}</td><td>${esc(o.room_type || "")}</td>` +
+            `<td>${esc(String(o.capacity ?? ""))}</td><td>${esc(String(o.rate ?? ""))} ${esc(o.currency || "")}</td>` +
+            `<td><code>${esc(o.id || "")}</code></td></tr>`
+          ).join("");
+          return `<section class="artifact-card"><h3>${esc(a.title)}</h3><p class="muted">${esc(a.summary || "")}</p>` +
+            `<table class="artifact-table"><thead><tr><th>Location</th><th>Room</th><th>Cap</th><th>Rate</th><th>availability_id</th></tr></thead>` +
+            `<tbody>${rows}</tbody></table></section>`;
+        }
+        if (a.type === "quotation" && a.text) {
+          return `<section class="artifact-card"><h3>${esc(a.title)}</h3><pre class="result-document">${esc(a.text)}</pre></section>`;
+        }
+        if (a.type === "reservation") {
+          return `<section class="artifact-card"><h3>${esc(a.title)}</h3><pre class="result-document">${esc(JSON.stringify(a.data || {}, null, 2))}</pre></section>`;
+        }
+        if (a.type === "analysis" && a.text) {
+          return `<section class="artifact-card"><h3>${esc(a.title)}</h3><p>${esc(a.text)}</p></section>`;
+        }
+        return `<section class="artifact-card"><h3>${esc(a.title || a.type)}</h3><p class="muted">${esc(a.summary || "")}</p></section>`;
+      }).join("") + `</div>`;
+    }
+
     function preview(item) {
       if (!item) return;
       selectedTaskId = item.id;
       const details = typeof item.value === "object" && item.value !== null ? JSON.stringify(item.value, null, 2) : String(item.value);
       const content = item.documentText || details;
-      const textDownload = Boolean(item.documentText) || item.kind === "text";
+      const textDownload = Boolean(item.documentText) || item.kind === "text" || item.kind === "quotation";
+      const cards = renderArtifactCards(item.artifacts || []);
       $("resultPreview").innerHTML = `<h2>${esc(item.title)}</h2>
-        <p class="muted">${esc(item.agentName)} / ${esc(date(item.created_at))} / Task: ${esc(item.status)}</p>
+        <p class="muted">${esc(item.agentName)} / ${esc(date(item.created_at))} / Task: ${esc(item.status)} / Type: ${esc(typeNames[item.kind] || item.kind)}</p>
         <div class="row result-actions">
           <button id="btnResultTask" class="secondary">Open source task</button>
           <button id="btnResultDownload" class="secondary">Download ${textDownload ? "text" : "JSON"}</button>
@@ -114,8 +218,8 @@
           <button id="btnResultRevise" class="primary">Request revision</button>
         </div>
         <p id="resultActionStatus" role="status"></p>
-        <pre class="result-document">${esc(content)}</pre>
-        ${item.documentText ? `<details><summary>Sources and execution details</summary><pre class="result-document">${esc(details)}</pre></details>` : ""}`;
+        ${cards || `<pre class="result-document">${esc(content)}</pre>`}
+        <details ${cards ? "" : "open"}><summary>Raw execution payload</summary><pre class="result-document">${esc(details)}</pre></details>`;
       $("btnResultTask").onclick = () => openTask(item);
       $("btnResultRevise").onclick = () => revise(item);
       $("btnResultDownload").onclick = () => {
