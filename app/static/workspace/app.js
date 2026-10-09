@@ -1094,110 +1094,99 @@
       if (f === "completed") tasks = tasks.filter((t) => t.status === "completed");
       if (f === "consult") tasks = tasks.filter((t) => t.mode === "consult");
       if (f === "execute") tasks = tasks.filter((t) => t.mode === "execute");
+      // Job 46 — single action row; correct endpoints (/consult, /execute)
       $("taskList").innerHTML =
         (tasks || [])
-          .map(
-            (t) => `<div class="item" data-task-id="${escapeHtml(t.id)}" tabindex="-1">
+          .map((t) => {
+            const actions = [];
+            if (t.result && String(t.result).trim()) {
+              actions.push(`<button class="secondary btn-view-output" data-id="${t.id}">View result</button>`);
+            }
+            if (t.status === "pending" && t.mode === "consult") {
+              actions.push(`<button class="primary btn-run-consult" data-id="${t.id}">Run consult</button>`);
+            }
+            if (t.status === "pending" && t.mode === "execute") {
+              actions.push(`<button class="primary btn-run-execute" data-id="${t.id}">Run execute</button>`);
+            }
+            if (t.status === "waiting_approval") {
+              actions.push(`<button class="secondary btn-open-approvals" data-id="${t.id}">Open approvals</button>`);
+            }
+            return `<div class="item" data-task-id="${escapeHtml(t.id)}" tabindex="-1">
           <strong>${escapeHtml(t.title || t.id)}</strong>
           <div class="meta">${escapeHtml(t.status)} · ${escapeHtml(t.mode || "")} ${taskArtifactTags(t)}</div>
-          <div class="actions">
-            ${
-              t.result
-                ? `<button
-                    class="secondary btn-view-output"
-                    data-id="${t.id}"
-                  >
-                    View output
-                  </button>`
-                : ""
-            }
-
-            ${
-              t.status === "pending" && t.mode === "consult"
-                ? `<button
-                    class="primary btn-run-t"
-                    data-id="${t.id}"
-                  >
-                    Run consult
-                  </button>`
-                : ""
-            }
-
-            ${
-              t.status === "pending" && t.mode === "execute"
-                ? `<button
-                    class="primary btn-run-execute"
-                    data-id="${t.id}"
-                  >
-                    Execute
-                  </button>`
-                : ""
-            }
-          </div>
-          ${t.mode === "consult" && t.status === "pending"
-                ? `<div class="actions">
-                  <button
-                    class="secondary btn-view-output"
-                    data-id="${t.id}"
-                  >
-                    View output
-                  </button>
-
-                  ${t.mode === "consult" && t.status === "pending"
-                  ? `<button
-                          class="primary btn-run-t"
-                          data-id="${t.id}"
-                        >
-                          Run consult
-                        </button>`
-                  : ""
-                }
-                </div>`
-                : ""
-              }
-        </div>`
-          )
+          <div class="meta muted" style="font-size:.75rem">${escapeHtml((t.instruction || "").slice(0, 120))}</div>
+          <div class="actions">${actions.join(" ")}</div>
+        </div>`;
+          })
           .join("") || `<div class="empty">No tasks.</div>`;
+
       document.querySelectorAll(".btn-view-output").forEach((b) => {
         b.onclick = () => {
           const task = tasks.find((t) => t.id === b.dataset.id);
-
-          if (task) {
-            showOutputCenter(task);
-          }
+          if (task) showOutputCenter(task);
         };
       });
+      document.querySelectorAll(".btn-open-approvals").forEach((b) => {
+        b.onclick = () => showView("approvals");
+      });
       if (focusedTaskId) {
-        const target = Array.from($("taskList").querySelectorAll("[data-task-id]")).find((item) => item.dataset.taskId === focusedTaskId);
-        if (target) { target.focus(); target.scrollIntoView({ block: "center" }); }
+        const target = Array.from($("taskList").querySelectorAll("[data-task-id]")).find(
+          (item) => item.dataset.taskId === focusedTaskId
+        );
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: "center" });
+        }
         focusedTaskId = "";
       }
       resultLibrary.refresh();
-      document.querySelectorAll(".btn-run-t").forEach((b) => {
-        b.onclick = async () => {
-          await api(`/companies/${state.companyId}/tasks/${b.dataset.id}/run`, {
-            method: "POST",
-            body: "{}",
-          });
-          loadTasks();
-        };
-      });
-      document.querySelectorAll(".btn-run-execute").forEach((b) => {
-        b.onclick = async () => {
-          try {
-            const result = await api(
-              `/companies/${state.companyId}/tasks/${b.dataset.id}/execute-llm`,
-              {
-                method: "POST",
-                body: "{}",
-              }
-            );
 
+      document.querySelectorAll(".btn-run-consult").forEach((b) => {
+        b.onclick = async () => {
+          const id = b.dataset.id;
+          b.disabled = true;
+          b.textContent = "Running…";
+          try {
+            const result = await api(`/companies/${state.companyId}/tasks/${id}/consult`, {
+              method: "POST",
+              body: "{}",
+            });
             showOutputCenter(result);
             await loadTasks();
             refreshInboxBadge();
           } catch (err) {
             alert(err.message);
+            b.disabled = false;
+            b.textContent = "Run consult";
+          }
+        };
+      });
+      document.querySelectorAll(".btn-run-execute").forEach((b) => {
+        b.onclick = async () => {
+          const id = b.dataset.id;
+          b.disabled = true;
+          b.textContent = "Running…";
+          try {
+            // Prefer policy-aware execute; fall back to execute-llm if needed
+            let result;
+            try {
+              result = await api(`/companies/${state.companyId}/tasks/${id}/execute`, {
+                method: "POST",
+                body: "{}",
+              });
+            } catch (e1) {
+              result = await api(`/companies/${state.companyId}/tasks/${id}/execute-llm`, {
+                method: "POST",
+                body: "{}",
+              });
+            }
+            showOutputCenter(result);
+            await loadTasks();
+            refreshInboxBadge();
+          } catch (err) {
+            alert(err.message);
+            b.disabled = false;
+            b.textContent = "Run execute";
           }
         };
       });
