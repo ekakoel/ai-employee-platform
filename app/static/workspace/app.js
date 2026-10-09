@@ -1216,42 +1216,117 @@
     }
   };
 
-  // ----- Approvals -----
+  // ----- Approvals (Job 47: /approve + /reject, not /review) -----
+  function approvalPayloadSummary(a) {
+    const p = a.payload || {};
+    const bits = [];
+    if (p.tool || p.tool_name) bits.push("tool: " + (p.tool || p.tool_name));
+    if (p.amount != null) bits.push("amount: " + p.amount);
+    if (p.currency) bits.push(String(p.currency));
+    if (p.guest_name) bits.push("guest: " + p.guest_name);
+    if (p.location) bits.push(String(p.location));
+    if (!bits.length && p && typeof p === "object") {
+      try {
+        const s = JSON.stringify(p);
+        if (s && s !== "{}") return s.slice(0, 160);
+      } catch (_) {}
+    }
+    return bits.join(" · ");
+  }
+
   async function loadApprovals() {
     if (!state.companyId) return;
     try {
-      const list = await api(`/companies/${state.companyId}/approvals`);
+      let list = await api(`/companies/${state.companyId}/approvals`);
+      const filterEl = $("approvalFilter");
+      const f = filterEl ? filterEl.value : "pending";
+      if (f === "pending") list = (list || []).filter((a) => a.status === "pending");
+      else if (f === "approved") list = (list || []).filter((a) => a.status === "approved");
+      else if (f === "rejected") list = (list || []).filter((a) => a.status === "rejected");
+
+      const pendingCount = (list || []).filter((a) => a.status === "pending").length;
+      if ($("approvalStats")) {
+        $("approvalStats").innerHTML =
+          `<div class="stat"><span class="n">${(list || []).length}</span><span class="l">Shown</span></div>` +
+          (f === "all" || f === "pending"
+            ? `<div class="stat"><span class="n">${pendingCount}</span><span class="l">Pending in view</span></div>`
+            : "");
+      }
+
       $("approvalList").innerHTML =
         (list || [])
-          .map(
-            (a) => `<div class="item">
-          <strong>${escapeHtml(a.action)}</strong>
-          <div class="meta">${escapeHtml(a.status)} · ${escapeHtml(a.reason || "")}</div>
-          ${a.status === "pending"
+          .map((a) => {
+            const summary = approvalPayloadSummary(a);
+            const actions =
+              a.status === "pending"
                 ? `<div class="actions">
-            <button class="success btn-rev" data-id="${a.id}" data-d="approved">Approve</button>
-            <button class="danger btn-rev" data-id="${a.id}" data-d="rejected">Reject</button>
+            <button class="success btn-approve" data-id="${a.id}">Approve</button>
+            <button class="danger btn-reject" data-id="${a.id}">Reject</button>
+            ${a.task_id ? `<button class="secondary btn-appr-task" data-task="${a.task_id}">Open task</button>` : ""}
           </div>`
-                : ""
-              }
-        </div>`
-          )
-          .join("") || `<div class="empty">No approvals.</div>`;
-      document.querySelectorAll(".btn-rev").forEach((b) => {
+                : `<div class="actions">
+            ${a.task_id ? `<button class="secondary btn-appr-task" data-task="${a.task_id}">Open task</button>` : ""}
+            <span class="meta">Reviewed: ${escapeHtml(a.review_comment || a.status)}</span>
+          </div>`;
+            return `<div class="item" data-approval-id="${escapeHtml(a.id)}">
+          <strong>${escapeHtml(a.action || "Action")}</strong>
+          <div class="meta">${escapeHtml(a.status)} · ${escapeHtml(a.reason || "")}</div>
+          ${summary ? `<div class="meta">${escapeHtml(summary)}</div>` : ""}
+          ${a.task_id ? `<div class="meta">Task: <code>${escapeHtml(a.task_id)}</code></div>` : ""}
+          ${actions}
+        </div>`;
+          })
+          .join("") || `<div class="empty">No approvals${f && f !== "all" ? " (" + f + ")" : ""}.</div>`;
+
+      document.querySelectorAll(".btn-approve").forEach((b) => {
         b.onclick = async () => {
-          await api(`/companies/${state.companyId}/approvals/${b.dataset.id}/review`, {
-            method: "POST",
-            body: JSON.stringify({ status: b.dataset.d, comment: "workspace" }),
-          });
-          loadApprovals();
-          refreshInboxBadge();
+          b.disabled = true;
+          try {
+            await api(`/companies/${state.companyId}/approvals/${b.dataset.id}/approve`, {
+              method: "POST",
+              body: JSON.stringify({ comment: "Approved from workspace" }),
+            });
+            loadApprovals();
+            refreshInboxBadge();
+            resultLibrary.refresh();
+            loadTasks();
+          } catch (err) {
+            alert(err.message);
+            b.disabled = false;
+          }
+        };
+      });
+      document.querySelectorAll(".btn-reject").forEach((b) => {
+        b.onclick = async () => {
+          const comment = prompt("Rejection reason (optional):", "Rejected from workspace") || "Rejected from workspace";
+          b.disabled = true;
+          try {
+            await api(`/companies/${state.companyId}/approvals/${b.dataset.id}/reject`, {
+              method: "POST",
+              body: JSON.stringify({ comment }),
+            });
+            loadApprovals();
+            refreshInboxBadge();
+            loadTasks();
+          } catch (err) {
+            alert(err.message);
+            b.disabled = false;
+          }
+        };
+      });
+      document.querySelectorAll(".btn-appr-task").forEach((b) => {
+        b.onclick = () => {
+          focusedTaskId = b.dataset.task;
+          if ($("taskFilter")) $("taskFilter").selectedIndex = 0;
+          showView("tasks");
         };
       });
     } catch (err) {
       $("approvalList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
     }
   }
-  $("btnRefreshApprovals").onclick = loadApprovals;
+  if ($("btnRefreshApprovals")) $("btnRefreshApprovals").onclick = loadApprovals;
+  if ($("approvalFilter")) $("approvalFilter").onchange = loadApprovals;
 
   // ----- Consult -----
   $("btnConsult").onclick = async () => {

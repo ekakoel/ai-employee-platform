@@ -150,8 +150,44 @@
         conversation.updated_at = result.agent.created_at;
         conversations = [conversation, ...conversations.filter(item => item.id !== conversation.id)]; options();
         if (result.task_id) {
+          const tid = result.task_id;
+          const mode = $('chatTaskMode').value || 'consult';
           $('chatLinkedTask').classList.remove('hidden');
-          $('chatLinkedTask').onclick = () => openTask(result.task_id);
+          $('chatLinkedTask').onclick = () => openTask(tid);
+          const runBtn = $('chatRunTask');
+          if (runBtn) {
+            runBtn.classList.remove('hidden');
+            runBtn.disabled = false;
+            runBtn.textContent = mode === 'execute' ? 'Run execute now' : 'Run consult now';
+            runBtn.onclick = async () => {
+              try {
+                runBtn.disabled = true;
+                runBtn.textContent = 'Running…';
+                const session = getSession();
+                const path = mode === 'execute'
+                  ? `/companies/${session.companyId}/tasks/${tid}/execute`
+                  : `/companies/${session.companyId}/tasks/${tid}/consult`;
+                await api(path, { method: 'POST', body: '{}' });
+                if ($('chatTaskHint')) {
+                  $('chatTaskHint').classList.remove('hidden');
+                  $('chatTaskHint').textContent = 'Task finished (or waiting approval). Open Results or Tasks for output.';
+                }
+                onTaskCreated();
+                openTask(tid);
+              } catch (err) {
+                if ($('chatTaskHint')) {
+                  $('chatTaskHint').classList.remove('hidden');
+                  $('chatTaskHint').textContent = err.message || 'Run failed';
+                }
+                runBtn.disabled = false;
+                runBtn.textContent = mode === 'execute' ? 'Run execute now' : 'Run consult now';
+              }
+            };
+          }
+          if ($('chatTaskHint')) {
+            $('chatTaskHint').classList.remove('hidden');
+            $('chatTaskHint').textContent = 'Task created as ' + mode + '. Chat did not execute tools. Click Run task now, or open Tasks.';
+          }
           onTaskCreated();
         }
         loadedAt = Date.now(); render();

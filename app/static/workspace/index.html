@@ -298,10 +298,21 @@
           <div class="row between">
             <div>
               <h2>Approval center</h2>
-              <p class="muted">Human authority for restricted AI actions.</p>
+              <p class="muted">Human authority for restricted AI actions (e.g. create_reservation). Approve resumes the task; reject stops it.</p>
             </div>
             <button id="btnRefreshApprovals" class="secondary">Refresh</button>
           </div>
+          <div class="row" style="margin:.5rem 0">
+            <label>Filter
+              <select id="approvalFilter">
+                <option value="pending">Pending</option>
+                <option value="all">All</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
+              </select>
+            </label>
+          </div>
+          <div id="approvalStats" class="stats"></div>
           <div id="approvalList" class="list"></div>
         </div>
       </section>
