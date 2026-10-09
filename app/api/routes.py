@@ -128,6 +128,7 @@ from app.services.automation import (
     tick_schedules,
 )
 from app.services.access import (
+    get_agent_access,
     grant_access,
     require_agent_approve,
     require_agent_manage,
@@ -935,6 +936,74 @@ def list_agent_access(
             )
         ).all()
     )
+
+
+
+@router.post(
+    "/companies/{company_id}/agents/access/grant-operational",
+)
+def grant_operational_agent_access(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """
+    Job 37 — Grant can_use on every hired agent to operational users
+    (reservation, member, manager) who do not already have access.
+    Owner/ai_admin already bypass ACL via is_company_admin.
+    """
+    actor = require_company_user(db, company_id, x_user_id)
+    require_permission(actor, "agent.manage")
+
+    agents = list(
+        db.scalars(
+            select(AgentInstance).where(AgentInstance.company_id == company_id)
+        ).all()
+    )
+    users = list(
+        db.scalars(select(User).where(User.company_id == company_id, User.status == "active")).all()
+    )
+    granted = 0
+    skipped = 0
+    for u in users:
+        _ = u.role
+        role_name = u.role.name if u.role else ""
+        if role_name in ("owner", "ai_admin"):
+            skipped += 1
+            continue
+        for agent in agents:
+            existing = get_agent_access(
+                db,
+                company_id=company_id,
+                agent_instance_id=agent.id,
+                user_id=u.id,
+            )
+            if existing and existing.can_use:
+                skipped += 1
+                continue
+            grant_access(
+                db,
+                company_id=company_id,
+                agent_instance_id=agent.id,
+                user_id=u.id,
+                can_use=True,
+                can_manage=False,
+                can_approve=role_name == "manager",
+                is_supervisor=False,
+            )
+            granted += 1
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=actor.id,
+        action="agent.access.grant_operational",
+        resource_type="company",
+        resource_id=company_id,
+        status="success",
+        details={"granted": granted, "skipped": skipped, "agents": len(agents)},
+    )
+    db.commit()
+    return {"granted": granted, "skipped": skipped, "agents": len(agents), "users": len(users)}
 
 
 @router.post(

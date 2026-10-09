@@ -300,6 +300,25 @@
           <div id="agentList" class="cards"></div>
         </div>
         <div class="card">
+          <h3>Agent access</h3>
+          <p class="muted">Operational roles (reservation, member, manager) need <code>can_use</code> on each agent. Owner/ai_admin already have full access.</p>
+          <div class="grid-2">
+            <label>Agent
+              <select id="accessAgentSelect"></select>
+            </label>
+            <label>User
+              <select id="accessUserSelect"></select>
+            </label>
+          </div>
+          <div class="row">
+            <button id="btnGrantAccess" class="primary">Grant can_use</button>
+            <button id="btnGrantOperationalAccess" class="secondary">Grant all operational users</button>
+            <button id="btnRefreshAccess" class="secondary">Refresh list</button>
+          </div>
+          <pre id="accessLog" class="log hidden-log"></pre>
+          <div id="accessList" class="list"></div>
+        </div>
+        <div class="card">
           <h3>Hire from catalog</h3>
           <div class="row">
             <select id="catalogSelect"></select>

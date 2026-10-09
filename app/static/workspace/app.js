@@ -731,16 +731,118 @@
         </div>`
           )
           .join("") || `<div class="empty">No agents hired yet.</div>`;
+      const accessAgent = $("accessAgentSelect");
+      if (accessAgent) {
+        accessAgent.innerHTML = (agents || [])
+          .map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`)
+          .join("");
+      }
       const sel = $("catalogSelect");
       if (sel)
         sel.innerHTML = (catalog || [])
           .map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`)
           .join("");
       loadSubscriptions();
+      loadAccessPanel();
     } catch (err) {
       $("agentList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
     }
   }
+  
+  async function loadAccessPanel() {
+    if (!state.companyId) return;
+    const log = $("accessLog");
+    try {
+      // users (team.manage) — owner only; fallback empty
+      let users = [];
+      try {
+        users = await api(`/companies/${state.companyId}/users`);
+      } catch (_) {
+        users = [];
+      }
+      const userSel = $("accessUserSelect");
+      if (userSel) {
+        userSel.innerHTML = (users || [])
+          .map(
+            (u) =>
+              `<option value="${u.id}">${escapeHtml(u.name)} (${escapeHtml(u.role || "")})</option>`
+          )
+          .join("");
+      }
+      const agentId = $("accessAgentSelect") && $("accessAgentSelect").value;
+      if (!agentId) {
+        $("accessList").innerHTML = `<div class="empty">Hire an agent first.</div>`;
+        return;
+      }
+      const list = await api(`/companies/${state.companyId}/agents/${agentId}/access`);
+      $("accessList").innerHTML =
+        (list || [])
+          .map(
+            (a) => `<div class="item">
+          <strong>${escapeHtml(a.user_id)}</strong>
+          <div class="meta">use: ${a.can_use} · manage: ${a.can_manage} · approve: ${a.can_approve}</div>
+        </div>`
+          )
+          .join("") || `<div class="empty">No access rows for this agent.</div>`;
+    } catch (err) {
+      if ($("accessList"))
+        $("accessList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+    }
+  }
+  if ($("btnRefreshAccess")) $("btnRefreshAccess").onclick = loadAccessPanel;
+  if ($("accessAgentSelect"))
+    $("accessAgentSelect").onchange = loadAccessPanel;
+  if ($("btnGrantAccess"))
+    $("btnGrantAccess").onclick = async () => {
+      const log = $("accessLog");
+      try {
+        const agentId = $("accessAgentSelect").value;
+        const userId = $("accessUserSelect").value;
+        if (!agentId || !userId) throw new Error("Select agent and user");
+        await api(`/companies/${state.companyId}/agents/${agentId}/access`, {
+          method: "POST",
+          body: JSON.stringify({
+            user_id: userId,
+            can_use: true,
+            can_manage: false,
+            can_approve: false,
+            is_supervisor: false,
+          }),
+        });
+        if (log) {
+          log.classList.remove("hidden-log");
+          log.textContent = "Granted can_use";
+        }
+        loadAccessPanel();
+      } catch (err) {
+        if (log) {
+          log.classList.remove("hidden-log");
+          log.textContent = err.message;
+        }
+      }
+    };
+  if ($("btnGrantOperationalAccess"))
+    $("btnGrantOperationalAccess").onclick = async () => {
+      const log = $("accessLog");
+      try {
+        const res = await api(`/companies/${state.companyId}/agents/access/grant-operational`, {
+          method: "POST",
+          body: "{}",
+        });
+        if (log) {
+          log.classList.remove("hidden-log");
+          log.textContent = JSON.stringify(res, null, 2);
+        }
+        loadAccessPanel();
+      } catch (err) {
+        if (log) {
+          log.classList.remove("hidden-log");
+          log.textContent = err.message;
+        }
+      }
+    };
+
+
   $("btnRefreshAgents").onclick = loadAgents;
   $("btnHire").onclick = async () => {
     const log = $("hireLog");
