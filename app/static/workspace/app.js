@@ -706,32 +706,87 @@
   }
 
   // ----- Notifications -----
+  // Job 48 — actionable notifications (title/body + deep link)
+  function notificationTarget(n) {
+    const p = n.payload || {};
+    if (p.approval_id || n.type === "approval_required" || n.type === "approval.pending") {
+      return { view: "approvals", label: "Open approvals" };
+    }
+    if (p.task_id) {
+      return { view: "tasks", taskId: p.task_id, label: "Open task" };
+    }
+    if (n.type && String(n.type).includes("task")) {
+      return { view: "tasks", taskId: p.task_id || null, label: "Open tasks" };
+    }
+    if (n.type && String(n.type).includes("result")) {
+      return { view: "results", label: "Open results" };
+    }
+    return null;
+  }
+
+  async function markNotificationRead(id) {
+    await api(`/companies/${state.companyId}/notifications/${id}/read`, {
+      method: "POST",
+      body: "{}",
+    });
+  }
+
   async function loadNotifications() {
     if (!state.companyId) return;
     try {
       const list = await api(`/companies/${state.companyId}/notifications`);
+      const filterEl = $("notifFilter");
+      const f = filterEl ? filterEl.value : "all";
+      let rows = list || [];
+      if (f === "unread") rows = rows.filter((n) => !n.read_at);
+
       const unread = (list || []).filter((n) => !n.read_at).length;
       $("notifStats").innerHTML = `<div class="stat"><div class="n">${unread}</div><div class="l">Unread</div></div>
-        <div class="stat"><div class="n">${(list || []).length}</div><div class="l">Total</div></div>`;
+        <div class="stat"><div class="n">${rows.length}</div><div class="l">Shown</div></div>`;
       $("notifList").innerHTML =
-        (list || [])
-          .map(
-            (n) => `<div class="item">
-          <strong>${escapeHtml(n.type || "notification")}</strong>
-          <div class="meta">${escapeHtml(JSON.stringify(n.payload || {}).slice(0, 120))} · ${n.read_at ? "read" : "unread"}</div>
-          ${!n.read_at
-                ? `<div class="actions"><button class="secondary btn-read-one" data-id="${n.id}">Mark read</button></div>`
-                : ""
-              }
-        </div>`
-          )
+        rows
+          .map((n) => {
+            const target = notificationTarget(n);
+            const title = n.title || n.type || "Notification";
+            const body = n.body || "";
+            const when = n.created_at ? new Date(n.created_at).toLocaleString() : "";
+            const unreadCls = n.read_at ? "" : " notif-unread";
+            return `<div class="item${unreadCls}" data-notif-id="${escapeHtml(n.id)}">
+          <strong>${escapeHtml(title)}</strong>
+          <div class="meta">${escapeHtml(n.type || "")}${n.read_at ? " · read" : " · unread"}${when ? " · " + escapeHtml(when) : ""}</div>
+          ${body ? `<div class="meta">${escapeHtml(body.slice(0, 200))}</div>` : ""}
+          <div class="actions">
+            ${target ? `<button class="primary btn-notif-open" data-id="${n.id}" data-view="${escapeHtml(target.view)}" data-task="${escapeHtml(target.taskId || "")}">${escapeHtml(target.label)}</button>` : ""}
+            ${!n.read_at ? `<button class="secondary btn-read-one" data-id="${n.id}">Mark read</button>` : ""}
+          </div>
+        </div>`;
+          })
           .join("") || `<div class="empty">No notifications.</div>`;
+
       document.querySelectorAll(".btn-read-one").forEach((b) => {
         b.onclick = async () => {
-          await api(`/companies/${state.companyId}/notifications/${b.dataset.id}/read`, {
-            method: "POST",
-            body: "{}",
-          });
+          try {
+            await markNotificationRead(b.dataset.id);
+            await loadNotifications();
+            await refreshInboxBadge();
+          } catch (err) {
+            alert(err.message);
+          }
+        };
+      });
+      document.querySelectorAll(".btn-notif-open").forEach((b) => {
+        b.onclick = async () => {
+          try {
+            await markNotificationRead(b.dataset.id);
+          } catch (_) {}
+          const view = b.dataset.view;
+          const taskId = b.dataset.task;
+          if (taskId) focusedTaskId = taskId;
+          if (view === "results") {
+            contextualSidebar.results();
+          } else if (view) {
+            showView(view);
+          }
           await loadNotifications();
           await refreshInboxBadge();
         };
@@ -743,6 +798,7 @@
   }
 
   if ($("btnNotifRefresh")) $("btnNotifRefresh").onclick = loadNotifications;
+  if ($("notifFilter")) $("notifFilter").onchange = loadNotifications;
   if ($("btnNotifReadAll"))
     $("btnNotifReadAll").onclick = async () => {
       await api(`/companies/${state.companyId}/notifications/read-all`, {
