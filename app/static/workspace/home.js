@@ -31,6 +31,49 @@
     };
   }
 
+
+  const ROLE_LABELS = {
+    owner: "Owner",
+    ai_admin: "AI Administrator",
+    manager: "Manager",
+    reservation: "Reservation",
+    member: "Member",
+  };
+
+  function roleQuickActions(role) {
+    const common = [
+      { id: "chat", title: "Chat with AI", desc: "Advisory conversation" },
+      { id: "tasks", title: "Create task", desc: "Run tools with policy" },
+      { id: "inbox", title: "Inbox", desc: "Approvals & handoffs" },
+    ];
+    if (role === "reservation") {
+      return [
+        { id: "chat", title: "Ask availability", desc: "Advisory chat first" },
+        { id: "tasks", title: "Run reservation task", desc: "Search / quote / book" },
+        { id: "results", title: "Quotations & results", desc: "Find drafts & rates" },
+        { id: "inbox", title: "Approvals", desc: "Pending bookings" },
+      ];
+    }
+    if (role === "ai_admin") {
+      return [
+        { id: "agents", title: "AI Employees", desc: "Hire & access" },
+        { id: "policy-management", title: "Policies", desc: "Allow / approve tools" },
+        { id: "users", title: "Users & roles", desc: "Team access" },
+        { id: "tasks", title: "Tasks", desc: "Operational work" },
+      ];
+    }
+    if (role === "owner" || role === "manager") {
+      return [
+        { id: "home", title: "Overview", desc: "Command center" },
+        { id: "agents", title: "AI team", desc: "Workforce" },
+        { id: "governance", title: "Governance", desc: "Controls & metrics" },
+        { id: "users", title: "Users", desc: "Roles & access" },
+        { id: "results", title: "Results", desc: "Work outputs" },
+      ];
+    }
+    return common;
+  }
+
   function create({ api, getSession, escapeHtml: esc, navigate, openTask, openResult }) {
     const $ = (id) => document.getElementById(id);
     let generation = 0;
@@ -87,6 +130,44 @@
             return `<div class="home-work-row"><div><strong>${esc(agent.name)}</strong><span class="meta">${agent.status === "active" ? "Active" : "Inactive"} / ${work}</span></div></div>`;
           }).join("") : empty("No AI employees yet.") + '<button class="secondary" data-home-view="marketplace">Choose an AI employee</button>';
         $("homeUpdated").textContent = `Updated ${new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}`;
+
+        // Job 41 — role-aware greeting + quick actions + inventory status
+        const role = session.role || "member";
+        const roleName = ROLE_LABELS[role] || role;
+        $("homeGreeting").textContent = `Welcome · ${roleName}`;
+        if ($("homeRoleLabel")) $("homeRoleLabel").textContent = roleName;
+        const actions = roleQuickActions(role);
+        if ($("homeQuickActions")) {
+          $("homeQuickActions").innerHTML = actions.map((a) =>
+            `<button type="button" data-home-view="${esc(a.id)}"><span class="hq-title">${esc(a.title)}</span><span class="hq-desc">${esc(a.desc)}</span></button>`
+          ).join("");
+        }
+        const showInv = ["owner", "ai_admin", "manager", "reservation"].includes(role);
+        if ($("homeInventorySection")) $("homeInventorySection").classList.toggle("hidden", !showInv);
+        if (showInv && $("homeInventoryStatus")) {
+          try {
+            const inv = await api(`/companies/${session.companyId}/inventory`);
+            const n = (inv.items || []).length;
+            $("homeInventoryStatus").innerHTML = n
+              ? `<div class="item"><strong>${n} availability product(s)</strong><div class="meta">Durable inventory ready for search_availability</div></div>`
+              : `<div class="item"><strong>No inventory yet</strong><div class="meta">Owner/AI Admin: Agents → Seed reservation demo data</div>
+                 <button type="button" class="secondary" data-home-seed="1">Seed demo data</button></div>`;
+          } catch (e) {
+            $("homeInventoryStatus").innerHTML = `<div class="muted">${esc(e.message || "Inventory unavailable")}</div>`;
+          }
+        }
+        if ($("btnHomeRefreshInventory")) {
+          $("btnHomeRefreshInventory").onclick = () => load();
+        }
+        $("homeInventoryStatus")?.querySelectorAll("[data-home-seed]").forEach((button) => {
+          button.onclick = async () => {
+            try {
+              await api(`/companies/${session.companyId}/demo/seed-reservation`, { method: "POST", body: "{}" });
+              await load();
+            } catch (err) { alert(err.message); }
+          };
+        });
+
         $("view-home").querySelectorAll("[data-home-view]").forEach((button) => { button.onclick = () => navigate(button.dataset.homeView); });
         $("homeInbox").querySelectorAll("[data-home-attention]").forEach((button) => {
           button.onclick = () => { const entry = summary.attention[Number(button.dataset.homeAttention)]; if (entry.task) openTask(entry.task); else navigate(entry.view); };
@@ -100,7 +181,7 @@
     }
     function reset() {
       generation++;
-      ["homeStats", "homeInbox", "homeProgress", "homeRecent", "homeAgents"].forEach((id) => { $(id).textContent = ""; });
+      ["homeStats", "homeInbox", "homeProgress", "homeRecent", "homeAgents", "homeQuickActions", "homeInventoryStatus"].forEach((id) => { if ($(id)) $(id).textContent = ""; });
       $("homeGreeting").textContent = "Workspace overview";
       $("homeUpdated").textContent = "";
       $("homeNotice").textContent = "";

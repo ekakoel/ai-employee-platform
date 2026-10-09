@@ -579,3 +579,23 @@ button.primary:disabled, button:disabled {
 .artifact-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
 .artifact-table th, .artifact-table td { border-bottom: 1px solid #e2e8f0; padding: 0.35rem 0.4rem; text-align: left; }
 .result-tags { display: inline-flex; gap: 0.25rem; margin-top: 0.25rem; }
+
+
+/* Job 41 — role-aware home quick actions */
+.home-quick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.6rem;
+}
+.home-quick-grid button {
+  text-align: left;
+  padding: 0.75rem 0.9rem;
+  border-radius: 10px;
+  border: 1px solid var(--border, #e2e8f0);
+  background: var(--card, #fff);
+  cursor: pointer;
+  font: inherit;
+}
+.home-quick-grid button:hover { border-color: #94a3b8; }
+.home-quick-grid .hq-title { display: block; font-weight: 600; font-size: 0.9rem; }
+.home-quick-grid .hq-desc { display: block; color: #64748b; font-size: 0.75rem; margin-top: 0.2rem; }
