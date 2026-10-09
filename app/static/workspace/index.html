@@ -19,12 +19,12 @@
       </div>
 
       <div class="login-tabs">
-        <button type="button" class="tab developer-only" data-tab="quick">Quick start</button>
+        <button type="button" class="tab" data-tab="quick">Quick start</button>
         <button type="button" class="tab active" data-tab="login">Login</button>
         <button type="button" class="tab developer-only" data-tab="connect">Connect IDs</button>
       </div>
 
-      <div id="tab-quick" class="tab-panel developer-only">
+      <div id="tab-quick" class="tab-panel">
         <p class="muted">Create a demo company, owner account, and hire sample AI employees in one click.</p>
         <button id="btnQuickStart" class="primary block">Launch demo workspace</button>
         <pre id="quickLog" class="log"></pre>
@@ -44,6 +44,11 @@
           <button id="btnLogin" class="primary">Sign in</button>
           <button id="btnRegister" class="secondary">Register</button>
         </div>
+        <p class="muted" style="margin-top:.75rem">Belum punya company? Isi nama company baru lalu buat, atau pakai tab Quick start.</p>
+        <label>New company name
+          <input id="newCompanyName" placeholder="e.g. Demo Travel Co" />
+        </label>
+        <button id="btnCreateCompany" class="secondary block">Create company</button>
         <pre id="loginLog" class="log"></pre>
       </div>
 

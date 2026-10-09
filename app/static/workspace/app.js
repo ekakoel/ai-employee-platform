@@ -578,6 +578,31 @@
   $("btnClearSession").onclick = clearSession;
   if ($("btnLogout")) $("btnLogout").onclick = clearSession;
 
+  
+
+  
+  if ($("btnCreateCompany"))
+    $("btnCreateCompany").onclick = async () => {
+      const log = $("loginLog");
+      try {
+        const name = ($("newCompanyName") && $("newCompanyName").value.trim()) || "";
+        if (!name) throw new Error("Isi nama company baru");
+        const co = await api("/companies", {
+          method: "POST",
+          body: JSON.stringify({ name }),
+          skipAuth: true,
+        });
+        if ($("loginCompanyId")) $("loginCompanyId").value = co.id;
+        if ($("companyId")) $("companyId").value = co.id;
+        log.textContent =
+          "Company dibuat.\nID: " + co.id +
+          "\n\nLanjut: isi Email + Password (min 8 karakter), lalu klik Register.\n" +
+          "Role default register = member. Untuk owner + demo agents, pakai Quick start.";
+      } catch (err) {
+        log.textContent = "Create company failed: " + err.message;
+      }
+    };
+
   $("btnLogin").onclick = async () => {
     const log = $("loginLog");
     try {
