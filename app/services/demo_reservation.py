@@ -170,3 +170,124 @@ def seed_company_reservation_demo(
         "knowledge_title": knowledge.title,
         "policy_ids": policy_ids,
     }
+
+
+def run_reservation_playbook(
+    db: Session,
+    *,
+    company_id: str,
+    user_id: str | None = None,
+) -> dict[str, Any]:
+    """Job 49 — seed inventory + create a pending execute task for availability search.
+
+    Does not execute tools (policy/runtime stay in Task path). Returns task_id for UI.
+    """
+    from app.models.entities import AgentInstance, Task, TaskStatus
+
+    seed = seed_company_reservation_demo(db, company_id=company_id, user_id=user_id)
+
+    from app.models.entities import AgentCatalog, AgentSubscription
+
+    agents = list(
+        db.scalars(
+            select(AgentInstance).where(
+                AgentInstance.company_id == company_id,
+                AgentInstance.status == "active",
+            )
+        ).all()
+    )
+    agent = None
+    hired_now = False
+    for a in agents:
+        name = (a.name or "").lower()
+        scope = " ".join(a.scope or []).lower() if a.scope else ""
+        cfg_role = ""
+        if isinstance(a.configuration, dict):
+            cfg_role = str(a.configuration.get("role") or "").lower()
+        if (
+            "reservation" in name
+            or "reservation" in scope
+            or "contract" in name
+            or cfg_role == "reservation"
+        ):
+            agent = a
+            break
+    if agent is None and agents:
+        agent = agents[0]
+
+    # Auto-hire reservation catalog template when company has no agents yet
+    if agent is None:
+        catalog = db.scalar(
+            select(AgentCatalog).where(
+                AgentCatalog.slug == "reservation",
+                AgentCatalog.status == "active",
+            )
+        )
+        if catalog is None:
+            catalog = db.scalar(
+                select(AgentCatalog).where(AgentCatalog.is_published == True).limit(1)  # noqa: E712
+            )
+        if catalog is None:
+            return {
+                **seed,
+                "task_id": None,
+                "error": "No agent catalog available. Seed platform catalog first.",
+            }
+        subscription = AgentSubscription(
+            company_id=company_id,
+            catalog_agent_id=catalog.id,
+        )
+        db.add(subscription)
+        db.flush()
+        skills = list(catalog.skills or [])
+        allowed_tools = list(catalog.allowed_tools or [])
+        scope = list(catalog.scope or [])
+        agent = AgentInstance(
+            company_id=company_id,
+            catalog_agent_id=catalog.id,
+            subscription_id=subscription.id,
+            name=catalog.name or "Reservation Desk",
+            template_version=catalog.version,
+            instructions=catalog.default_instructions or "",
+            skills=skills,
+            allowed_tools=allowed_tools,
+            scope=scope,
+            autonomy=catalog.default_autonomy or "1",
+            policies=dict(catalog.default_policies or {}),
+            configuration={
+                "role": catalog.role,
+                "skills": skills,
+                "allowed_tools": allowed_tools,
+            },
+            supervisor_user_id=user_id,
+            status="active",
+        )
+        db.add(agent)
+        db.flush()
+        hired_now = True
+
+    instruction = (
+        "Search availability for Alila Hotel for 2 guests. "
+        "Check-in 2026-10-30, check-out 2026-10-31. "
+        "Use search_availability. Summarize matching rooms and rates. "
+        "Do not book unless asked."
+    )
+    task = Task(
+        company_id=company_id,
+        agent_instance_id=agent.id,
+        title="Demo: Alila availability 30–31 Oct 2026",
+        instruction=instruction,
+        mode="execute",
+        status=TaskStatus.PENDING.value,
+    )
+    db.add(task)
+    db.flush()
+    return {
+        **seed,
+        "task_id": task.id,
+        "agent_instance_id": agent.id,
+        "agent_name": agent.name,
+        "agent_hired": hired_now,
+        "instruction": instruction,
+        "next_step": "Open Tasks → Run execute (or Chat → Run task now).",
+    }
