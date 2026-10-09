@@ -101,6 +101,7 @@
         <button data-view="notifications" class="nav-btn">Notifications</button>
         <button data-view="governance" class="nav-btn">Governance</button>
         <button data-view="policy-management" class="nav-btn">Policies</button>
+        <button data-view="users" class="nav-btn">Users & Roles</button>
         <button data-view="departments" class="nav-btn">Departments</button>
         <button data-view="teams" class="nav-btn">Teams</button>
         <button data-view="skills" class="nav-btn">Skills</button>
@@ -196,6 +197,7 @@
 
       <!-- CHAT -->
       <section id="view-chat" class="view">
+        <p id="chatModeNotice" class="home-notice" role="status">Chat is advisory only — tools are not executed here. Check <strong>Create task</strong> to run with policy, or open results in <strong>Tasks / Results</strong>.</p>
         <div class="chat-layout">
           <aside class="card chat-history" aria-label="Conversation history">
             <div class="chat-history-heading"><h3>Conversations</h3><button id="btnRefreshChat" class="icon-btn secondary" title="Refresh conversations" aria-label="Refresh conversations">&#8635;</button></div>
@@ -535,6 +537,40 @@
       </section>
 
       <!-- DEPARTMENTS -->
+      
+      <section id="view-users" class="view">
+        <div class="card">
+          <h2>Users &amp; roles</h2>
+          <p class="muted">Invite company members and assign roles (owner, ai_admin, manager, reservation, member).</p>
+          <div class="grid-2">
+            <label>Name
+              <input id="userNameInput" placeholder="Full name" />
+            </label>
+            <label>Email
+              <input id="userEmailInput" placeholder="user@company.com" />
+            </label>
+            <label>Role
+              <select id="userRoleInput">
+                <option value="reservation">reservation</option>
+                <option value="member">member</option>
+                <option value="manager">manager</option>
+                <option value="ai_admin">ai_admin</option>
+                <option value="owner">owner</option>
+              </select>
+            </label>
+            <label>Password
+              <input id="userPasswordInput" type="password" placeholder="min 8 characters" value="demo12345" />
+            </label>
+          </div>
+          <div class="row">
+            <button id="btnCreateUser" class="primary">Create user</button>
+            <button id="btnRefreshUsers" class="secondary">Refresh</button>
+          </div>
+          <pre id="userAdminLog" class="log hidden-log"></pre>
+          <div id="usersList" class="list"></div>
+        </div>
+      </section>
+
       <section id="view-departments" class="view">
         <div class="card">
           <h2>Departments</h2>

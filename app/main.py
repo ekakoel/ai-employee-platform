@@ -80,6 +80,7 @@ def health():
         "version": "0.2.0",
         "env": settings.app_env,
         "workspace": "/workspace",
+        "developer": "/developer",
     }
 
 

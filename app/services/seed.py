@@ -17,11 +17,56 @@ DEFAULT_PERMISSIONS = {
     "approval.manage": "Approve or reject approval requests",
     "audit.read": "Read company audit logs",
     "team.manage": "Manage company users",
+    # Job 35 — finer UI / API gating
+    "policy.read": "View company policy rules",
+    "policy.manage": "Create and update policy rules",
+    "integration.manage": "Manage company integrations",
+    "governance.read": "View governance metrics and cost",
+    "usage.read": "View plan and usage quotas",
 }
 
+# Role matrix (company users). Platform developer is NOT a company role.
 ROLE_PERMISSIONS = {
     "owner": set(DEFAULT_PERMISSIONS),
-    "manager": set(DEFAULT_PERMISSIONS),
+    # Supervisor: approvals + workforce ops; no team/plan admin
+    "manager": {
+        "agent.read",
+        "agent.hire",
+        "agent.manage",
+        "knowledge.read",
+        "knowledge.write",
+        "task.create",
+        "task.read",
+        "approval.read",
+        "approval.manage",
+        "audit.read",
+        "governance.read",
+        "policy.read",
+    },
+    # AI Administrator: configure AI workforce, skills, knowledge, policy, integrations
+    "ai_admin": {
+        "agent.read",
+        "agent.hire",
+        "agent.manage",
+        "knowledge.read",
+        "knowledge.write",
+        "task.create",
+        "task.read",
+        "approval.read",
+        "policy.read",
+        "policy.manage",
+        "integration.manage",
+        "governance.read",
+        "audit.read",
+    },
+    # Operational staff (e.g. reservation desk)
+    "reservation": {
+        "agent.read",
+        "knowledge.read",
+        "task.create",
+        "task.read",
+        "approval.read",
+    },
     "member": {
         "agent.read",
         "knowledge.read",
@@ -29,6 +74,8 @@ ROLE_PERMISSIONS = {
         "task.read",
     },
 }
+
+VALID_COMPANY_ROLES = frozenset(ROLE_PERMISSIONS.keys())
 
 
 def get_or_create_role(db: Session, role_name: str) -> Role:

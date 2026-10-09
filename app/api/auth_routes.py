@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,8 +16,9 @@ from app.core.security import (
 )
 from app.models.entities import Company, Role, User
 from app.services.audit import record_audit
-from app.services.seed import get_or_create_role
+from app.services.seed import VALID_COMPANY_ROLES, get_or_create_role
 from app.services.platform_admin import sync_platform_admin_flag
+from app.services.access import user_permission_keys
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -53,6 +54,13 @@ class TokenResponse(BaseModel):
     company_id: str
     email: str | None = None
     name: str | None = None
+    role: str | None = None
+    permissions: list[str] = []
+    is_platform_admin: bool = False
+
+
+def _user_role_name(user: User) -> str | None:
+    return user.role.name if user.role is not None else None
 
 
 def _issue_pair(user: User) -> TokenResponse:
@@ -62,6 +70,7 @@ def _issue_pair(user: User) -> TokenResponse:
         extra={"email": user.email, "role_id": user.role_id},
     )
     refresh = create_refresh_token(subject=user.id, company_id=user.company_id)
+    perms = sorted(user_permission_keys(user))
     return TokenResponse(
         access_token=access,
         refresh_token=refresh,
@@ -69,6 +78,9 @@ def _issue_pair(user: User) -> TokenResponse:
         company_id=user.company_id,
         email=user.email,
         name=user.name,
+        role=_user_role_name(user),
+        permissions=perms,
+        is_platform_admin=bool(getattr(user, "is_platform_admin", False)),
     )
 
 
@@ -140,7 +152,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=409, detail="Email already registered")
 
-    role_name = payload.role if payload.role in ("owner", "manager", "member") else "member"
+    role_name = payload.role if payload.role in VALID_COMPANY_ROLES else "member"
     role = get_or_create_role(db, role_name)
 
     try:
@@ -191,3 +203,45 @@ def refresh_token(payload: RefreshRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Tenant mismatch")
 
     return _issue_pair(user)
+
+
+class MeResponse(BaseModel):
+    user_id: str
+    email: str | None = None
+    name: str | None = None
+    company_id: str
+    role: str | None = None
+    permissions: list[str] = []
+    is_platform_admin: bool = False
+    status: str | None = None
+
+
+@router.get("/me", response_model=MeResponse)
+def read_me(
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
+):
+    """Current user + role permissions for workspace UI gating (Job 35)."""
+    from app.core.auth import resolve_user_id
+
+    user_id = resolve_user_id(authorization=authorization, x_user_id=x_user_id)
+    user = db.get(User, user_id)
+    if not user or user.status != "active":
+        raise HTTPException(status_code=401, detail="Invalid or inactive user")
+    # Ensure role relationship loaded
+    _ = user.role
+    if user.role is not None:
+        _ = user.role.permissions
+    sync_platform_admin_flag(db, user)
+    db.commit()
+    return MeResponse(
+        user_id=user.id,
+        email=user.email,
+        name=user.name,
+        company_id=user.company_id,
+        role=user.role.name if user.role else None,
+        permissions=sorted(user_permission_keys(user)),
+        is_platform_admin=bool(user.is_platform_admin),
+        status=user.status,
+    )

@@ -101,7 +101,7 @@ from app.schemas.domain import (
     KnowledgeUpdate,
     TaskCreate,
     TaskRead,
-    UserCreate,
+    UserCreate, UserRoleUpdate,
     UserRead,
     MarketplaceTemplateRead,
     MarketplaceInstallationRead,
@@ -208,6 +208,24 @@ def require_company_user(
         )
 
     return user
+
+
+def user_to_read(user: User) -> UserRead:
+    """Serialize User with role name string (not the Role ORM relationship)."""
+    role_obj = getattr(user, "role", None)
+    role_name = role_obj.name if role_obj is not None else None
+    return UserRead(
+        id=user.id,
+        company_id=user.company_id,
+        name=user.name,
+        email=user.email,
+        role_id=user.role_id,
+        role=role_name,
+        department_id=getattr(user, "department_id", None),
+        status=user.status,
+        is_platform_admin=bool(getattr(user, "is_platform_admin", False)),
+        created_at=user.created_at,
+    )
 
 
 def require_permission(
@@ -437,8 +455,77 @@ def create_user(
 
     db.commit()
     db.refresh(user)
+    _ = user.role
 
-    return user
+    return user_to_read(user)
+
+
+
+@router.get(
+    "/companies/{company_id}/users",
+    response_model=list[UserRead],
+)
+def list_company_users(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """List company users (Job 36 — team admin)."""
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "team.manage")
+    rows = list(
+        db.scalars(
+            select(User)
+            .where(User.company_id == company_id)
+            .order_by(User.created_at.asc())
+        ).all()
+    )
+    for u in rows:
+        _ = u.role
+    return [user_to_read(u) for u in rows]
+
+
+@router.patch(
+    "/companies/{company_id}/users/{user_id}",
+    response_model=UserRead,
+)
+def update_company_user_role(
+    company_id: str,
+    user_id: str,
+    payload: UserRoleUpdate,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """Change a company user's role (owner / team.manage only)."""
+    from app.services.seed import VALID_COMPANY_ROLES
+
+    actor = require_company_user(db, company_id, x_user_id)
+    require_permission(actor, "team.manage")
+    target = db.scalar(
+        select(User).where(User.id == user_id, User.company_id == company_id)
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    role_name = payload.role if payload.role in VALID_COMPANY_ROLES else None
+    if not role_name:
+        raise HTTPException(status_code=400, detail=f"Invalid role: {payload.role}")
+    role = get_or_create_role(db, role_name)
+    target.role_id = role.id
+    db.flush()
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=actor.id,
+        action="user.role_update",
+        resource_type="user",
+        resource_id=target.id,
+        status="success",
+        details={"role": role_name},
+    )
+    db.commit()
+    db.refresh(target)
+    _ = target.role
+    return user_to_read(target)
 
 
 @router.get(

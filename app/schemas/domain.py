@@ -29,10 +29,15 @@ class UserRead(BaseModel):
     name: str
     email: str
     role_id: str
+    role: str | None = None  # role name for UI (Job 36)
     department_id: str | None = None
     status: str
     is_platform_admin: bool = False
     created_at: datetime
+
+
+class UserRoleUpdate(BaseModel):
+    role: str = Field(min_length=2, max_length=100)
 
 
 class AgentCatalogRead(BaseModel):

@@ -11,21 +11,115 @@
     $("loginSubtitle").textContent = "Developer console";
     $("consoleLink").href = "/workspace";
     $("consoleLink").textContent = "User workspace";
-    document.querySelectorAll(".nav-btn").forEach((button) => {
-      button.classList.toggle("hidden", !consoleViews.has(button.dataset.view));
-    });
-    document.querySelectorAll(".nav-group").forEach((group) => {
-      group.classList.toggle("hidden", !group.classList.contains("developer-only"));
-    });
   }
-
+  
   const state = {
     apiBase: localStorage.getItem("ws_apiBase") || "/api/v1",
     companyId: localStorage.getItem("ws_companyId") || "",
     userId: localStorage.getItem("ws_userId") || "",
     accessToken: localStorage.getItem("ws_accessToken") || "",
     userName: localStorage.getItem("ws_userName") || "",
+    role: localStorage.getItem("ws_role") || "",
+    permissions: [],
+    isPlatformAdmin: localStorage.getItem("ws_isPlatformAdmin") === "1",
   };
+  try {
+    state.permissions = JSON.parse(localStorage.getItem("ws_permissions") || "[]");
+  } catch (_) {
+    state.permissions = [];
+  }
+
+  /** View → any of these permissions required (empty = always for authenticated). */
+  const VIEW_PERMISSIONS = {
+    home: [],
+    inbox: ["task.read", "approval.read"],
+    chat: ["task.create", "task.read", "agent.read"],
+    tasks: ["task.read", "task.create"],
+    approvals: ["approval.read"],
+    agents: ["agent.read"],
+    marketplace: ["agent.hire", "agent.manage", "agent.read"],
+    consult: ["task.create", "task.read"],
+    directory: ["agent.read"],
+    knowledge: ["knowledge.read"],
+    delegation: ["task.create", "agent.manage"],
+    automation: ["agent.manage", "task.create"],
+    notifications: [],
+    governance: ["governance.read", "audit.read"],
+    "policy-management": ["policy.read", "policy.manage", "agent.manage"],
+    users: ["team.manage"],
+    departments: ["agent.manage", "team.manage"],
+    teams: ["agent.manage", "team.manage"],
+    skills: ["agent.manage", "agent.read"],
+    learning: ["agent.manage", "knowledge.write"],
+    usage: ["usage.read", "team.manage"],
+    audit: ["audit.read"],
+    integrations: ["integration.manage", "agent.manage"],
+    workflows: ["agent.manage", "task.create"],
+    cost: ["governance.read", "usage.read"],
+    tools: ["__developer__"],
+    policies: ["__developer__"],
+    scopecheck: ["__developer__"],
+    "result-preview": ["task.read"],
+  };
+
+  const ROLE_DEFAULT_VIEW = {
+    owner: "home",
+    ai_admin: "agents",
+    manager: "inbox",
+    reservation: "chat",
+    member: "chat",
+  };
+
+  function hasPermission(key) {
+    if (!key) return true;
+    if (key === "__developer__") return !!(developerMode || state.isPlatformAdmin);
+    return (state.permissions || []).includes(key);
+  }
+
+  function canAccessView(view) {
+    if (developerMode) return consoleViews.has(view);
+    if (developerViews.has(view)) return !!state.isPlatformAdmin;
+    const need = VIEW_PERMISSIONS[view];
+    if (!need || need.length === 0) return true;
+    return need.some((p) => hasPermission(p));
+  }
+
+  function defaultLandingView() {
+    if (developerMode) return "tools";
+    const byRole = ROLE_DEFAULT_VIEW[state.role] || "home";
+    if (canAccessView(byRole)) return byRole;
+    return canAccessView("home") ? "home" : "chat";
+  }
+
+  function applyNavGating() {
+    if (developerMode) {
+      document.querySelectorAll(".nav-btn").forEach((button) => {
+        button.classList.toggle("hidden", !consoleViews.has(button.dataset.view));
+      });
+      document.querySelectorAll(".nav-group").forEach((group) => {
+        group.classList.toggle("hidden", !group.classList.contains("developer-only"));
+      });
+      const link = $("consoleLink");
+      if (link) link.classList.remove("hidden");
+      return;
+    }
+    document.querySelectorAll(".nav-btn").forEach((button) => {
+      const view = button.dataset.view;
+      button.classList.toggle("hidden", !canAccessView(view));
+    });
+    document.querySelectorAll(".nav-group").forEach((group) => {
+      let el = group.nextElementSibling;
+      let any = false;
+      while (el && !el.classList.contains("nav-group")) {
+        if (el.classList.contains("nav-btn") && !el.classList.contains("hidden")) any = true;
+        el = el.nextElementSibling;
+      }
+      group.classList.toggle("hidden", !any);
+    });
+    const link = $("consoleLink");
+    if (link) link.classList.toggle("hidden", !state.isPlatformAdmin);
+  }
+
 
   let focusedTaskId = "";
   let contextualSidebar = null;
@@ -50,6 +144,7 @@
     governance: ["Governance", "Metrics and audit"],
     policies: ["Policy Simulator", "Dry-run ALLOW / APPROVAL / DENY"],
     "policy-management": ["Policies", "Rules that control AI actions"],
+    users: ["Users & Roles", "Company members and role assignment"],
     departments: ["Departments", "Org structure for agents and users"],
     teams: ["Teams", "Group AI employees into pods"],
     skills: ["Skills", "Platform and company capabilities"],
@@ -138,7 +233,10 @@
     state.userId = "";
     state.accessToken = "";
     state.userName = "";
-    ["ws_companyId", "ws_userId", "ws_accessToken", "ws_refreshToken", "ws_userName"].forEach((k) =>
+    state.role = "";
+    state.permissions = [];
+    state.isPlatformAdmin = false;
+    ["ws_companyId", "ws_userId", "ws_accessToken", "ws_refreshToken", "ws_userName", "ws_role", "ws_permissions", "ws_isPlatformAdmin"].forEach((k) =>
       localStorage.removeItem(k)
     );
     showGate(true);
@@ -202,7 +300,7 @@
     if (box) {
       box.innerHTML = ok
         ? `<div><strong>${escapeHtml(state.userName || "User")}</strong></div>
-           <small>${developerMode ? escapeHtml(state.companyId) : "Company workspace"}</small>`
+           <small>${developerMode ? escapeHtml(state.companyId) : escapeHtml(state.role || "member")}${state.role ? " · company workspace" : ""}</small>`
         : "<small>Not connected</small>";
     }
     if (pill) {
@@ -235,8 +333,8 @@
   }
 
   function showView(name) {
-    if ((!developerMode && developerViews.has(name)) || (developerMode && !consoleViews.has(name))) {
-      name = defaultView;
+    if (!canAccessView(name)) {
+      name = defaultLandingView();
     }
     document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
     document.querySelectorAll(".nav-btn").forEach((b) => b.classList.remove("active"));
@@ -273,6 +371,7 @@
     if (name === "directory") listDirectory();
     if (name === "policies") { loadAgentOptions(); }
     if (name === "policy-management") loadPolicies();
+    if (name === "users") loadUsers();
     if (name === "departments") loadDepartments();
     if (name === "teams") { loadAgentOptions(); loadTeams(); }
     if (name === "skills") loadSkills();
@@ -305,22 +404,46 @@
     });
   });
 
+  async function loadMeProfile() {
+    try {
+      const me = await api("/auth/me");
+      state.role = me.role || state.role || "";
+      state.permissions = me.permissions || [];
+      state.isPlatformAdmin = !!me.is_platform_admin;
+      state.userName = me.name || me.email || state.userName;
+      localStorage.setItem("ws_role", state.role);
+      localStorage.setItem("ws_permissions", JSON.stringify(state.permissions));
+      localStorage.setItem("ws_isPlatformAdmin", state.isPlatformAdmin ? "1" : "0");
+      localStorage.setItem("ws_userName", state.userName);
+    } catch (err) {
+      console.warn("loadMeProfile", err);
+    }
+  }
+
   async function applyAuthSession(body) {
     state.companyId = body.company_id;
     state.userId = body.user_id;
     state.accessToken = body.access_token || "";
     state.userName = body.name || body.email || "";
+    state.role = body.role || "";
+    state.permissions = body.permissions || [];
+    state.isPlatformAdmin = !!body.is_platform_admin;
     localStorage.setItem("ws_companyId", state.companyId);
     localStorage.setItem("ws_userId", state.userId);
     localStorage.setItem("ws_accessToken", state.accessToken);
     localStorage.setItem("ws_userName", state.userName);
+    localStorage.setItem("ws_role", state.role);
+    localStorage.setItem("ws_permissions", JSON.stringify(state.permissions));
+    localStorage.setItem("ws_isPlatformAdmin", state.isPlatformAdmin ? "1" : "0");
     if (body.refresh_token) localStorage.setItem("ws_refreshToken", body.refresh_token);
     if ($("companyId")) $("companyId").value = state.companyId;
     if ($("userId")) $("userId").value = state.userId;
     if ($("loginCompanyId")) $("loginCompanyId").value = state.companyId;
+    if (!state.permissions.length) await loadMeProfile();
+    applyNavGating();
     setConnected(true);
     await refreshInboxBadge();
-    showView(defaultView);
+    showView(defaultLandingView());
   }
 
   // ----- Quick start -----
@@ -391,9 +514,38 @@
       if ($("companyId")) $("companyId").value = co.id;
       if ($("userId")) $("userId").value = user.id;
 
+      if (state.accessToken) await loadMeProfile();
+      else {
+        state.role = "owner";
+        state.permissions = [];
+      }
+      applyNavGating();
       setConnected(true);
       await refreshInboxBadge();
-      showView("home");
+      showView(defaultLandingView());
+      
+      // Seed persona users for role testing (Job 36)
+      for (const [role, email] of [
+        ["ai_admin", "aiadmin@demo.local"],
+        ["reservation", "reservation@demo.local"],
+        ["manager", "manager@demo.local"],
+      ]) {
+        try {
+          await api(`/companies/${co.id}/users`, {
+            method: "POST",
+            body: JSON.stringify({
+              name: role.replace("_", " "),
+              email,
+              role,
+              password: "demo12345",
+            }),
+          });
+          log.textContent += "\nUser " + email + " (" + role + ")";
+        } catch (e) {
+          log.textContent += "\nUser " + email + ": " + e.message;
+        }
+      }
+
       log.textContent += "\n\nWorkspace ready. Password: demo12345";
     } catch (err) {
       log.textContent = "Quick start failed: " + err.message;
@@ -411,9 +563,11 @@
       localStorage.setItem("ws_companyId", state.companyId);
       localStorage.setItem("ws_userId", state.userId);
       await api(`/companies/${state.companyId}`);
+      await loadMeProfile();
+      applyNavGating();
       setConnected(true);
       await refreshInboxBadge();
-      showView("home");
+      showView(defaultLandingView());
       log.textContent = "Connected.";
     } catch (err) {
       log.textContent = "Connect failed: " + err.message;
@@ -1189,7 +1343,75 @@
     };
 
   // ----- Departments -----
-  async function loadDepartments() {
+  
+  async function loadUsers() {
+    if (!state.companyId) return;
+    try {
+      const list = await api(`/companies/${state.companyId}/users`);
+      $("usersList").innerHTML =
+        (list || [])
+          .map(
+            (u) => `<div class="item">
+          <strong>${escapeHtml(u.name)}</strong>
+          <div class="meta">${escapeHtml(u.email)} · role: <code>${escapeHtml(u.role || u.role_id)}</code> · ${escapeHtml(u.status || "")}</div>
+          <div class="row" style="margin-top:.35rem">
+            <select data-user-role="${escapeHtml(u.id)}">
+              ${["owner","ai_admin","manager","reservation","member"].map((r) =>
+                `<option value="${r}" ${u.role === r ? "selected" : ""}>${r}</option>`
+              ).join("")}
+            </select>
+            <button class="secondary btn-set-role" data-id="${escapeHtml(u.id)}">Update role</button>
+          </div>
+        </div>`
+          )
+          .join("") || `<div class="empty">No users.</div>`;
+      document.querySelectorAll(".btn-set-role").forEach((b) => {
+        b.onclick = async () => {
+          const sel = document.querySelector(`select[data-user-role="${b.dataset.id}"]`);
+          try {
+            await api(`/companies/${state.companyId}/users/${b.dataset.id}`, {
+              method: "PATCH",
+              body: JSON.stringify({ role: sel.value }),
+            });
+            loadUsers();
+          } catch (err) {
+            alert(err.message);
+          }
+        };
+      });
+    } catch (err) {
+      $("usersList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+    }
+  }
+  if ($("btnRefreshUsers")) $("btnRefreshUsers").onclick = loadUsers;
+  if ($("btnCreateUser"))
+    $("btnCreateUser").onclick = async () => {
+      const log = $("userAdminLog");
+      try {
+        const body = await api(`/companies/${state.companyId}/users`, {
+          method: "POST",
+          body: JSON.stringify({
+            name: ($("userNameInput").value || "").trim() || "New User",
+            email: ($("userEmailInput").value || "").trim(),
+            role: $("userRoleInput").value || "member",
+            password: ($("userPasswordInput").value || "demo12345"),
+          }),
+        });
+        if (log) {
+          log.classList.remove("hidden-log");
+          log.textContent = "Created " + body.email + " as " + (body.role || "");
+        }
+        $("userEmailInput").value = "";
+        loadUsers();
+      } catch (err) {
+        if (log) {
+          log.classList.remove("hidden-log");
+          log.textContent = err.message;
+        }
+      }
+    };
+
+async function loadDepartments() {
     if (!state.companyId) return;
     try {
       const list = await api(`/companies/${state.companyId}/departments`);
@@ -1589,10 +1811,18 @@
   if ($("userId")) $("userId").value = state.userId;
   if ($("loginCompanyId")) $("loginCompanyId").value = state.companyId;
 
-  if (state.companyId && state.userId) {
-    setConnected(true);
-    refreshInboxBadge().then(() => showView(defaultView));
-  } else {
-    setConnected(false);
-  }
+  (async function bootSession() {
+    applyNavGating();
+    if (state.companyId && state.userId) {
+      if (state.accessToken || state.userId) {
+        try { await loadMeProfile(); } catch (_) {}
+      }
+      applyNavGating();
+      setConnected(true);
+      await refreshInboxBadge();
+      showView(defaultLandingView());
+    } else {
+      setConnected(false);
+    }
+  })();
 })();

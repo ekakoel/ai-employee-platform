@@ -16,12 +16,12 @@ def user_permission_keys(user: User) -> set[str]:
 
 
 def is_company_admin(user: User) -> bool:
-    """Owner/manager with broad agent.manage may administer all agents."""
+    """Roles that may use/manage any company agent without per-agent ACL."""
+    if user.role and user.role.name in {"owner", "manager", "ai_admin"}:
+        keys = user_permission_keys(user)
+        return "agent.manage" in keys or "agent.hire" in keys
     keys = user_permission_keys(user)
-    return "agent.manage" in keys or "agent.hire" in keys and user.role and user.role.name in {
-        "owner",
-        "manager",
-    }
+    return "agent.manage" in keys
 
 
 def get_agent_access(
