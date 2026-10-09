@@ -821,6 +821,25 @@
         }
       }
     };
+  if ($("btnSeedReservationDemo"))
+    $("btnSeedReservationDemo").onclick = async () => {
+      const log = $("accessLog");
+      try {
+        const res = await api(`/companies/${state.companyId}/demo/seed-reservation`, {
+          method: "POST",
+          body: "{}",
+        });
+        if (log) {
+          log.classList.remove("hidden-log");
+          log.textContent = "Demo reservation data: " + JSON.stringify(res, null, 2);
+        }
+      } catch (err) {
+        if (log) {
+          log.classList.remove("hidden-log");
+          log.textContent = err.message;
+        }
+      }
+    };
   if ($("btnGrantOperationalAccess"))
     $("btnGrantOperationalAccess").onclick = async () => {
       const log = $("accessLog");

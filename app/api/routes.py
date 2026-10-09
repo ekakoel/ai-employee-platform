@@ -4636,3 +4636,33 @@ def marketplace_list_installations(
     require_company_user(db, company_id, x_user_id, authorization=authorization)
     rows = list_installations(db, company_id=company_id)
     return [MarketplaceInstallationRead.model_validate(r) for r in rows]
+
+
+@router.post("/companies/{company_id}/demo/seed-reservation")
+def seed_reservation_demo_api(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """Job 38 — Seed demo hotel availability + knowledge for reservation flows."""
+    user = require_company_user(db, company_id, x_user_id)
+    # owner / ai_admin / agent.manage
+    keys = {p.key for p in user.role.permissions}
+    if "agent.manage" not in keys and "knowledge.write" not in keys:
+        raise HTTPException(status_code=403, detail="Permission denied: seed demo data")
+    from app.services.demo_reservation import seed_company_reservation_demo
+
+    result = seed_company_reservation_demo(db, company_id=company_id, user_id=user.id)
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        action="demo.seed_reservation",
+        resource_type="company",
+        resource_id=company_id,
+        status="success",
+        details=result,
+    )
+    db.commit()
+    return result
+

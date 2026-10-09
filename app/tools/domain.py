@@ -43,17 +43,57 @@ def company_prices(db: Session, context: ToolContext) -> dict[str, dict]:
 
 
 def availability_records(context: ToolContext, arguments: dict) -> list[dict]:
+    """Match company inventory to requested stay.
+
+    Inventory rows may be:
+    - exact stay rows (check_in/check_out), or
+    - range products (valid_from/valid_to) expanded to the requested stay.
+    """
     start, end = str(arguments.get("check_in", "")), str(arguments.get("check_out", ""))
-    if date.fromisoformat(start) >= date.fromisoformat(end):
+    start_d, end_d = date.fromisoformat(start), date.fromisoformat(end)
+    if start_d >= end_d:
         raise ValueError("Check-out must be after check-in.")
-    records = get_external_client().search(system="availability", query="", filters={
-        "company_id": context.company_id, "check_in": start, "check_out": end,
-    })
-    return [row for row in records if row.get("company_id") == context.company_id
-            and row.get("check_in") == start and row.get("check_out") == end
-            and row.get("available") is True
-            and int(row.get("capacity", 0)) >= int(arguments.get("guests", 1))
-            and (not arguments.get("location") or row.get("location") == arguments["location"])]
+    guests = int(arguments.get("guests") or 1)
+    location = arguments.get("location")
+
+    records = get_external_client().search(
+        system="availability",
+        query=str(location or ""),
+        filters={"company_id": context.company_id},
+    )
+    matched: list[dict] = []
+    for row in records:
+        if row.get("company_id") != context.company_id:
+            continue
+        if row.get("available") is not True:
+            continue
+        if int(row.get("capacity", 0) or 0) < guests:
+            continue
+        if location and row.get("location") and str(row.get("location")) != str(location):
+            # allow partial name match
+            if str(location).lower() not in str(row.get("location")).lower():
+                continue
+        # Exact stay inventory
+        if row.get("check_in") and row.get("check_out"):
+            if row.get("check_in") == start and row.get("check_out") == end:
+                matched.append(dict(row))
+            continue
+        # Range product inventory
+        vf = row.get("valid_from") or row.get("check_in")
+        vt = row.get("valid_to") or row.get("check_out")
+        if not vf or not vt:
+            continue
+        try:
+            vf_d, vt_d = date.fromisoformat(str(vf)[:10]), date.fromisoformat(str(vt)[:10])
+        except ValueError:
+            continue
+        if start_d >= vf_d and end_d <= vt_d:
+            item = dict(row)
+            item["check_in"] = start
+            item["check_out"] = end
+            item["id"] = f"{row.get('id')}:{start}:{end}"
+            matched.append(item)
+    return matched
 
 
 class SearchAvailabilityTool(AgentTool):
