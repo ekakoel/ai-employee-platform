@@ -466,6 +466,23 @@ class KnowledgeItem(Base):
 
     company: Mapped[Company] = relationship(back_populates="knowledge_items")
 
+
+class CompanyInventory(Base):
+    """Job 39 — durable external-system style inventory (availability, etc.)."""
+    __tablename__ = "company_inventory"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+    system: Mapped[str] = mapped_column(String(50), nullable=False, default="availability", index=True)
+    external_key: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+    __table_args__ = (UniqueConstraint("company_id", "system", "external_key", name="uq_company_inventory_key"),)
+
+
 class KnowledgeDocument(Base):
     __tablename__ = "knowledge_documents"
 

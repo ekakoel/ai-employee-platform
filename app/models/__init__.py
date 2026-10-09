@@ -37,7 +37,7 @@ from app.models.entities import (
     Experience,
     ExperienceStatus,
     KnowledgeChunk,
-    KnowledgeItem,
+    KnowledgeItem, CompanyInventory,
     Permission,
     Policy,
     Role,

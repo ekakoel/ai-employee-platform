@@ -9,9 +9,10 @@ from sqlalchemy.orm import Session
 
 from app.models.entities import KnowledgeItem, Policy
 from app.tools.connectors import get_external_client
+from app.services.inventory import upsert_inventory_row
 
 
-def seed_demo_availability(company_id: str) -> list[dict[str, Any]]:
+def seed_demo_availability(company_id: str, db: Session | None = None) -> list[dict[str, Any]]:
     """Load Alila-style inventory into the process mock connector."""
     client = get_external_client()
     rows = [
@@ -71,6 +72,14 @@ def seed_demo_availability(company_id: str) -> list[dict[str, Any]]:
     for row in rows:
         rec = client.create(system="availability", payload=row)
         created.append(rec.payload)
+        if db is not None:
+            upsert_inventory_row(
+                db,
+                company_id=company_id,
+                system="availability",
+                external_key=str(row["id"]),
+                payload=row,
+            )
     return created
 
 
@@ -151,7 +160,7 @@ def seed_demo_policies(db: Session, company_id: str) -> list[str]:
 def seed_company_reservation_demo(
     db: Session, *, company_id: str, user_id: str | None = None
 ) -> dict[str, Any]:
-    availability = seed_demo_availability(company_id)
+    availability = seed_demo_availability(company_id, db=db)
     knowledge = seed_demo_knowledge(db, company_id, user_id=user_id)
     policy_ids = seed_demo_policies(db, company_id)
     return {

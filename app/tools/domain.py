@@ -61,6 +61,21 @@ def availability_records(context: ToolContext, arguments: dict) -> list[dict]:
         query=str(location or ""),
         filters={"company_id": context.company_id},
     )
+    # Job 39 — merge durable DB inventory (survives process restart)
+    if getattr(context, "db", None) is not None:
+        try:
+            from app.services.inventory import list_inventory
+            db_rows = list_inventory(
+                context.db, company_id=context.company_id, system="availability"
+            )
+            seen = {str(r.get("id")) for r in records}
+            for row in db_rows:
+                rid = str(row.get("id") or "")
+                if rid and rid not in seen:
+                    records.append(row)
+                    seen.add(rid)
+        except Exception:
+            pass
     matched: list[dict] = []
     for row in records:
         if row.get("company_id") != context.company_id:
