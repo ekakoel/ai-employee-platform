@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.entities import KnowledgeItem
+from app.models.entities import KnowledgeItem, Policy
 from app.tools.connectors import get_external_client
 
 
@@ -111,14 +111,53 @@ def seed_demo_knowledge(
     return item
 
 
+def seed_demo_policies(db: Session, company_id: str) -> list[str]:
+    """Allow common reservation tools so demo tasks are not deny-by-default."""
+    specs = [
+        ("Allow search_availability", "search_availability", "allow"),
+        ("Allow draft_quotation", "draft_quotation", "allow"),
+        ("Require approval create_reservation", "create_reservation", "require_approval"),
+    ]
+    ids: list[str] = []
+    for name, tool, effect in specs:
+        existing = db.scalar(
+            select(Policy).where(
+                Policy.company_id == company_id,
+                Policy.name == name,
+            )
+        )
+        if existing:
+            existing.configuration = {
+                "tool": tool,
+                "effect": effect,
+                "priority": 10,
+            }
+            existing.is_active = True
+            ids.append(existing.id)
+            continue
+        pol = Policy(
+            company_id=company_id,
+            name=name,
+            description=f"Demo policy for {tool}",
+            configuration={"tool": tool, "effect": effect, "priority": 10},
+            is_active=True,
+        )
+        db.add(pol)
+        db.flush()
+        ids.append(pol.id)
+    return ids
+
+
 def seed_company_reservation_demo(
     db: Session, *, company_id: str, user_id: str | None = None
 ) -> dict[str, Any]:
     availability = seed_demo_availability(company_id)
     knowledge = seed_demo_knowledge(db, company_id, user_id=user_id)
+    policy_ids = seed_demo_policies(db, company_id)
     return {
         "availability_count": len(availability),
         "availability_ids": [r.get("id") for r in availability],
         "knowledge_id": knowledge.id,
         "knowledge_title": knowledge.title,
+        "policy_ids": policy_ids,
     }
