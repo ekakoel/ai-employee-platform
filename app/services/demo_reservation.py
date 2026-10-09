@@ -265,6 +265,44 @@ def run_reservation_playbook(
         db.add(agent)
         db.flush()
         hired_now = True
+        # Ensure supervisor can use the agent (Job 37 access model)
+        if user_id:
+            try:
+                from app.services.access import grant_access
+                grant_access(
+                    db,
+                    company_id=company_id,
+                    agent_instance_id=agent.id,
+                    user_id=user_id,
+                    can_use=True,
+                    can_manage=True,
+                    can_approve=True,
+                    is_supervisor=True,
+                )
+            except Exception:
+                try:
+                    from app.models.entities import AgentAccess
+                    existing = db.scalar(
+                        select(AgentAccess).where(
+                            AgentAccess.company_id == company_id,
+                            AgentAccess.agent_instance_id == agent.id,
+                            AgentAccess.user_id == user_id,
+                        )
+                    )
+                    if existing is None:
+                        db.add(
+                            AgentAccess(
+                                company_id=company_id,
+                                agent_instance_id=agent.id,
+                                user_id=user_id,
+                                can_use=True,
+                                can_manage=True,
+                                can_approve=True,
+                            )
+                        )
+                        db.flush()
+                except Exception:
+                    pass
 
     instruction = (
         "Search availability for Alila Hotel for 2 guests. "

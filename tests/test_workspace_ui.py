@@ -45,7 +45,9 @@ def test_diagnostics_and_demo_controls_are_developer_only():
     parser = SurfaceParser()
     parser.feed(client.get("/workspace").text)
     assert parser.developer_views == {"view-tools", "view-policies", "view-scopecheck"}
-    assert parser.developer_tabs == {"quick", "connect"}
+    # Job 42: Quick start is available on user workspace for first-run bootstrap.
+    # Connect IDs remains developer-only.
+    assert parser.developer_tabs == {"connect"}
 
 
 def test_v1_nav_surfaces_present():
