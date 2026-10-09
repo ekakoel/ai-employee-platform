@@ -9,7 +9,8 @@ from app.core.database import Base, get_db
 from app.main import app
 from app.runtime.tool_executor import ToolExecutionError, ToolExecutor
 from app.services.seed import seed_catalog
-from app.tools.connectors import MockExternalSystemClient, set_external_client
+from app.tools.connectors import MockExternalSystemClient, get_external_client, set_external_client
+from app.models.entities import AgentInstance
 from app.tools.domain import build_default_tools
 from app.tools.registry import ToolRegistry
 
@@ -61,6 +62,14 @@ def setup(client):
         headers=headers,
     )
     assert hire.status_code == 201
+    with SessionLocal() as db:
+        agent = db.get(AgentInstance, hire.json()["id"])
+        agent.policies = {"create_reservation": "auto", "search_availability": "auto"}
+        db.commit()
+    get_external_client().create(system="availability", payload={
+        "company_id": co["id"], "check_in": "2026-11-01", "check_out": "2026-11-03",
+        "room_type": "standard", "rate": 75.0, "currency": "USD", "capacity": 2, "available": True,
+    })
     return co["id"], headers, hire.json()["id"]
 
 
@@ -115,7 +124,7 @@ def test_create_reservation_via_executor(client):
         json={
             "agent_instance_id": agent_id,
             "title": "Book room",
-            "instruction": "Create reservation",
+            "instruction": "Create reservation for Ada from 2026-11-01 to 2026-11-03",
             "mode": "execute",
         },
     )
@@ -132,6 +141,7 @@ def test_create_reservation_via_executor(client):
                 "guest_name": "Ada",
                 "check_in": "2026-11-01",
                 "check_out": "2026-11-03",
+                "availability_id": get_external_client().search(system="availability", query="", filters={"company_id": company_id})[0]["id"],
             },
             task_id=tid,
         )

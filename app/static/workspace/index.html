@@ -6,7 +6,7 @@
   <title>AI Employee Workspace</title>
   <link rel="stylesheet" href="/workspace/assets/styles.css" />
 </head>
-<body>
+<body data-workspace="user">
   <!-- ========== LOGIN GATE ========== -->
   <div id="loginGate" class="login-gate">
     <div class="login-card">
@@ -14,31 +14,31 @@
         <div class="logo lg">AI</div>
         <div>
           <h1>AI Employee Platform</h1>
-          <p>Modern enterprise workspace for human + AI collaboration</p>
+          <p id="loginSubtitle">Your workspace</p>
         </div>
       </div>
 
       <div class="login-tabs">
-        <button type="button" class="tab active" data-tab="quick">Quick start</button>
-        <button type="button" class="tab" data-tab="login">Login</button>
-        <button type="button" class="tab" data-tab="connect">Connect IDs</button>
+        <button type="button" class="tab developer-only" data-tab="quick">Quick start</button>
+        <button type="button" class="tab active" data-tab="login">Login</button>
+        <button type="button" class="tab developer-only" data-tab="connect">Connect IDs</button>
       </div>
 
-      <div id="tab-quick" class="tab-panel active">
+      <div id="tab-quick" class="tab-panel developer-only">
         <p class="muted">Create a demo company, owner account, and hire sample AI employees in one click.</p>
         <button id="btnQuickStart" class="primary block">Launch demo workspace</button>
         <pre id="quickLog" class="log"></pre>
       </div>
 
-      <div id="tab-login" class="tab-panel">
+      <div id="tab-login" class="tab-panel active">
         <label>Company ID
-          <input id="loginCompanyId" placeholder="uuid from quick start or admin" />
+          <input id="loginCompanyId" placeholder="Company ID" autocomplete="organization" />
         </label>
         <label>Email
-          <input id="loginEmail" placeholder="owner@demo.local" />
+          <input id="loginEmail" type="email" placeholder="you@company.com" autocomplete="username" />
         </label>
         <label>Password
-          <input id="loginPassword" type="password" placeholder="min 8 characters" />
+          <input id="loginPassword" type="password" placeholder="Password" autocomplete="current-password" />
         </label>
         <div class="row">
           <button id="btnLogin" class="primary">Sign in</button>
@@ -47,7 +47,7 @@
         <pre id="loginLog" class="log"></pre>
       </div>
 
-      <div id="tab-connect" class="tab-panel">
+      <div id="tab-connect" class="tab-panel developer-only">
         <p class="muted">Dev mode: paste existing company + user IDs (X-User-ID).</p>
         <label>API base
           <input id="apiBase" value="/api/v1" />
@@ -100,23 +100,29 @@
         <div class="nav-group">Company</div>
         <button data-view="notifications" class="nav-btn">Notifications</button>
         <button data-view="governance" class="nav-btn">Governance</button>
-        <button data-view="policies" class="nav-btn">Policy Simulator</button>
+        <button data-view="policy-management" class="nav-btn">Policies</button>
         <button data-view="departments" class="nav-btn">Departments</button>
+        <button data-view="teams" class="nav-btn">Teams</button>
         <button data-view="skills" class="nav-btn">Skills</button>
+        <button data-view="learning" class="nav-btn">Learning</button>
         <button data-view="usage" class="nav-btn">Plan & Usage</button>
+        <button data-view="audit" class="nav-btn">Audit Log</button>
 
-        <div class="nav-group">Developer</div>
-        <button data-view="tools" class="nav-btn">Tools</button>
+        <div class="nav-group">Operations</div>
         <button data-view="integrations" class="nav-btn">Integrations</button>
         <button data-view="workflows" class="nav-btn">Workflows</button>
         <button data-view="cost" class="nav-btn">LLM Cost</button>
-        <button data-view="scopecheck" class="nav-btn">Scope Check</button>
+        <div class="nav-group developer-only">Diagnostics</div>
+        <button data-view="tools" class="nav-btn developer-only">Tools</button>
+        <button data-view="policies" class="nav-btn developer-only">Policy Simulator</button>
+        <button data-view="scopecheck" class="nav-btn developer-only">Scope Check</button>
       </nav>
 
       <div class="session" id="sessionBox">
         <small>Not connected</small>
       </div>
       <button id="btnLogout" class="secondary block logout-btn">Sign out</button>
+      <a class="console-link" href="/developer" id="consoleLink">Developer console</a>
     </aside>
 
     <main class="main">
@@ -134,81 +140,95 @@
 
       <!-- HOME -->
       <section id="view-home" class="view active">
-        <div class="stats" id="homeStats"></div>
-        <div class="grid-2">
-          <div class="card">
-            <div class="row between">
-              <h3>Needs attention</h3>
-              <button data-jump="inbox" class="link-btn">Open inbox →</button>
-            </div>
-            <div id="homeInbox" class="list"></div>
-          </div>
-          <div class="card">
-            <div class="row between">
-              <h3>Your AI employees</h3>
-              <button data-jump="agents" class="link-btn">Manage →</button>
-            </div>
-            <div id="homeAgents" class="cards compact"></div>
+        <div class="home-heading">
+          <div><h2 id="homeGreeting">Workspace overview</h2><p id="homeUpdated" class="muted" aria-live="polite"></p></div>
+          <div class="row">
+            <button data-jump="tasks" class="primary">Create task</button>
+            <button data-jump="chat" class="secondary">Chat with AI</button>
+            <button id="btnRefreshHome" class="icon-btn" title="Refresh overview" aria-label="Refresh overview">&#8635;</button>
           </div>
         </div>
-        <div class="card">
-          <h3>Quick actions</h3>
-          <div class="row">
-            <button data-jump="chat" class="primary">Open chat</button>
-            <button data-jump="tasks" class="secondary">Create task</button>
-            <button data-jump="marketplace" class="secondary">Browse marketplace</button>
-            <button data-jump="approvals" class="secondary">Review approvals</button>
+        <p id="homeNotice" class="home-notice hidden" role="status"></p>
+        <div class="stats" id="homeStats"></div>
+        <div class="home-section">
+          <div class="row between"><h3>Needs attention</h3><button data-jump="inbox" class="link-btn">Open inbox</button></div>
+          <div id="homeInbox" class="list"></div>
+        </div>
+        <div class="grid-2">
+          <div class="home-section">
+            <div class="row between"><h3>Task progress</h3><span class="muted home-period">All tasks</span></div>
+            <div id="homeProgress"></div>
           </div>
+          <div class="home-section">
+            <div class="row between"><h3>Recent tasks</h3><button data-jump="tasks" class="link-btn">View all</button></div>
+            <div id="homeRecent" class="list"></div>
+          </div>
+        </div>
+        <div class="home-section">
+          <div class="row between"><h3>Your AI team</h3><button data-jump="agents" class="link-btn">Manage AI employees</button></div>
+          <div id="homeAgents" class="list"></div>
         </div>
       </section>
 
       <!-- INBOX -->
       <section id="view-inbox" class="view">
-        <div class="card">
-          <div class="row between">
-            <div>
-              <h2>AI Inbox</h2>
-              <p class="muted">Pending tasks, approvals, and open delegations.</p>
-            </div>
-            <button id="btnRefreshInbox" class="secondary">Refresh</button>
+          <div class="row between inbox-heading">
+            <h2>AI Inbox</h2>
+            <button id="btnRefreshInbox" class="icon-btn" title="Refresh inbox" aria-label="Refresh inbox">&#8635;</button>
           </div>
+          <p id="inboxNotice" class="home-notice hidden" role="status"></p>
           <div class="stats" id="inboxStats"></div>
-          <div id="inboxList" class="list"></div>
-        </div>
+          <div class="inbox-toolbar">
+            <div class="sidebar-modes inbox-tabs" role="tablist" aria-label="Inbox status">
+              <button class="active" data-inbox-tab="action" role="tab" aria-selected="true">Needs action</button>
+              <button data-inbox-tab="progress" role="tab" aria-selected="false">In progress</button>
+              <button data-inbox-tab="all" role="tab" aria-selected="false">All open</button>
+            </div>
+            <input id="inboxSearch" type="search" placeholder="Search inbox..." aria-label="Search inbox" />
+            <select id="inboxType" aria-label="Filter inbox type">
+              <option value="">All types</option><option value="approval">Approvals</option>
+              <option value="task">Tasks</option><option value="delegation">Handoffs</option>
+            </select>
+          </div>
+          <p id="inboxCount" class="muted" aria-live="polite"></p>
+          <div id="inboxList" class="inbox-grid" aria-live="polite"></div>
       </section>
 
       <!-- CHAT -->
       <section id="view-chat" class="view">
         <div class="chat-layout">
-          <div class="card chat-side">
-            <h3>Conversation</h3>
-            <label>Agent
+          <aside class="card chat-history" aria-label="Conversation history">
+            <div class="chat-history-heading"><h3>Conversations</h3><button id="btnRefreshChat" class="icon-btn secondary" title="Refresh conversations" aria-label="Refresh conversations">&#8635;</button></div>
+            <button id="btnChatStart" class="secondary block">New conversation</button>
+            <input id="chatHistorySearch" type="search" aria-label="Search conversations" placeholder="Search conversations" />
+            <div id="chatHistoryList" class="chat-history-list"></div>
+            <select id="chatConversation" aria-label="Saved conversations" hidden></select>
+          </aside>
+          <div class="card chat-main">
+            <div class="chat-toolbar">
+            <label>AI employee
               <select id="chatAgent"></select>
             </label>
-            <label>Title
-              <input id="chatTitle" value="Workspace chat" />
-            </label>
-            <button id="btnChatStart" class="primary block">Start / switch</button>
-            <div id="chatMeta" class="muted meta-box"></div>
-            <label class="check-row">
-              <input type="checkbox" id="chatCreateTask" /> Create task from message
-            </label>
-            <select id="chatTaskMode">
-              <option value="consult">consult</option>
-              <option value="execute">execute</option>
-            </select>
-          </div>
-          <div class="card chat-main">
-            <div id="chatThread" class="chat-thread"></div>
-            <div id="chatTyping" class="chat-typing hidden">
+            </div>
+            <div class="chat-heading"><h3 id="chatMeta">New conversation</h3><span class="type-tag">Advisory</span></div>
+            <div id="chatLog" class="chat-notice hidden" role="status" aria-live="polite"></div>
+            <div id="chatThread" class="chat-thread" role="log" aria-label="Conversation messages" aria-live="polite" aria-relevant="additions text"></div>
+            <div id="chatTyping" class="chat-typing hidden" role="status">
               <span class="spinner"></span>
               <span>Agent is thinking…</span>
             </div>
             <div class="chat-composer">
-              <textarea id="chatInput" rows="2" placeholder="Message your AI employee…"></textarea>
+              <textarea id="chatInput" rows="3" aria-label="Message" maxlength="20000" placeholder="Message your AI employee..."></textarea>
               <button id="btnChatSend" class="primary">Send</button>
             </div>
-            <pre id="chatLog" class="log hidden-log"></pre>
+            <div class="chat-task-options">
+              <label class="check-row"><input type="checkbox" id="chatCreateTask" /> Create task</label>
+              <select id="chatTaskMode" aria-label="Created task mode" disabled>
+                <option value="consult">Consultation task</option>
+                <option value="execute">Execution task</option>
+              </select>
+              <button id="chatLinkedTask" class="link-btn hidden">Open created task</button>
+            </div>
           </div>
         </div>
       </section>
@@ -285,6 +305,13 @@
             <button id="btnHire" class="primary">Hire</button>
           </div>
           <pre id="hireLog" class="log"></pre>
+        </div>
+        <div class="card">
+          <div class="row between">
+            <h3>Subscriptions</h3>
+            <button id="btnRefreshSubs" class="secondary">Refresh</button>
+          </div>
+          <div id="subList" class="list"></div>
         </div>
       </section>
 
@@ -453,7 +480,7 @@
 
 
       <!-- POLICIES -->
-      <section id="view-policies" class="view">
+      <section id="view-policies" class="view developer-only">
         <div class="card">
           <h2>Policy simulator</h2>
           <p class="muted">Dry-run ALLOW / APPROVAL / DENY without executing tools.</p>
@@ -473,6 +500,40 @@
         </div>
       </section>
 
+      <!-- POLICY MANAGEMENT -->
+      <section id="view-policy-management" class="view">
+        <div class="card">
+          <h2>Create policy</h2>
+          <div class="grid-2">
+            <label>Name
+              <input id="policyName" placeholder="Require approval for quotes" />
+            </label>
+            <label>Effect
+              <select id="policyEffect">
+                <option value="allow">allow</option>
+                <option value="require_approval">require_approval</option>
+                <option value="deny">deny</option>
+              </select>
+            </label>
+            <label>Tool / action
+              <input id="policyTool" placeholder="send_quotation" />
+            </label>
+            <label>Description
+              <input id="policyDescription" placeholder="Optional note" />
+            </label>
+          </div>
+          <button id="btnCreatePolicy" class="primary">Create policy</button>
+          <pre id="policyLog" class="log"></pre>
+        </div>
+        <div class="card">
+          <div class="row between">
+            <h3>Policies</h3>
+            <button id="btnRefreshPolicies" class="secondary">Refresh</button>
+          </div>
+          <div id="policyList" class="list"></div>
+        </div>
+      </section>
+
       <!-- DEPARTMENTS -->
       <section id="view-departments" class="view">
         <div class="card">
@@ -483,6 +544,29 @@
             <button id="btnRefreshDept" class="secondary">Refresh</button>
           </div>
           <div id="deptList" class="list"></div>
+        </div>
+      </section>
+
+      <!-- TEAMS -->
+      <section id="view-teams" class="view">
+        <div class="card">
+          <h2>Agent teams</h2>
+          <div class="grid-2">
+            <label>Name
+              <input id="teamName" placeholder="Sales pod" />
+            </label>
+            <label>Agent members
+              <select id="teamAgents" multiple size="4"></select>
+            </label>
+            <label class="full">Description
+              <textarea id="teamDescription" rows="2"></textarea>
+            </label>
+          </div>
+          <div class="row">
+            <button id="btnCreateTeam" class="primary">Create team</button>
+            <button id="btnRefreshTeams" class="secondary">Refresh</button>
+          </div>
+          <div id="teamList" class="list"></div>
         </div>
       </section>
 
@@ -498,6 +582,70 @@
           </div>
           <div id="skillsList" class="cards"></div>
         </div>
+        <div class="card">
+          <h3>Create company skill</h3>
+          <div class="grid-2">
+            <label>Slug
+              <input id="skillSlug" placeholder="sales_followup" />
+            </label>
+            <label>Name
+              <input id="skillName" placeholder="Sales follow-up" />
+            </label>
+            <label class="full">Description
+              <textarea id="skillDescription" rows="2"></textarea>
+            </label>
+          </div>
+          <button id="btnCreateSkill" class="primary">Create skill</button>
+          <pre id="skillLog" class="log"></pre>
+        </div>
+      </section>
+
+      <!-- LEARNING -->
+      <section id="view-learning" class="view">
+        <div class="card">
+          <h2>Agent memory</h2>
+          <div class="grid-2">
+            <label>Agent
+              <select id="memoryAgent"></select>
+            </label>
+            <label>Category
+              <input id="memoryCategory" value="context" />
+            </label>
+            <label>Title
+              <input id="memoryTitle" placeholder="Customer preference" />
+            </label>
+            <label class="full">Content
+              <textarea id="memoryContent" rows="2"></textarea>
+            </label>
+          </div>
+          <div class="row">
+            <button id="btnCreateMemory" class="primary">Create memory</button>
+            <button id="btnRefreshMemory" class="secondary">Refresh memories</button>
+          </div>
+          <div id="memoryList" class="list"></div>
+        </div>
+        <div class="card">
+          <h2>Experience learning</h2>
+          <div class="grid-2">
+            <label>Agent
+              <select id="experienceAgent"></select>
+            </label>
+            <label>Confidence
+              <input id="experienceConfidence" type="number" min="0" max="1" step="0.1" value="0.4" />
+            </label>
+            <label class="full">Problem
+              <input id="experienceProblem" placeholder="What happened?" />
+            </label>
+            <label class="full">Lesson
+              <textarea id="experienceLesson" rows="2" placeholder="What should be reused?"></textarea>
+            </label>
+          </div>
+          <div class="row">
+            <button id="btnCreateExperience" class="primary">Create experience</button>
+            <button id="btnRefreshExperiences" class="secondary">Refresh experiences</button>
+          </div>
+          <div id="experienceList" class="list"></div>
+        </div>
       </section>
 
       <!-- USAGE -->
@@ -512,8 +660,19 @@
         </div>
       </section>
 
+      <!-- AUDIT -->
+      <section id="view-audit" class="view">
+        <div class="card">
+          <div class="row between">
+            <h2>Audit log</h2>
+            <button id="btnRefreshAudit" class="secondary">Refresh</button>
+          </div>
+          <div id="auditList" class="list"></div>
+        </div>
+      </section>
+
       <!-- TOOLS -->
-      <section id="view-tools" class="view">
+      <section id="view-tools" class="view developer-only">
         <div class="card">
           <div class="row between">
             <div>
@@ -594,7 +753,7 @@
       </section>
 
       <!-- SCOPE CHECK -->
-      <section id="view-scopecheck" class="view">
+      <section id="view-scopecheck" class="view developer-only">
         <div class="card">
           <h2>Scope check</h2>
           <p class="muted">Test whether an instruction is in-scope; get directory matches if not.</p>
@@ -633,34 +792,59 @@
           </div>
         </div>
       </section>
+      <section id="view-result-preview" class="view">
+        <div id="resultPreview" class="result-preview"></div>
+      </section>
     </main>
 
     <aside id="outputCenter" class="output-center">
       <div class="output-header">
         <div>
-          <span class="output-eyebrow">OUTPUT CENTER</span>
-          <h3 id="outputTitle">AI Result</h3>
+          <span class="output-eyebrow" id="sidebarEyebrow">HOME</span>
+          <h3 id="outputTitle">Workspace briefing</h3>
         </div>
 
-        <button
-          id="btnCloseOutput"
-          class="icon-btn"
-          title="Close output center"
-        >×</button>
+        <div class="sidebar-header-actions">
+          <a id="sidebarPageGuide" class="icon-btn" title="Home guide" aria-label="Download Home guide" download="home-guide.txt">&#8595;</a>
+          <button id="btnRefreshSidebar" class="icon-btn" title="Refresh sidebar" aria-label="Refresh sidebar">&#8635;</button>
+        </div>
       </div>
-
-      <div id="outputContent" class="output-content">
-        <div class="output-empty">
-          <div class="output-empty-icon">✦</div>
-          <strong>No output selected</strong>
-          <p>
-            Select a task or AI activity to view its result.
-          </p>
+      <div class="sidebar-modes" role="tablist" aria-label="Sidebar content">
+        <button id="btnSidebarContext" role="tab" aria-selected="true" class="active">Context</button>
+        <button id="btnSidebarResults" role="tab" aria-selected="false">Results</button>
+      </div>
+      <div id="sidebarContext" class="output-content" aria-live="polite"></div>
+      <div id="resultLibrary" class="sidebar-library hidden">
+      <div class="result-controls">
+        <button id="btnRefreshResults" class="hidden" aria-label="Refresh results">Refresh results</button>
+        <input id="resultSearch" type="search" placeholder="Search work results..." aria-label="Search results" />
+        <div class="result-filters">
+          <select id="resultAgent" aria-label="Filter agent"><option value="">All agents</option></select>
+          <select id="resultType" aria-label="Filter result type">
+            <option value="">All types</option><option value="analysis">Analysis</option>
+            <option value="text">Text</option><option value="structured">Structured data</option>
+          </select>
+          <select id="resultPeriod" aria-label="Filter period">
+            <option value="">All dates</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option>
+          </select>
         </div>
+        <div class="result-tabs" role="tablist" aria-label="Results">
+          <button class="active" data-result-tab="recent" role="tab" aria-selected="true">Recent</button>
+          <button data-result-tab="pinned" role="tab" aria-selected="false">Pinned</button>
+          <button data-result-tab="all" role="tab" aria-selected="false">All</button>
+        </div>
+        <small id="resultCount" aria-live="polite"></small>
+      </div>
+      <div id="outputContent" class="output-content" aria-live="polite"></div>
       </div>
     </aside>
   </div>
 
+  <script src="/workspace/assets/home.js"></script>
+  <script src="/workspace/assets/inbox.js"></script>
+  <script src="/workspace/assets/chat.js?v=20261009-chat-attribution-2"></script>
+  <script src="/workspace/assets/results.js"></script>
+  <script src="/workspace/assets/sidebar.js"></script>
   <script src="/workspace/assets/app.js"></script>
 </body>
 </html>

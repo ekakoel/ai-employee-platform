@@ -48,6 +48,8 @@ def require_agent_use(
     agent_instance_id: str,
 ) -> None:
     """User must have can_use on the agent, or be company admin."""
+    if user.company_id != company_id or user.status != "active" or user.company is None or not user.company.is_active:
+        raise HTTPException(status_code=403, detail="User is not active in this company")
     if is_company_admin(user):
         return
     access = get_agent_access(
@@ -151,3 +153,13 @@ def grant_access(
     db.add(access)
     db.flush()
     return access
+
+
+def require_execution_actor(db: Session, *, company_id: str, agent_instance_id: str, user_id: str | None) -> None:
+    """Human-triggered orchestration uses the same access check as direct requests."""
+    if user_id is None:
+        return  # Trusted scheduler/service callers still pass runtime tenant/scope checks.
+    user = db.scalar(select(User).where(User.id == user_id, User.company_id == company_id))
+    if user is None:
+        raise ValueError("Execution actor not found in this company.")
+    require_agent_use(db, user, company_id=company_id, agent_instance_id=agent_instance_id)

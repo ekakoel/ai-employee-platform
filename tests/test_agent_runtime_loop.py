@@ -117,16 +117,9 @@ def test_run_task_returns_immediate_final_answer():
 
     runtime = AgentRuntime(provider)
 
-    result = runtime.run_task(
-        make_context()
-    )
-
-    assert result.response.content == (
-        "I found the Villa ABC contract. "
-        "It is valid until December 2026."
-    )
-
-    assert result.decision.requires_tool_execution is False
+    from app.services.grounding import GroundingError
+    with pytest.raises(GroundingError, match="could not be verified"):
+        runtime.run_task(make_context())
 
     assert provider.chat.call_count == 1
 
@@ -163,10 +156,9 @@ def test_run_task_executes_tool_and_returns_final_answer():
         make_context()
     )
 
-    assert result.response.content == (
-        "I found the Villa ABC contract. "
-        "It is valid until December 2026."
-    )
+    import json
+    assert json.loads(result.response.content)["tool_results"][0]["result"]["count"] == 1
+    assert "December 2026" in result.response.content
 
     assert result.decision.requires_tool_execution is False
 

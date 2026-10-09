@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.models.entities import AgentMemory, KnowledgeChunk, KnowledgeItem
+from app.models.entities import AgentMemory, KnowledgeChunk, KnowledgeDocument, KnowledgeItem
 
 
 def _tokens(text: str) -> set[str]:
@@ -48,6 +48,23 @@ def search_knowledge_chunks(
                 or_(
                     KnowledgeChunk.agent_instance_id.is_(None),
                     KnowledgeChunk.agent_instance_id == agent_instance_id,
+                ),
+                or_(
+                    KnowledgeChunk.knowledge_item_id.is_(None),
+                    select(KnowledgeItem.id).where(
+                        KnowledgeItem.id == KnowledgeChunk.knowledge_item_id,
+                        KnowledgeItem.company_id == company_id,
+                        KnowledgeItem.is_active.is_(True),
+                        or_(KnowledgeItem.agent_instance_id.is_(None), KnowledgeItem.agent_instance_id == agent_instance_id),
+                    ).exists(),
+                ),
+                or_(
+                    KnowledgeChunk.knowledge_document_id.is_(None),
+                    select(KnowledgeDocument.id).where(
+                        KnowledgeDocument.id == KnowledgeChunk.knowledge_document_id,
+                        KnowledgeDocument.company_id == company_id,
+                        or_(KnowledgeDocument.agent_instance_id.is_(None), KnowledgeDocument.agent_instance_id == agent_instance_id),
+                    ).exists(),
                 ),
             )
         ).all()
@@ -170,7 +187,10 @@ def search_agent_memories(
     )
     scored = []
     for row in rows:
-        if row.expires_at and row.expires_at < now:
+        expires_at = row.expires_at
+        if expires_at and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at and expires_at <= now:
             continue
         s = score_text(query, f"{row.title} {row.content}")
         if s > 0:

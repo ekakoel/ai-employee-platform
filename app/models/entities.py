@@ -848,6 +848,14 @@ class Task(Base):
     agent_instance: Mapped[AgentInstance] = relationship(back_populates="tasks")
 
 
+class TaskResultPin(Base):
+    __tablename__ = "task_result_pins"
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), primary_key=True)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 

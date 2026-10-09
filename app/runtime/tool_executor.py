@@ -1,12 +1,14 @@
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models.entities import (
     AgentInstance,
     Approval,
     ApprovalStatus,
+    AuditLog,
+    Department,
     Task,
 )
 from app.services.consultation import is_read_only_tool
@@ -60,7 +62,18 @@ class ToolExecutor:
         arguments: dict[str, Any],
         task_id: str | None = None,
     ) -> dict[str, Any]:
-
+        if task_id:
+            waiting = self.db.scalar(select(Task).where(
+                Task.id == task_id, Task.company_id == company_id,
+                Task.agent_instance_id == agent_instance_id,
+                Task.status == "waiting_approval",
+            ))
+            pending = self.db.scalar(select(Approval.id).where(
+                Approval.company_id == company_id, Approval.task_id == task_id,
+                Approval.status == ApprovalStatus.PENDING.value,
+            ).limit(1))
+            if waiting is not None or pending is not None:
+                raise ToolExecutionError("Task is waiting for approval; resume only the approved stored action.")
         # ---------------------------------------------------------
         # Consultation mode: block side-effect tools early
         # ---------------------------------------------------------
@@ -92,6 +105,7 @@ class ToolExecutor:
             tool_name=tool_name,
             task_id=task_id,
         )
+        arguments = self._prepare_arguments(tool, company_id, agent_instance_id, task_id, arguments)
 
         # ---------------------------------------------------------
         # Policy evaluation
@@ -100,7 +114,7 @@ class ToolExecutor:
             company_id=company_id,
             agent_instance_id=agent_instance_id,
             tool_name=tool_name,
-            arguments=arguments,
+            arguments=self._policy_arguments(agent, tool, arguments),
         )
 
         # ---------------------------------------------------------
@@ -243,6 +257,7 @@ class ToolExecutor:
             tool_name=approval.action,
             task_id=task_id,
         )
+        self._prepare_arguments(tool, company_id, approval.agent_instance_id, task_id, approval.payload)
 
         # ---------------------------------------------------------
         # 4. Re-evaluate current policy
@@ -251,7 +266,7 @@ class ToolExecutor:
             company_id=company_id,
             agent_instance_id=approval.agent_instance_id,
             tool_name=approval.action,
-            arguments=approval.payload,
+            arguments=self._policy_arguments(agent, tool, approval.payload),
         )
 
         # ---------------------------------------------------------
@@ -277,6 +292,22 @@ class ToolExecutor:
                 f"Approved tool '{approval.action}' is now denied "
                 f"by policy: {decision.reason}"
             )
+
+        # Reserve the stored approval before the external side effect. An interrupted
+        # execution requires reconciliation, not a blind retry of the same action.
+        executed = select(AuditLog.id).where(
+            AuditLog.company_id == company_id, AuditLog.resource_id == approval_id,
+            AuditLog.action == "approval.executed",
+        ).exists()
+        claim = self.db.execute(update(Approval).where(
+            Approval.id == approval_id, Approval.company_id == company_id,
+            Approval.task_id == task_id, Approval.status == ApprovalStatus.APPROVED.value,
+            ~executed,
+        ).values(status="executing"))
+        if claim.rowcount != 1:
+            self.db.rollback()
+            raise ToolExecutionError("Approval has already been executed or claimed.")
+        self.db.commit()
 
         # ---------------------------------------------------------
         # 6. Execute exact approved payload
@@ -309,7 +340,7 @@ class ToolExecutor:
                 "policy_effect": decision.effect,
             },
         )
-
+        approval.status = ApprovalStatus.APPROVED.value
         self.db.commit()
 
         return result
@@ -336,6 +367,23 @@ class ToolExecutor:
             raise ToolExecutionError(
                 "Agent instance not found for this company."
             )
+        if agent.company is None or not agent.company.is_active:
+            raise ToolExecutionError("Agent company is not active.")
+        if task_id:
+            task = self.db.scalar(select(Task).where(
+                Task.id == task_id, Task.company_id == company_id,
+                Task.agent_instance_id == agent_instance_id,
+            ))
+            if task is None:
+                raise ToolExecutionError("Task does not belong to this company and employee.")
+            if task.status not in {"pending", "planning", "running", "waiting_approval"}:
+                raise ToolExecutionError("Tools cannot execute for a terminal task.")
+            from app.services.scope_guard import check_scope
+            match = check_scope(self.db, company_id=company_id, agent=agent, instruction=task.instruction)
+            if not match.in_scope:
+                raise ToolExecutionError("Tool request is outside the employee scope.")
+        if agent.subscription is not None and agent.subscription.status != "active":
+            raise ToolExecutionError("Agent subscription is not active.")
 
         # ---------------------------------------------------------
         # Agent must be active
@@ -355,12 +403,12 @@ class ToolExecutor:
                 f"Agent '{agent.id}' is not active."
             )
 
-        configuration = agent.configuration or {}
-
-        allowed_tools = configuration.get(
-            "allowed_tools",
-            [],
-        )
+        from app.services.grounding import authorized_tools
+        allowed_tools = authorized_tools(agent)
+        from app.services.skills import load_assigned_skills, skill_tool_union
+        skills = load_assigned_skills(self.db, company_id=company_id, agent_instance_id=agent_instance_id)
+        if skills:
+            allowed_tools = [name for name in allowed_tools if name in skill_tool_union(skills)]
 
         # ---------------------------------------------------------
         # Tool must be allowed for this Agent
@@ -400,6 +448,8 @@ class ToolExecutor:
                 f"Tool '{tool_name}' is not registered."
             )
 
+        if tool.side_effect and not task_id:
+            raise ToolExecutionError("Business actions must belong to an authorized task.")
         return agent, tool
 
     def _execute_tool(
@@ -419,6 +469,11 @@ class ToolExecutor:
         )
 
         try:
+            if not isinstance(arguments, dict):
+                raise ValueError("Tool arguments must be an object.")
+            for key in tool.parameters.get("required", []):
+                if key not in arguments or arguments[key] is None or arguments[key] == "":
+                    raise ValueError(f"Missing required tool argument: {key}")
             result = tool.execute(
                 context,
                 arguments,
@@ -437,6 +492,7 @@ class ToolExecutor:
                     "tool": tool_name,
                     "arguments": arguments,
                     "result_count": result.get("count"),
+                    "result": result,
                 },
             )
 
@@ -467,6 +523,31 @@ class ToolExecutor:
             raise ToolExecutionError(
                 f"Tool '{tool_name}' execution failed."
             ) from exc
+
+    def _prepare_arguments(self, tool, company_id, agent_id, task_id, arguments):
+        try:
+            if not isinstance(arguments, dict):
+                raise ValueError("Tool arguments must be an object.")
+            for key in tool.parameters.get("required", []):
+                if key not in arguments or arguments[key] is None or arguments[key] == "":
+                    raise ValueError(f"Missing required tool argument: {key}")
+            prepare = getattr(tool, "prepare_arguments", None)
+            if prepare is not None:
+                return prepare(ToolContext(company_id=company_id, agent_instance_id=agent_id, task_id=task_id), arguments)
+            return dict(arguments)
+        except (ValueError, TypeError, KeyError, ArithmeticError) as exc:
+            self._audit_denied(company_id=company_id, agent_instance_id=agent_id, task_id=task_id,
+                               tool_name=tool.name, reason="invalid_or_unverified_arguments", extra={"error": str(exc)})
+            self.db.commit()
+            raise ToolExecutionError(str(exc)) from exc
+
+    def _policy_arguments(self, agent, tool, arguments):
+        department = self.db.scalar(select(Department).where(
+            Department.id == agent.department_id, Department.company_id == agent.company_id,
+        )) if agent.department_id else None
+        return {**arguments, "risk": tool.risk, "action": tool.name,
+                "department": department.name if department else "",
+                "department_id": department.id if department else ""}
 
     def _audit_denied(
         self,

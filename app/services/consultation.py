@@ -54,6 +54,8 @@ def build_consultation_result(
     if agent is None:
         raise ValueError("Agent instance not found.")
     context = load_agent_context(db, agent, task)
+    from app.services.grounding import MISSING_INFORMATION, sources
+    authoritative = sources(context)
 
     knowledge = list(context.retrieved_knowledge or [])
     experiences = list(context.experiences or [])
@@ -111,6 +113,8 @@ def build_consultation_result(
         f"Do not take irreversible action until a human confirms "
         f"an execute-mode task."
     )
+    if not authoritative:
+        recommendation = MISSING_INFORMATION
 
     alternatives = [
         "Proceed with an execute-mode task after human approval.",
@@ -118,7 +122,7 @@ def build_consultation_result(
         "Escalate to the AI supervisor / manager for a decision.",
     ]
 
-    confidence = 0.55
+    confidence = 0.55 if authoritative else 0.0
     if knowledge:
         confidence += 0.15
     if experiences:
@@ -127,6 +131,8 @@ def build_consultation_result(
 
     return {
         "mode": "consult",
+        "grounding_status": "source_excerpts" if authoritative else "insufficient_information",
+        "source_references": [row["source_id"] for row in authoritative],
         "recommendation": recommendation,
         "rationale": "\n".join(rationale_parts),
         "expected_impact": (
@@ -158,8 +164,16 @@ def run_consultation(
     task = db.get(Task, task_id)
     if task is None or task.company_id != company_id:
         raise ValueError("Task not found for this company.")
+    from app.services.access import require_execution_actor
+    require_execution_actor(db, company_id=company_id, agent_instance_id=task.agent_instance_id, user_id=user_id)
     if task.mode != "consult":
         raise ValueError("Task is not in consult mode.")
+    if task.status == TaskStatus.CANCELLED.value and task.result:
+        try:
+            if json.loads(task.result).get("status") == "OUT_OF_SCOPE":
+                return task
+        except (ValueError, AttributeError):
+            pass
     if task.status not in (
         TaskStatus.PENDING.value,
         TaskStatus.PLANNING.value,
@@ -204,7 +218,19 @@ def run_consultation(
     task.status = TaskStatus.RUNNING.value
     db.flush()
 
-    result = build_consultation_result(db, task=task)
+    try:
+        result = build_consultation_result(db, task=task)
+    except Exception as exc:
+        db.rollback()
+        task = db.get(Task, task_id)
+        task.status = TaskStatus.FAILED.value
+        task.result = str(exc)
+        record_audit(db, company_id=company_id, agent_instance_id=task.agent_instance_id,
+                     task_id=task.id, action="task.consult.failed", resource_type="task",
+                     resource_id=task.id, status="failed", details={"error": str(exc)})
+        db.commit()
+        db.refresh(task)
+        return task
     task.result = json.dumps(result, ensure_ascii=False)
     task.status = TaskStatus.COMPLETED.value
 

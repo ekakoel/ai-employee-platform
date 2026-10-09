@@ -48,7 +48,7 @@ def test_alembic_upgrade_head_sqlite(tmp_path, monkeypatch):
 
     with engine.connect() as conn:
         ver = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-    assert ver == "0002_schema_sync"
+    assert ver == "0003_task_result_pins"
 
 
 def test_docker_entrypoint_script_exists():

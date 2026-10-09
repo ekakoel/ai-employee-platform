@@ -160,13 +160,10 @@ def test_runtime_returns_final_answer_decision():
         make_context()
     )
 
-    assert result.response.content == (
-        "I found the Villa ABC contract."
-    )
-
-    assert result.decision.content == (
-        "I found the Villa ABC contract."
-    )
+    from app.services.grounding import MISSING_INFORMATION
+    assert result.response.content == MISSING_INFORMATION
+    assert result.decision.content == MISSING_INFORMATION
+    assert result.output["status"] == "insufficient_information"
 
     assert result.decision.tool_calls == []
 
@@ -333,13 +330,10 @@ def test_runtime_continues_with_tool_result():
         },
     )
 
-    assert result.response.content == (
-        "The Villa ABC contract was found."
-    )
-
-    assert result.decision.content == (
-        "The Villa ABC contract was found."
-    )
+    from app.services.grounding import MISSING_INFORMATION
+    assert result.response.content == MISSING_INFORMATION
+    assert result.decision.content == MISSING_INFORMATION
+    assert result.output["status"] == "insufficient_information"
 
     assert result.decision.tool_calls == []
 

@@ -153,7 +153,7 @@ def advance_run(
 
         try:
             if stype == "create_task":
-                outcome = _step_create_task(db, run=run, step=step)
+                outcome = _step_create_task(db, run=run, step=step, user_id=user_id)
             elif stype == "wait_approval":
                 outcome = _step_wait_approval(db, run=run, step=step)
             elif stype == "delegate":
@@ -232,7 +232,7 @@ def resume_run(
 
 
 def _step_create_task(
-    db: Session, *, run: WorkflowRun, step: dict[str, Any]
+    db: Session, *, run: WorkflowRun, step: dict[str, Any], user_id: str | None = None
 ) -> dict[str, Any]:
     agent_id = step.get("agent_instance_id") or run.context.get("agent_instance_id")
     if not agent_id:
@@ -242,6 +242,8 @@ def _step_create_task(
         return {"fail": True, "error": "Agent not found"}
     if agent.status != AgentStatus.ACTIVE.value:
         return {"fail": True, "error": f"Agent not active ({agent.status})"}
+    from app.services.access import require_execution_actor
+    require_execution_actor(db, company_id=run.company_id, agent_instance_id=agent.id, user_id=user_id)
 
     title = str(step.get("title") or run.context.get("title") or "Workflow task")[:300]
     instruction = str(
@@ -269,14 +271,18 @@ def _step_create_task(
     # Auto-run consult when requested
     if mode == "consult" and step.get("auto_run", True):
         try:
-            run_consultation(db, task=task)
+            run_consultation(db, company_id=run.company_id, task_id=task.id, user_id=user_id)
             db.refresh(task)
         except Exception as exc:
             return {
                 "status": "task_created",
                 "task_id": task.id,
                 "consult_error": str(exc),
+                "fail": True,
+                "error": "Workflow consultation failed.",
             }
+        if task.status in (TaskStatus.FAILED.value, TaskStatus.CANCELLED.value):
+            return {"fail": True, "error": task.result or "Workflow child task failed.", "task_id": task.id}
 
     if task.status == TaskStatus.WAITING_APPROVAL.value:
         return {
@@ -358,6 +364,12 @@ def _step_delegate(
             "fail": True,
             "error": "delegate requires source_agent_instance_id and target_agent_instance_id",
         }
+    from app.services.access import require_execution_actor
+    for employee_id in (source, target):
+        employee = db.get(AgentInstance, employee_id)
+        if not employee or employee.company_id != run.company_id or employee.status != AgentStatus.ACTIVE.value:
+            return {"fail": True, "error": "Delegation employee not active in this company."}
+        require_execution_actor(db, company_id=run.company_id, agent_instance_id=employee_id, user_id=user_id)
     title = str(step.get("title") or "Workflow delegation")[:300]
     instruction = str(step.get("instruction") or title)
     capability = str(step.get("capability") or "general")

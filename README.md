@@ -30,6 +30,19 @@ Buka:
 - Swagger: http://127.0.0.1:8000/docs
 - Health: http://127.0.0.1:8000/health
 - **Workspace UI (Phase 8 / Job 12):** http://127.0.0.1:8000/workspace
+- **Developer console:** http://127.0.0.1:8000/developer
+
+The user workspace opens with password login and company work features. The
+developer console provides demo setup, ID connection, tool diagnostics, policy
+simulation, and scope checks. Both interfaces share the existing session and API
+authorization; the separate console is a UI boundary, not an additional role.
+
+The right sidebar lists persisted task results with search, agent/type/date
+filters, and personal server-side pins. Previews open in the main area. Downloads
+export the stored result as text or JSON; revision requests prefill a new task
+with the original instruction and result. Dates refer to task creation. This
+library does not yet track document approval states, file artifacts, or versions
+of results overwritten by rerunning the same task.
 
 ## Test
 

@@ -725,6 +725,7 @@ class ConversationRead(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+    user_name: str | None = None
 
 
 class MessageCreate(BaseModel):
@@ -742,6 +743,9 @@ class MessageRead(BaseModel):
     content: str
     task_id: str | None = None
     created_at: datetime
+    sender_name: str | None = None
+    sender_user_id: str | None = None
+    work_result: TaskRead | None = None
 
 
 class ChatPostResponse(BaseModel):

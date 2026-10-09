@@ -1,4 +1,5 @@
 from unittest.mock import patch
+import pytest
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
@@ -53,7 +54,17 @@ def override_get_db():
         db.close()
 
 
-app.dependency_overrides[get_db] = override_get_db
+@pytest.fixture(autouse=True)
+def isolate_database_override():
+    previous = app.dependency_overrides.get(get_db)
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        yield
+    finally:
+        if previous is None:
+            app.dependency_overrides.pop(get_db, None)
+        else:
+            app.dependency_overrides[get_db] = previous
 
 client = TestClient(app)
 

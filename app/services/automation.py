@@ -89,6 +89,15 @@ def execute_run(
         run.completed_at = _now()
         db.flush()
         return run
+    from app.services.access import require_execution_actor
+    try:
+        require_execution_actor(db, company_id=rule.company_id, agent_instance_id=agent.id, user_id=user_id)
+    except Exception as exc:
+        run.status = AutomationRunStatus.FAILED.value
+        run.error_message = str(exc)
+        run.completed_at = _now()
+        db.flush()
+        return run
 
     run.status = AutomationRunStatus.RUNNING.value
     run.started_at = _now()
@@ -132,7 +141,7 @@ def execute_run(
     try:
         if task.mode == "consult":
             task = run_consultation(
-                db, company_id=rule.company_id, task_id=task.id
+                db, company_id=rule.company_id, task_id=task.id, user_id=user_id
             )
             db.refresh(run)
             db.refresh(task)
@@ -141,7 +150,7 @@ def execute_run(
             elif task.status == TaskStatus.COMPLETED.value:
                 run.status = AutomationRunStatus.COMPLETED.value
                 run.completed_at = _now()
-            elif task.status == TaskStatus.FAILED.value:
+            elif task.status in (TaskStatus.FAILED.value, TaskStatus.CANCELLED.value):
                 run.status = AutomationRunStatus.FAILED.value
                 run.error_message = "Child task failed."
                 run.completed_at = _now()

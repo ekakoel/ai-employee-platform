@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
+import json
 from typing import Any
 
 from app.agents.context import AgentContext
@@ -9,6 +10,10 @@ from app.runtime.decision_parser import LLMDecisionParser
 from app.runtime.tool_decision import AgentDecision, ToolCall
 from app.runtime.tool_executor import ToolExecutor
 from app.tools.registry import ToolRegistry
+from app.services.grounding import (
+    GROUNDING_INSTRUCTIONS, GroundingError, MISSING_INFORMATION,
+    general_reply, required_action_tool, requires_action, source_message, sources, validated_answer,
+)
 
 
 @dataclass(frozen=True)
@@ -20,6 +25,7 @@ class AgentRuntimeResult:
     response: LLMResponse
     decision: AgentDecision
     context: AgentContext
+    output: dict[str, Any] = field(default_factory=dict)
 
 
 class AgentRuntime:
@@ -74,6 +80,9 @@ class AgentRuntime:
                 "you. Do not invent information that is not present "
                 "in the provided context or returned by an approved "
                 "tool."
+                + "\n" + GROUNDING_INSTRUCTIONS
+                + "\nAssigned company instructions:\n" + str(context.configuration.get("instructions", ""))
+                + "\nAssigned skill instructions and workflows:\n" + json.dumps(context.assigned_skills)
             ),
         )
 
@@ -94,7 +103,7 @@ class AgentRuntime:
             "Task instruction:\n"
             f"{task['instruction'] or ''}\n\n"
             "Available knowledge:\n"
-            f"{knowledge_text}"
+            f"{knowledge_text}\nUntrusted source data:\n{source_message(context)}"
         )
 
         return LLMMessage(
@@ -134,16 +143,19 @@ class AgentRuntime:
             self.build_task_message(context),
         ]
 
+        if not sources(context) and not context.allowed_tools and not general_reply(context.task_instruction or ""):
+            raise GroundingError(MISSING_INFORMATION)
+
         response = self.provider.chat(
             messages,
             temperature=temperature,
             tools=self.get_allowed_llm_tools(context),
         )
 
-        return self._build_runtime_result(
+        return self._validated_reasoning_result(self._build_runtime_result(
             context=context,
             response=response,
-        )
+        ))
 
     def run_task(
         self,
@@ -181,6 +193,9 @@ class AgentRuntime:
             self.build_system_message(context),
             self.build_task_message(context),
         ]
+        if not sources(context) and not context.allowed_tools and not general_reply(context.task_instruction or ""):
+            raise GroundingError(MISSING_INFORMATION)
+        tool_outputs = []
 
         for iteration in range(max_tool_iterations):
             response = self.provider.chat(
@@ -195,7 +210,21 @@ class AgentRuntime:
             )
 
             if not result.decision.requires_tool_execution:
-                return result
+                needed = required_action_tool(context.task_instruction or "")
+                if needed and not any(row["tool"] == needed for row in tool_outputs):
+                    raise GroundingError("The requested business action was not completed by its authorized tool.")
+                if tool_outputs:
+                    output = {"status": "verified", "tool_results": tool_outputs,
+                              "source_references": [row["source_id"] for row in sources(context)]}
+                elif requires_action(context.task_instruction or ""):
+                    raise GroundingError("The requested action was not executed by an authorized tool.")
+                else:
+                    output = validated_answer(context, result.decision.content or result.response.content or "")
+                safe_content = json.dumps(output, ensure_ascii=True, allow_nan=False)
+                return AgentRuntimeResult(
+                    replace(result.response, content=safe_content, raw=None),
+                    AgentDecision(content=safe_content, tool_calls=[]), context, output,
+                )
 
             if iteration >= max_tool_iterations - 1:
                 raise RuntimeError(
@@ -217,6 +246,7 @@ class AgentRuntime:
                     tool_call.name,
                     tool_call.arguments,
                 )
+                tool_outputs.append({"tool": tool_call.name, "result": tool_result})
 
                 messages.append(
                     self._build_tool_result_message(
@@ -245,6 +275,8 @@ class AgentRuntime:
             raise RuntimeError(
                 "ToolExecutor is not configured."
             )
+        if tool_name not in context.allowed_tools:
+            raise GroundingError(f"Tool '{tool_name}' is outside the authorized context.")
 
         return self.tool_executor.execute(
             company_id=str(context.company_id),
@@ -285,10 +317,23 @@ class AgentRuntime:
             tools=self.get_allowed_llm_tools(context),
         )
 
-        return self._build_runtime_result(
+        return self._validated_reasoning_result(self._build_runtime_result(
             context=context,
             response=response,
-        )
+        ))
+
+    def _validated_reasoning_result(self, result):
+        if result.decision.requires_tool_execution:
+            return AgentRuntimeResult(replace(result.response, content="", raw=None),
+                                      replace(result.decision, content=""), result.context)
+        try:
+            output = validated_answer(result.context, result.decision.content or result.response.content)
+            content = json.dumps(output, ensure_ascii=True)
+        except GroundingError:
+            output = {"status": "insufficient_information"}
+            content = MISSING_INFORMATION
+        return AgentRuntimeResult(replace(result.response, content=content, raw=None),
+                                  AgentDecision(content=content, tool_calls=[]), result.context, output)
 
     def _build_runtime_result(
         self,
@@ -388,5 +433,5 @@ class AgentRuntime:
         return (
             f"Tool executed: {tool_name}\n\n"
             "Tool result:\n"
-            f"{tool_result}"
+            f"{json.dumps(tool_result, ensure_ascii=True, allow_nan=False)}"
         )

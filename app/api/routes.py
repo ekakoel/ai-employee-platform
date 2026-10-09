@@ -250,7 +250,7 @@ def get_owned_agent_or_404(
             detail="Agent subscription is not active",
         )
 
-    if agent.subscription.status != "active":
+    if agent.subscription is None or agent.subscription.status != "active":
         raise HTTPException(
             status_code=409,
             detail="Agent subscription is not active",
@@ -328,6 +328,8 @@ def execute_agent_tool(
         "task.create",
     )
 
+    get_owned_agent_or_404(db, company_id, agent_instance_id)
+    require_agent_use(db, user, company_id=company_id, agent_instance_id=agent_instance_id)
     arguments = payload.get("arguments", {})
     task_id = payload.get("task_id")
 
@@ -2550,16 +2552,23 @@ def list_conversations_api(
     x_user_id: str | None = Header(default=None),
     agent_instance_id: str | None = None,
 ):
-    from app.services.conversation import list_conversations
+    from app.services.conversation import conversation_reads, list_conversations
 
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.read")
-    return list_conversations(
+    conversations = list_conversations(
         db,
         company_id=company_id,
         user_id=None,
         agent_instance_id=agent_instance_id,
     )
+    from app.services.access import get_agent_access, is_company_admin
+    if not is_company_admin(user):
+        conversations = [item for item in conversations if (
+            (access := get_agent_access(db, company_id=company_id, agent_instance_id=item.agent_instance_id, user_id=user.id))
+            and access.can_use
+        )]
+    return conversation_reads(db, company_id=company_id, conversations=conversations)
 
 
 @router.post(
@@ -2573,7 +2582,7 @@ def create_conversation_api(
     db: Session = Depends(get_db),
     x_user_id: str | None = Header(default=None),
 ):
-    from app.services.conversation import create_conversation
+    from app.services.conversation import conversation_reads, create_conversation
 
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "task.create")
@@ -2593,7 +2602,7 @@ def create_conversation_api(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()
     db.refresh(conv)
-    return conv
+    return conversation_reads(db, company_id=company_id, conversations=[conv])[0]
 
 
 @router.get(
@@ -2606,7 +2615,7 @@ def list_messages_api(
     db: Session = Depends(get_db),
     x_user_id: str | None = Header(default=None),
 ):
-    from app.services.conversation import get_conversation, list_messages
+    from app.services.conversation import get_conversation, list_messages, message_reads
 
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.read")
@@ -2615,9 +2624,12 @@ def list_messages_api(
     )
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    return list_messages(
+    require_agent_use(db, user, company_id=company_id, agent_instance_id=conv.agent_instance_id)
+    messages = list_messages(
         db, company_id=company_id, conversation_id=conversation_id
     )
+    return message_reads(db, company_id=company_id, conversation=conv, messages=messages,
+                         include_results="task.read" in {permission.key for permission in user.role.permissions})
 
 
 @router.post(
@@ -2635,7 +2647,7 @@ def post_message_api(
     Post human message + advisory agent reply.
     Tools are NEVER run here. Optional create_task links a Task for later execution.
     """
-    from app.services.conversation import get_conversation, post_human_message
+    from app.services.conversation import get_conversation, message_reads, post_human_message
 
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "task.create")
@@ -2647,6 +2659,7 @@ def post_message_api(
     require_agent_use(
         db, user, company_id=company_id, agent_instance_id=conv.agent_instance_id
     )
+    get_owned_agent_or_404(db, company_id, conv.agent_instance_id)
     try:
         result = post_human_message(
             db,
@@ -2669,9 +2682,11 @@ def post_message_api(
     human = result["human"]
     agent = result["agent"]
     task = result["task"]
+    reads = message_reads(db, company_id=company_id, conversation=conv, messages=[human, agent],
+                          include_results="task.read" in {permission.key for permission in user.role.permissions})
     return ChatPostResponse(
-        human=MessageRead.model_validate(human),
-        agent=MessageRead.model_validate(agent),
+        human=reads[0],
+        agent=reads[1],
         task_id=task.id if task else None,
     )
 
@@ -3212,9 +3227,11 @@ def create_task(
     enforce_task_quota(db, company_id)
 
     data = payload.model_dump()
-    check_scope_flag = bool(data.pop("check_scope", False))
+    data.pop("check_scope", None)
+    check_scope_flag = True
     auto_delegate_flag = bool(data.pop("auto_delegate", False))
-    block_oos = bool(data.pop("block_out_of_scope", True))
+    data.pop("block_out_of_scope", None)
+    block_oos = True
 
     task = Task(
         company_id=company_id,
@@ -3979,6 +3996,11 @@ def execute_task(
         "task.create",
     )
 
+    task = db.scalar(select(Task).where(Task.id == task_id, Task.company_id == company_id))
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    get_owned_agent_or_404(db, company_id, task.agent_instance_id)
+    require_agent_use(db, user, company_id=company_id, agent_instance_id=task.agent_instance_id)
     runtime = TaskRuntimeService()
 
     try:
@@ -4015,6 +4037,11 @@ def execute_task_llm(
         "task.create",
     )
 
+    task = db.scalar(select(Task).where(Task.id == task_id, Task.company_id == company_id))
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    get_owned_agent_or_404(db, company_id, task.agent_instance_id)
+    require_agent_use(db, user, company_id=company_id, agent_instance_id=task.agent_instance_id)
     runtime = TaskRuntimeService()
 
     try:

@@ -49,6 +49,21 @@ def _notify_task_failed(db, task) -> None:
 
 
 class TaskRuntimeService:
+    def _fail(self, db, company_id, task_id, exc):
+        db.rollback()
+        task = db.scalar(select(Task).where(Task.id == task_id, Task.company_id == company_id))
+        if task is None:
+            raise ValueError("Task not found for this company.") from exc
+        task.status = TaskStatus.FAILED.value
+        task.result = str(exc)
+        record_audit(db, company_id=company_id, agent_instance_id=task.agent_instance_id,
+                     task_id=task.id, action="task.failed", resource_type="task",
+                     resource_id=task.id, status="failed", details={"error": str(exc)})
+        _notify_task_failed(db, task)
+        db.commit()
+        db.refresh(task)
+        return task
+
     def __init__(
         self,
         executor: AgentExecutor | None = None,
@@ -190,11 +205,10 @@ class TaskRuntimeService:
         # ---------------------------------------------------------
         # LOAD AGENT CONTEXT
         # ---------------------------------------------------------
-        context = load_agent_context(
-            db,
-            agent,
-            task,
-        )
+        try:
+            context = load_agent_context(db, agent, task)
+        except Exception as exc:
+            return self._fail(db, company_id, task_id, exc)
 
         # ---------------------------------------------------------
         # RUNNING
@@ -228,6 +242,8 @@ class TaskRuntimeService:
                 instruction=task.instruction,
                 context=context,
             )
+            if not isinstance(result, str) or not result.strip():
+                raise RuntimeExecutionError("Execution did not produce a persisted output.")
 
             task.result = result
             task.status = TaskStatus.COMPLETED.value
@@ -289,7 +305,7 @@ class TaskRuntimeService:
 
             return task
 
-        except RuntimeExecutionError as exc:
+        except Exception as exc:
             db.rollback()
 
             task = db.scalar(
@@ -450,6 +466,14 @@ class TaskRuntimeService:
             raise ValueError(
                 "Task not found for this company."
             )
+        claim = db.execute(update(Task).where(
+            Task.id == task_id, Task.company_id == company_id,
+            Task.status == TaskStatus.PENDING.value,
+        ).values(status=TaskStatus.PLANNING.value))
+        if claim.rowcount != 1:
+            db.rollback()
+            raise ValueError(f"Task cannot be executed from status '{task.status}'.")
+        db.commit()
 
         agent = db.scalar(
             select(AgentInstance).where(
@@ -458,16 +482,12 @@ class TaskRuntimeService:
             )
         )
 
-        if agent is None:
-            raise ValueError(
-                "Agent instance not found for this company."
-            )
-
-        context = load_agent_context(
-            db,
-            agent,
-            task,
-        )
+        try:
+            if agent is None:
+                raise ValueError("Agent instance not found for this company.")
+            context = load_agent_context(db, agent, task)
+        except Exception as exc:
+            return self._fail(db, company_id, task_id, exc)
 
         # ---------------------------------------------------------
         # RUNNING
@@ -516,6 +536,9 @@ class TaskRuntimeService:
                     "Task not found after LLM execution."
                 )
 
+            if not isinstance(runtime_result.output, dict) or runtime_result.output.get("status") != "verified":
+                raise RuntimeExecutionError("Execution did not produce a verified persisted output.")
+            task.result = json.dumps(runtime_result.output, ensure_ascii=True, allow_nan=False)
             task.status = TaskStatus.COMPLETED.value
 
             record_audit(
@@ -583,7 +606,7 @@ class TaskRuntimeService:
 
             return task
 
-        except RuntimeExecutionError as exc:
+        except Exception as exc:
             db.rollback()
 
             task = db.scalar(
@@ -743,18 +766,15 @@ class TaskRuntimeService:
         )
 
         if agent is None:
-            raise ValueError(
-                "Agent instance not found for this company."
-            )
+            return self._fail(db, company_id, task_id, ValueError("Agent instance not found for this company."))
 
         # ---------------------------------------------------------
         # LOAD AGENT CONTEXT
         # ---------------------------------------------------------
-        context = load_agent_context(
-            db,
-            agent,
-            task,
-        )
+        try:
+            context = load_agent_context(db, agent, task)
+        except Exception as exc:
+            return self._fail(db, company_id, task_id, exc)
 
         # ---------------------------------------------------------
         # RESUME AUDIT
@@ -786,6 +806,8 @@ class TaskRuntimeService:
                 approval_id=approval.id,
                 context=context,
             )
+            if not isinstance(result, str) or not result.strip():
+                raise RuntimeExecutionError("Approved execution did not produce a persisted output.")
 
             task.result = result
             task.status = TaskStatus.COMPLETED.value
@@ -810,7 +832,7 @@ class TaskRuntimeService:
 
             return task
 
-        except RuntimeExecutionError as exc:
+        except Exception as exc:
             db.rollback()
 
             task = db.scalar(

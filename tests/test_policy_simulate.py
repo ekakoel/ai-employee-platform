@@ -59,7 +59,7 @@ def setup(client):
     return co["id"], headers, hire.json()["id"], owner["id"]
 
 
-def test_simulate_default_allow(client):
+def test_simulate_default_deny(client):
     company_id, headers, agent_id, _ = setup(client)
     resp = client.post(
         f"/api/v1/companies/{company_id}/policies/simulate",
@@ -73,8 +73,9 @@ def test_simulate_default_allow(client):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["simulation"] is True
-    assert body["effect"] == "allow"
-    assert body["allowed"] is True
+    assert body["effect"] == "deny"
+    assert body["allowed"] is False
+    assert body["denied"] is True
     assert "considered_policies" in body
 
 
@@ -128,7 +129,7 @@ def test_simulate_require_approval_with_route(client):
     )
     assert pol.status_code == 201, pol.text
 
-    # condition not met → allow (no match → default allow)
+    # An unmatched conditional rule does not authorize the action.
     low = client.post(
         f"/api/v1/companies/{company_id}/policies/simulate",
         headers=headers,
@@ -139,7 +140,7 @@ def test_simulate_require_approval_with_route(client):
         },
     )
     assert low.status_code == 200
-    assert low.json()["effect"] == "allow"
+    assert low.json()["effect"] == "deny"
 
     high = client.post(
         f"/api/v1/companies/{company_id}/policies/simulate",
@@ -185,7 +186,7 @@ def test_simulate_department_condition(client):
             "context": {"department": "ops"},
         },
     )
-    assert miss.json()["effect"] == "allow"  # no match → default
+    assert miss.json()["effect"] == "deny"  # Unmatched actions fail closed.
 
     hit = client.post(
         f"/api/v1/companies/{company_id}/policies/simulate",

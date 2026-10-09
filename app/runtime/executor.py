@@ -1,4 +1,5 @@
 from typing import Any
+import json
 
 from sqlalchemy.orm import Session
 
@@ -58,6 +59,8 @@ class AgentExecutor:
         instruction: str,
         context: AgentContext,
     ) -> str:
+        from app.services.grounding import GroundingError, MISSING_INFORMATION, requires_action, sources
+        authoritative = sources(context)
         knowledge_count = len(context.knowledge)
 
         knowledge_summary = "\n".join(
@@ -73,6 +76,10 @@ class AgentExecutor:
         tool_results: list[str] = []
 
         planned_tool = self._plan_tool(instruction)
+        if planned_tool is None and requires_action(instruction):
+            raise RuntimeExecutionError("No authorized deterministic workflow can perform this action. Use a configured skill and tool workflow.")
+        if planned_tool is None and not authoritative:
+            raise GroundingError(MISSING_INFORMATION)
 
         if planned_tool is not None:
             tool_name, arguments = planned_tool
@@ -216,6 +223,9 @@ class AgentExecutor:
             tool_name=tool_name,
             result=result,
         )
+        if tool_name == "draft_quotation":
+            return json.dumps({"status": "verified", "tool_results": [{"tool": tool_name, "result": result}],
+                               "approval_id": approval_id}, ensure_ascii=True, allow_nan=False)
 
         return (
             f"Task resumed by {context.agent_name}.\n\n"
@@ -287,10 +297,10 @@ class AgentExecutor:
             return (
                 f"Tool: {tool_name}\n"
                 f"Result count: {count}\n"
-                f"Results: {result.get('results', [])}"
+                f"Results: {json.dumps(result, ensure_ascii=True, allow_nan=False)}"
             )
 
         return (
             f"Tool: {tool_name}\n"
-            f"Result: {result}"
+            f"Result: {json.dumps(result, ensure_ascii=True, allow_nan=False)}"
         )

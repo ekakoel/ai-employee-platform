@@ -28,6 +28,7 @@ def make_context() -> AgentContext:
         task_instruction="Find the contract for Villa ABC.",
         knowledge=[
             {
+                "id": "contract-source",
                 "title": "Villa ABC Contract",
                 "content": "Villa ABC contract is valid until December 2026.",
             }

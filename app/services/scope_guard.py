@@ -47,6 +47,9 @@ def agent_vocabulary(card: AgentCapabilityCard) -> set[str]:
     words |= _tokenize(card.name or "")
     if card.catalog_slug:
         words |= _tokenize(card.catalog_slug.replace("-", " "))
+    for domain, aliases in _DOMAIN_HINTS.items():
+        if domain in words:
+            words.update(aliases)
     return {w for w in words if len(w) >= 3}
 
 
@@ -165,7 +168,7 @@ def check_scope(
     Decide whether instruction fits the agent's professional scope.
 
     Rules:
-    - Empty agent scope/skills → treat as in-scope (permissive MVP).
+    - Missing scope or no matching specialist capability fails closed.
     - If agent score is decent (>= 0.08) → in-scope.
     - If another agent scores significantly higher → out-of-scope.
     - If agent score is ~0 and alternatives exist → out-of-scope.
@@ -181,11 +184,13 @@ def check_scope(
     )
 
     vocab = agent_vocabulary(card)
-    # Permissive: no defined vocabulary
-    if not vocab:
+    if agent.company_id != company_id or agent.status != "active":
+        return ScopeCheckResult(False, "Employee is not active in this company.", agent.id, 0.0)
+    # Missing configuration is not authorization.
+    if not vocab or not any((card.scope, card.skills, card.tools, card.capabilities)):
         result = ScopeCheckResult(
-            in_scope=True,
-            reason="Agent has no scope/skills vocabulary; allowing by default.",
+            in_scope=False,
+            reason="Agent has no authorized scope/skills vocabulary.",
             agent_instance_id=agent.id,
             agent_score=agent_score,
             alternatives=alternatives[:5],
@@ -210,10 +215,10 @@ def check_scope(
         )
 
     if weak_self and not alternatives:
-        # No one else fits either — allow rather than dead-end
+        # Absence of another specialist does not authorize this employee.
         return ScopeCheckResult(
-            in_scope=True,
-            reason="No stronger specialist found; continuing with assigned agent.",
+            in_scope=False,
+            reason="Instruction does not match the assigned employee scope.",
             agent_instance_id=agent.id,
             agent_score=agent_score,
             alternatives=[],

@@ -47,6 +47,7 @@ def test_task_runtime_execute_with_llm_delegates_to_executor():
     agent.company_id = "company-1"
 
     db = Mock()
+    db.execute.return_value.rowcount = 1
     db.scalar.side_effect = [
         task,
         agent,
@@ -59,8 +60,9 @@ def test_task_runtime_execute_with_llm_delegates_to_executor():
     context.agent_name = "Test Agent"
     context.knowledge = []
 
-    executor.execute_with_llm.return_value = Mock(
-        spec=AgentRuntimeResult
+    executor.execute_with_llm.return_value = AgentRuntimeResult(
+        response=None, decision=None, context=context,
+        output={"status": "verified", "citations": [{"source_id": "knowledge:1", "quote": "Verified fact"}]},
     )
 
     runtime = TaskRuntimeService(
@@ -80,6 +82,7 @@ def test_task_runtime_execute_with_llm_delegates_to_executor():
 
     assert result is task
     assert task.status == TaskStatus.COMPLETED.value
+    assert "Verified fact" in task.result
 
     executor.execute_with_llm.assert_called_once()
 
@@ -116,6 +119,7 @@ def test_llm_approval_required_moves_task_to_waiting_approval():
     agent.company_id = "company-1"
 
     db = Mock()
+    db.execute.return_value.rowcount = 1
     db.scalar.side_effect = [
         task,
         agent,

@@ -1,5 +1,23 @@
 (function () {
   const $ = (id) => document.getElementById(id);
+  const developerMode = document.body.dataset.workspace === "developer";
+  const developerViews = new Set(["tools", "policies", "scopecheck"]);
+  const consoleViews = new Set([...developerViews, "integrations", "workflows", "cost", "audit", "tasks", "result-preview"]);
+  const defaultView = developerMode ? "tools" : "home";
+
+  if (developerMode) {
+    document.title = "Developer Console | AI Employee Platform";
+    $("brandSub").textContent = "Developer console";
+    $("loginSubtitle").textContent = "Developer console";
+    $("consoleLink").href = "/workspace";
+    $("consoleLink").textContent = "User workspace";
+    document.querySelectorAll(".nav-btn").forEach((button) => {
+      button.classList.toggle("hidden", !consoleViews.has(button.dataset.view));
+    });
+    document.querySelectorAll(".nav-group").forEach((group) => {
+      group.classList.toggle("hidden", !group.classList.contains("developer-only"));
+    });
+  }
 
   const state = {
     apiBase: localStorage.getItem("ws_apiBase") || "/api/v1",
@@ -9,10 +27,14 @@
     userName: localStorage.getItem("ws_userName") || "",
   };
 
-  let selectedOutputTask = null;
+  let focusedTaskId = "";
+  let contextualSidebar = null;
+  const getMainTitles = () => Array.from(document.querySelectorAll(".view.active strong, .view.active h2, .view.active h4"))
+    .map((element) => element.textContent.trim()).filter(Boolean);
+  const getMainText = () => document.querySelector(".view.active")?.textContent || "";
 
   const titles = {
-    home: ["Home", "Command center"],
+    home: ["Home", "Your work and AI team at a glance"],
     inbox: ["Inbox", "Needs your attention"],
     chat: ["Chat", "Talk with AI employees"],
     tasks: ["Tasks", "Create and track work"],
@@ -27,189 +49,91 @@
     notifications: ["Notifications", "Alerts and updates"],
     governance: ["Governance", "Metrics and audit"],
     policies: ["Policy Simulator", "Dry-run ALLOW / APPROVAL / DENY"],
+    "policy-management": ["Policies", "Rules that control AI actions"],
     departments: ["Departments", "Org structure for agents and users"],
+    teams: ["Teams", "Group AI employees into pods"],
     skills: ["Skills", "Platform and company capabilities"],
+    learning: ["Learning", "Agent memory and reusable experience"],
     usage: ["Plan & Usage", "Quotas and metering"],
+    audit: ["Audit Log", "Trace platform activity"],
     tools: ["Tools", "Catalog side-effect and risk"],
     integrations: ["Integrations", "Webhooks, email, calendar"],
     workflows: ["Workflows", "Multi-step automation"],
     cost: ["LLM Cost", "Token usage and spend"],
     scopecheck: ["Scope Check", "Out-of-scope detection"],
+    "result-preview": ["AI Work Results", "Preview"],
   };
 
+  const resultLibrary = WorkspaceResults.create({
+    getSession: () => state, api, escapeHtml, getMainTitles, getMainText,
+    openPreview: () => showView("result-preview"),
+    openTask: (task) => { focusedTaskId = task.id; $("taskFilter").selectedIndex = 0; showView("tasks"); },
+    revise: async (task) => {
+      showView("tasks");
+      await loadAgentOptions();
+      $("taskAgent").value = task.agent_instance_id;
+      $("taskTitle").value = "Revision: " + task.title;
+      $("taskMode").value = task.mode;
+      $("taskInstruction").value = `Revise the result of task ${task.id}.\nOriginal instruction:\n${task.instruction}\n\nPrevious result:\n${task.result}\n\nRequested changes:\n`;
+      $("taskInstruction").focus();
+    },
+  });
+
+  const homeDashboard = WorkspaceHome.create({
+    api, getSession: () => state, escapeHtml,
+    navigate: (view) => {
+      if (view === "results") contextualSidebar.results();
+      else showView(view);
+    },
+    openTask: (task) => { focusedTaskId = task.id; $("taskFilter").selectedIndex = 0; showView("tasks"); },
+    openResult: (task) => showOutputCenter(task),
+  });
+
+  const inboxDashboard = WorkspaceInbox.create({
+    api, getSession: () => state, escapeHtml,
+    navigate: showView,
+    openTask: (task) => { focusedTaskId = task.id; $("taskFilter").selectedIndex = 0; showView("tasks"); },
+    onChanged: () => { refreshInboxBadge(); resultLibrary.refresh(); contextualSidebar.refresh(); },
+  });
+
+  contextualSidebar = WorkspaceSidebar.create({
+    api, getSession: () => state, escapeHtml, getMainTitles, getMainText,
+    getSelectedTaskId: () => resultLibrary.getSelectedTaskId(),
+    canNavigate: (view) => developerMode ? consoleViews.has(view) : !developerViews.has(view),
+    getAgentId: (view) => {
+      const selectors = { chat: "chatAgent", consult: "consultAgent", policies: "simAgent", scopecheck: "scopeAgent" };
+      return $(selectors[view])?.value || "";
+    },
+    navigate: showView,
+    openTask: (task) => { focusedTaskId = task.id; $("taskFilter").selectedIndex = 0; showView("tasks"); },
+    openResult: showOutputCenter,
+    showResults: (resetFilters) => resetFilters ? resultLibrary.showAll() : resultLibrary.refresh(),
+  });
+  const chatWorkspace = WorkspaceChat.create({
+    api, getSession: () => state, escapeHtml,
+    openResult: showOutputCenter,
+    onAgentChanged: () => contextualSidebar.refresh(),
+    onTaskCreated: () => { refreshInboxBadge(); contextualSidebar.refresh(); },
+    openTask: (id) => { focusedTaskId = id; $("taskFilter").selectedIndex = 0; showView("tasks"); },
+  });
+  ["consultAgent", "simAgent", "scopeAgent"].forEach((id) => {
+    $(id)?.addEventListener("change", () => contextualSidebar.refresh());
+  });
+  new MutationObserver(() => {
+    contextualSidebar.reconcile();
+    resultLibrary.reconcile();
+  }).observe(document.querySelector("main"), { childList: true, subtree: true, characterData: true });
+
   function showOutputCenter(task) {
-    selectedOutputTask = task;
-
-    const panel = $("outputCenter");
-    const content = $("outputContent");
-    const title = $("outputTitle");
-
-    if (!panel || !content) return;
-
-    panel.classList.remove("collapsed");
-
-    title.textContent = task.title || "AI Result";
-
-    let result = task.result;
-
-    if (!result) {
-      content.innerHTML = `
-        <div class="output-empty">
-          <div class="output-empty-icon">○</div>
-          <strong>No result yet</strong>
-          <p>This task has not produced an output.</p>
-        </div>
-      `;
-      return;
-    }
-
-    let parsed = null;
-
-    try {
-      parsed = typeof result === "string"
-        ? JSON.parse(result)
-        : result;
-    } catch (_) {
-      parsed = null;
-    }
-
-    if (parsed && typeof parsed === "object") {
-      renderStructuredOutput(task, parsed);
-    } else {
-      renderTextOutput(task, String(result));
-    }
-  }
-
-  function renderStructuredOutput(task, result) {
-    const content = $("outputContent");
-
-    content.innerHTML = `
-      <div class="output-task-meta">
-        <div class="output-task-title">
-          ${escapeHtml(task.title || "AI Result")}
-        </div>
-
-        <div class="meta">
-          ${escapeHtml(task.status || "")}
-          ·
-          ${escapeHtml(task.mode || "")}
-        </div>
-      </div>
-
-      ${result.recommendation
-        ? `
-            <div class="output-section">
-              <div class="output-section-title">Recommendation</div>
-              <div class="output-box">
-                ${escapeHtml(result.recommendation)}
-              </div>
-            </div>
-          `
-        : ""
-      }
-
-      ${result.rationale
-        ? `
-            <div class="output-section">
-              <div class="output-section-title">Rationale</div>
-              <div class="output-box">
-                ${escapeHtml(result.rationale)}
-              </div>
-            </div>
-          `
-        : ""
-      }
-
-      ${result.expected_impact
-        ? `
-            <div class="output-section">
-              <div class="output-section-title">Expected Impact</div>
-              <div class="output-box">
-                ${escapeHtml(result.expected_impact)}
-              </div>
-            </div>
-          `
-        : ""
-      }
-
-      ${Array.isArray(result.alternatives) && result.alternatives.length
-        ? `
-            <div class="output-section">
-              <div class="output-section-title">Alternatives</div>
-              <div class="output-box">
-                ${result.alternatives
-          .map((x) => `• ${escapeHtml(x)}`)
-          .join("<br>")}
-              </div>
-            </div>
-          `
-        : ""
-      }
-
-      ${result.confidence !== undefined
-        ? `
-            <div class="output-section">
-              <div class="output-section-title">Confidence</div>
-              <div class="output-box output-confidence">
-                ${Math.round(Number(result.confidence) * 100)}%
-              </div>
-            </div>
-          `
-        : ""
-      }
-
-      <div class="output-section">
-        <div class="output-section-title">Files / Artifacts</div>
-        <div class="output-artifacts">
-          <div class="output-artifact">
-            <div class="output-artifact-title">No files generated</div>
-            <div class="output-artifact-meta">
-              File generation will be available in the artifact phase.
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  function renderTextOutput(task, result) {
-    $("outputContent").innerHTML = `
-      <div class="output-task-meta">
-        <div class="output-task-title">
-          ${escapeHtml(task.title || "AI Result")}
-        </div>
-
-        <div class="meta">
-          ${escapeHtml(task.status || "")}
-          ·
-          ${escapeHtml(task.mode || "")}
-        </div>
-      </div>
-
-      <div class="output-section">
-        <div class="output-section-title">Result</div>
-        <div class="output-box">
-          ${escapeHtml(result)}
-        </div>
-      </div>
-
-      <div class="output-section">
-        <div class="output-section-title">Files / Artifacts</div>
-        <div class="output-artifact">
-          <div class="output-artifact-title">No files generated</div>
-        </div>
-      </div>
-    `;
-  }
-
-  if ($("btnCloseOutput")) {
-    $("btnCloseOutput").onclick = () => {
-      $("outputCenter").classList.add("collapsed");
-      selectedOutputTask = null;
-    };
+    if (task.result) resultLibrary.select(task);
   }
 
   function clearSession() {
+    chatWorkspace.reset();
+    inboxDashboard.reset();
+    contextualSidebar.reset();
+    homeDashboard.reset();
+    resultLibrary.reset();
     state.companyId = "";
     state.userId = "";
     state.accessToken = "";
@@ -251,6 +175,7 @@
           : text || res.statusText;
       throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
     }
+    if (opts.method && opts.method.toUpperCase() !== "GET" && !path.endsWith("/result-pin") && !opts.skipSidebarRefresh) contextualSidebar?.refresh();
     return data;
   }
 
@@ -271,13 +196,13 @@
 
   function setConnected(ok) {
     showGate(!ok);
+    if (ok) resultLibrary.refresh();
     const box = $("sessionBox");
     const pill = $("statusPill");
     if (box) {
       box.innerHTML = ok
         ? `<div><strong>${escapeHtml(state.userName || "User")}</strong></div>
-           <small>${escapeHtml(state.userId.slice(0, 8))}…</small><br/>
-           <small>co ${escapeHtml(state.companyId.slice(0, 8))}…</small>`
+           <small>${developerMode ? escapeHtml(state.companyId) : "Company workspace"}</small>`
         : "<small>Not connected</small>";
     }
     if (pill) {
@@ -285,7 +210,7 @@
       pill.className = ok ? "pill ok" : "pill muted";
     }
     const sub = $("brandSub");
-    if (sub) sub.textContent = ok ? "Workspace" : "Offline";
+    if (sub) sub.textContent = developerMode ? "Developer console" : (ok ? "Workspace" : "Offline");
   }
 
   function setInboxBadge(n) {
@@ -310,6 +235,9 @@
   }
 
   function showView(name) {
+    if ((!developerMode && developerViews.has(name)) || (developerMode && !consoleViews.has(name))) {
+      name = defaultView;
+    }
     document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
     document.querySelectorAll(".nav-btn").forEach((b) => b.classList.remove("active"));
     const view = $("view-" + name);
@@ -319,6 +247,7 @@
     const t = titles[name] || [name, ""];
     if ($("viewTitle")) $("viewTitle").textContent = t[0];
     if ($("viewSubtitle")) $("viewSubtitle").textContent = t[1];
+    contextualSidebar.show(name);
 
     if (name === "home") loadHome();
     if (name === "inbox") loadInbox();
@@ -343,9 +272,13 @@
     if (name === "governance") loadGovernance();
     if (name === "directory") listDirectory();
     if (name === "policies") { loadAgentOptions(); }
+    if (name === "policy-management") loadPolicies();
     if (name === "departments") loadDepartments();
+    if (name === "teams") { loadAgentOptions(); loadTeams(); }
     if (name === "skills") loadSkills();
+    if (name === "learning") { loadAgentOptions(); loadLearning(); }
     if (name === "usage") loadUsage();
+    if (name === "audit") loadAudit();
     if (name === "tools") loadTools();
     if (name === "integrations") loadIntegrations();
     if (name === "workflows") { loadAgentOptions(); loadWorkflows(); }
@@ -387,7 +320,7 @@
     if ($("loginCompanyId")) $("loginCompanyId").value = state.companyId;
     setConnected(true);
     await refreshInboxBadge();
-    showView("home");
+    showView(defaultView);
   }
 
   // ----- Quick start -----
@@ -541,12 +474,13 @@
       const opts = (agents || [])
         .map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`)
         .join("");
-      ["taskAgent", "consultAgent", "chatAgent", "delSource", "delTarget", "autoAgent", "simAgent", "scopeAgent", "wfAgent"].forEach(
+      ["taskAgent", "consultAgent", "delSource", "delTarget", "autoAgent", "simAgent", "scopeAgent", "wfAgent", "memoryAgent", "experienceAgent", "teamAgents"].forEach(
         (id) => {
           const el = $(id);
           if (el) el.innerHTML = opts;
         }
       );
+      contextualSidebar.refresh();
     } catch (_) { }
   }
 
@@ -559,77 +493,16 @@
         api(`/companies/${state.companyId}/delegation-requests`).catch(() => []),
         api(`/companies/${state.companyId}/notifications/unread-count`).catch(() => ({ count: 0 })),
       ]);
-      const pendingTasks = (tasks || []).filter((t) =>
-        ["pending", "waiting_approval", "planning"].includes(t.status)
-      ).length;
-      const pendingAppr = (approvals || []).filter((a) => a.status === "pending").length;
-      const openDel = (dels || []).filter((d) =>
-        ["pending", "accepted"].includes(d.status)
-      ).length;
-      setInboxBadge(pendingTasks + pendingAppr + openDel);
+      const actionCount = WorkspaceInbox.buildQueue({ tasks, approvals, delegations: dels })
+        .filter((item) => item.group === "action").length;
+      setInboxBadge(actionCount);
       setNotifBadge((notif && notif.count) || 0);
     } catch (_) { }
   }
 
   // ----- Home -----
   async function loadHome() {
-    if (!state.companyId) return;
-    try {
-      const [agents, tasks, approvals] = await Promise.all([
-        api(`/companies/${state.companyId}/agents`),
-        api(`/companies/${state.companyId}/tasks`),
-        api(`/companies/${state.companyId}/approvals`),
-      ]);
-      const active = (agents || []).filter((a) => a.status === "active").length;
-      const openTasks = (tasks || []).filter((t) =>
-        !["completed", "failed", "cancelled"].includes(t.status)
-      ).length;
-      const pendingAppr = (approvals || []).filter((a) => a.status === "pending").length;
-      $("homeStats").innerHTML = [
-        ["AI Employees", agents.length],
-        ["Active", active],
-        ["Open tasks", openTasks],
-        ["Pending approvals", pendingAppr],
-      ]
-        .map(
-          ([l, n]) =>
-            `<div class="stat"><div class="n">${n}</div><div class="l">${escapeHtml(l)}</div></div>`
-        )
-        .join("");
-
-      const attention = [];
-      (tasks || [])
-        .filter((t) => ["pending", "waiting_approval"].includes(t.status))
-        .slice(0, 4)
-        .forEach((t) =>
-          attention.push(
-            `<div class="item"><span class="type-tag task">task</span>${escapeHtml(t.title || t.id)}<div class="meta">${escapeHtml(t.status)} · ${escapeHtml(t.mode || "")}</div></div>`
-          )
-        );
-      (approvals || [])
-        .filter((a) => a.status === "pending")
-        .slice(0, 4)
-        .forEach((a) =>
-          attention.push(
-            `<div class="item"><span class="type-tag approval">approval</span>${escapeHtml(a.action)}<div class="meta">${escapeHtml(a.reason || "")}</div></div>`
-          )
-        );
-      $("homeInbox").innerHTML =
-        attention.join("") || `<div class="empty">Nothing pending — you're clear.</div>`;
-
-      $("homeAgents").innerHTML =
-        (agents || [])
-          .slice(0, 6)
-          .map(
-            (a) => `<div class="agent-card">
-          <h4><span class="status-dot ${a.status !== "active" ? "inactive" : ""}"></span>${escapeHtml(a.name)}</h4>
-          <div class="meta muted">${escapeHtml(a.status)} · v${escapeHtml(a.template_version || "")}</div>
-        </div>`
-          )
-          .join("") || `<div class="empty">No agents yet. Hire from Marketplace.</div>`;
-    } catch (err) {
-      $("homeStats").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
-    }
+    await homeDashboard.load();
   }
 
   // ----- Notifications -----
@@ -683,105 +556,8 @@
 
   // ----- Inbox -----
   async function loadInbox() {
-    if (!state.companyId) return;
-    try {
-      const [tasks, approvals, dels] = await Promise.all([
-        api(`/companies/${state.companyId}/tasks`),
-        api(`/companies/${state.companyId}/approvals`),
-        api(`/companies/${state.companyId}/delegation-requests`),
-      ]);
-      const pendingTasks = (tasks || []).filter((t) =>
-        ["pending", "waiting_approval", "planning", "running"].includes(t.status)
-      );
-      const pendingAppr = (approvals || []).filter((a) => a.status === "pending");
-      const openDel = (dels || []).filter((d) =>
-        ["pending", "accepted"].includes(d.status)
-      );
-      $("inboxStats").innerHTML = [
-        ["Tasks", pendingTasks.length],
-        ["Approvals", pendingAppr.length],
-        ["Delegations", openDel.length],
-        ["Total", pendingTasks.length + pendingAppr.length + openDel.length],
-      ]
-        .map(
-          ([l, n]) =>
-            `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`
-        )
-        .join("");
-
-      const rows = [];
-      pendingTasks.forEach((t) => {
-        rows.push(`<div class="item">
-          <span class="type-tag task">task</span><strong>${escapeHtml(t.title || t.id)}</strong>
-          <div class="meta">${escapeHtml(t.status)} · ${escapeHtml(t.mode || "")}</div>
-          <div class="actions">
-            ${t.mode === "consult" && t.status === "pending"
-            ? `<button class="primary btn-run-consult" data-id="${t.id}">Run consult</button>`
-            : ""
-          }
-          </div>
-        </div>`);
-      });
-      pendingAppr.forEach((a) => {
-        rows.push(`<div class="item">
-          <span class="type-tag approval">approval</span><strong>${escapeHtml(a.action)}</strong>
-          <div class="meta">${escapeHtml(a.reason || "")}</div>
-          <div class="actions">
-            <button class="success btn-appr" data-id="${a.id}" data-d="approved">Approve</button>
-            <button class="danger btn-appr" data-id="${a.id}" data-d="rejected">Reject</button>
-          </div>
-        </div>`);
-      });
-      openDel.forEach((d) => {
-        rows.push(`<div class="item">
-          <span class="type-tag delegation">delegation</span><strong>${escapeHtml(d.title || d.id)}</strong>
-          <div class="meta">${escapeHtml(d.status)} · ${escapeHtml(d.capability || "")}</div>
-          <div class="actions">
-            ${d.status === "pending" || d.status === "accepted"
-            ? `<button class="primary btn-exec-del" data-id="${d.id}">Execute</button>`
-            : ""
-          }
-          </div>
-        </div>`);
-      });
-      $("inboxList").innerHTML = rows.join("") || `<div class="empty">Inbox zero. Nice work.</div>`;
-
-      document.querySelectorAll(".btn-run-consult").forEach((b) => {
-        b.onclick = async () => {
-          await api(`/companies/${state.companyId}/tasks/${b.dataset.id}/consult`, {
-            method: "POST",
-            body: "{}",
-          });
-          loadInbox();
-          refreshInboxBadge();
-        };
-      });
-      document.querySelectorAll(".btn-appr").forEach((b) => {
-        b.onclick = async () => {
-          await api(`/companies/${state.companyId}/approvals/${b.dataset.id}/review`, {
-            method: "POST",
-            body: JSON.stringify({ status: b.dataset.d, comment: "workspace" }),
-          });
-          loadInbox();
-          refreshInboxBadge();
-        };
-      });
-      document.querySelectorAll(".btn-exec-del").forEach((b) => {
-        b.onclick = async () => {
-          await api(`/companies/${state.companyId}/delegation-requests/${b.dataset.id}/execute`, {
-            method: "POST",
-            body: "{}",
-          });
-          loadInbox();
-          refreshInboxBadge();
-        };
-      });
-      setInboxBadge(pendingTasks.length + pendingAppr.length + openDel.length);
-    } catch (err) {
-      $("inboxList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
-    }
+    await inboxDashboard.load();
   }
-  $("btnRefreshInbox").onclick = loadInbox;
 
   // ----- Agents -----
   async function loadAgents() {
@@ -806,6 +582,7 @@
         sel.innerHTML = (catalog || [])
           .map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`)
           .join("");
+      loadSubscriptions();
     } catch (err) {
       $("agentList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
     }
@@ -827,6 +604,39 @@
       log.textContent = err.message;
     }
   };
+
+  async function loadSubscriptions() {
+    if (!state.companyId || !$("subList")) return;
+    try {
+      const list = await api(`/companies/${state.companyId}/subscriptions`);
+      $("subList").innerHTML =
+        (list || [])
+          .map(
+            (s) => `<div class="item">
+          <strong>${escapeHtml(s.id)}</strong>
+          <div class="meta">${escapeHtml(s.status || "")} · catalog ${escapeHtml(s.catalog_agent_id || "")}</div>
+          ${s.status !== "cancelled"
+                ? `<div class="actions"><button class="danger btn-cancel-sub" data-id="${s.id}">Cancel</button></div>`
+                : ""
+              }
+        </div>`
+          )
+          .join("") || `<div class="empty">No subscriptions.</div>`;
+      document.querySelectorAll(".btn-cancel-sub").forEach((b) => {
+        b.onclick = async () => {
+          await api(`/companies/${state.companyId}/subscriptions/${b.dataset.id}/cancel`, {
+            method: "POST",
+            body: "{}",
+          });
+          loadSubscriptions();
+          loadAgents();
+        };
+      });
+    } catch (err) {
+      $("subList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+    }
+  }
+  if ($("btnRefreshSubs")) $("btnRefreshSubs").onclick = loadSubscriptions;
 
   // ----- Marketplace -----
   async function loadMarketplace() {
@@ -895,7 +705,7 @@
       $("taskList").innerHTML =
         (tasks || [])
           .map(
-            (t) => `<div class="item">
+            (t) => `<div class="item" data-task-id="${escapeHtml(t.id)}" tabindex="-1">
           <strong>${escapeHtml(t.title || t.id)}</strong>
           <div class="meta">${escapeHtml(t.status)} · ${escapeHtml(t.mode || "")}</div>
           <div class="actions">
@@ -965,6 +775,12 @@
           }
         };
       });
+      if (focusedTaskId) {
+        const target = Array.from($("taskList").querySelectorAll("[data-task-id]")).find((item) => item.dataset.taskId === focusedTaskId);
+        if (target) { target.focus(); target.scrollIntoView({ block: "center" }); }
+        focusedTaskId = "";
+      }
+      resultLibrary.refresh();
       document.querySelectorAll(".btn-run-t").forEach((b) => {
         b.onclick = async () => {
           await api(`/companies/${state.companyId}/tasks/${b.dataset.id}/run`, {
@@ -1074,6 +890,7 @@
         body: "{}",
       });
       log.textContent = JSON.stringify(ran, null, 2);
+      resultLibrary.refresh();
     } catch (err) {
       log.textContent = err.message;
     }
@@ -1297,121 +1114,9 @@
   if ($("btnRefreshGov")) $("btnRefreshGov").onclick = loadGovernance;
 
   // ----- Chat -----
-  let chatConversationId = null;
-
   async function loadChat() {
-    await loadAgentOptions();
+    await chatWorkspace.load();
   }
-
-  async function refreshChatMessages() {
-    if (!chatConversationId || !state.companyId) return;
-    try {
-      const msgs = await api(
-        `/companies/${state.companyId}/conversations/${chatConversationId}/messages`
-      );
-      const thread = $("chatThread");
-      if (!thread) return;
-      thread.innerHTML =
-        (msgs || [])
-          .map((m) => {
-            const role = (m.role || "agent").toLowerCase();
-            const cls =
-              role === "human" || role === "user"
-                ? "human"
-                : role === "system"
-                  ? "system"
-                  : "agent";
-            return `<div class="bubble ${cls}"><div class="who">${escapeHtml(role)}</div>${escapeHtml(m.content || "")}</div>`;
-          })
-          .join("") || `<div class="empty">No messages yet. Say hello.</div>`;
-      thread.scrollTop = thread.scrollHeight;
-    } catch (err) {
-      const log = $("chatLog");
-      if (log) {
-        log.classList.remove("hidden-log");
-        log.textContent = err.message;
-      }
-    }
-  }
-
-  $("btnChatStart").onclick = async () => {
-    try {
-      const agentId = $("chatAgent").value;
-      const title = $("chatTitle").value || "Chat";
-      const conv = await api(`/companies/${state.companyId}/conversations`, {
-        method: "POST",
-        body: JSON.stringify({ agent_instance_id: agentId, title }),
-      });
-      chatConversationId = conv.id;
-      $("chatMeta").textContent = "Conversation " + conv.id.slice(0, 8) + "…";
-      await refreshChatMessages();
-    } catch (err) {
-      const log = $("chatLog");
-      log.classList.remove("hidden-log");
-      log.textContent = err.message;
-    }
-  };
-
-  function setChatBusy(busy) {
-    const typing = $("chatTyping");
-    const btn = $("btnChatSend");
-    const input = $("chatInput");
-    if (typing) typing.classList.toggle("hidden", !busy);
-    if (btn) {
-      btn.disabled = !!busy;
-      btn.textContent = busy ? "Sending…" : "Send";
-    }
-    if (input) input.disabled = !!busy;
-  }
-
-  $("btnChatSend").onclick = async () => {
-    if (!chatConversationId) {
-      const log = $("chatLog");
-      log.classList.remove("hidden-log");
-      log.textContent = "Start a conversation first.";
-      return;
-    }
-    const content = $("chatInput").value.trim();
-    if (!content) return;
-    setChatBusy(true);
-    const log = $("chatLog");
-    if (log) {
-      log.classList.add("hidden-log");
-      log.textContent = "";
-    }
-    // Optimistic human bubble while waiting for agent
-    const thread = $("chatThread");
-    if (thread) {
-      thread.insertAdjacentHTML(
-        "beforeend",
-        `<div class="bubble human"><div class="who">human</div>${escapeHtml(content)}</div>`
-      );
-      thread.scrollTop = thread.scrollHeight;
-    }
-    $("chatInput").value = "";
-    try {
-      await api(`/companies/${state.companyId}/conversations/${chatConversationId}/messages`, {
-        method: "POST",
-        body: JSON.stringify({
-          content,
-          create_task: !!$("chatCreateTask").checked,
-          task_mode: $("chatTaskMode").value || "consult",
-        }),
-      });
-      await refreshChatMessages();
-    } catch (err) {
-      if (log) {
-        log.classList.remove("hidden-log");
-        log.textContent = err.message || "Chat failed";
-      }
-      // Refresh to drop optimistic-only state if server rejected
-      try {
-        await refreshChatMessages();
-      } catch (_) { }
-    } finally {
-      setChatBusy(false);
-    }
-  };
 
 
   // ----- Policy simulate -----
@@ -1435,6 +1140,49 @@
           }),
         });
         log.textContent = JSON.stringify(res, null, 2);
+      } catch (err) {
+        log.textContent = err.message;
+      }
+    };
+
+  // ----- Policy management -----
+  async function loadPolicies() {
+    if (!state.companyId) return;
+    try {
+      const list = await api(`/companies/${state.companyId}/policies`);
+      $("policyList").innerHTML =
+        (list || [])
+          .map((p) => {
+            const cfg = p.configuration || {};
+            return `<div class="item">
+          <strong>${escapeHtml(p.name)}</strong>
+          <div class="meta">${escapeHtml(cfg.effect || "")} · ${escapeHtml(cfg.tool || cfg.action || "")} · ${escapeHtml(p.is_active ? "active" : "off")}</div>
+        </div>`;
+          })
+          .join("") || `<div class="empty">No policies.</div>`;
+    } catch (err) {
+      $("policyList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+    }
+  }
+  if ($("btnRefreshPolicies")) $("btnRefreshPolicies").onclick = loadPolicies;
+  if ($("btnCreatePolicy"))
+    $("btnCreatePolicy").onclick = async () => {
+      const log = $("policyLog");
+      try {
+        await api(`/companies/${state.companyId}/policies`, {
+          method: "POST",
+          body: JSON.stringify({
+            name: $("policyName").value.trim(),
+            description: $("policyDescription").value.trim(),
+            configuration: {
+              tool: $("policyTool").value.trim(),
+              effect: $("policyEffect").value,
+            },
+            is_active: true,
+          }),
+        });
+        log.textContent = "Policy created.";
+        loadPolicies();
       } catch (err) {
         log.textContent = err.message;
       }
@@ -1471,6 +1219,47 @@
       }
     };
 
+  // ----- Teams -----
+  async function loadTeams() {
+    if (!state.companyId) return;
+    try {
+      await loadAgentOptions();
+      const list = await api(`/companies/${state.companyId}/teams`);
+      $("teamList").innerHTML =
+        (list || [])
+          .map(
+            (t) => `<div class="item">
+          <strong>${escapeHtml(t.name)}</strong>
+          <div class="meta">${escapeHtml(t.is_active ? "active" : "off")} · members: ${escapeHtml(String((t.member_agent_ids || []).length))}</div>
+          <div class="meta">${escapeHtml(t.description || "")}</div>
+        </div>`
+          )
+          .join("") || `<div class="empty">No teams.</div>`;
+    } catch (err) {
+      $("teamList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+    }
+  }
+  if ($("btnRefreshTeams")) $("btnRefreshTeams").onclick = loadTeams;
+  if ($("btnCreateTeam"))
+    $("btnCreateTeam").onclick = async () => {
+      try {
+        const agentIds = Array.from($("teamAgents").selectedOptions || []).map((o) => o.value);
+        await api(`/companies/${state.companyId}/teams`, {
+          method: "POST",
+          body: JSON.stringify({
+            name: $("teamName").value.trim(),
+            description: $("teamDescription").value.trim(),
+            agent_instance_ids: agentIds,
+          }),
+        });
+        $("teamName").value = "";
+        $("teamDescription").value = "";
+        loadTeams();
+      } catch (err) {
+        alert(err.message);
+      }
+    };
+
   // ----- Skills -----
   async function loadSkills() {
     if (!state.companyId) return;
@@ -1491,6 +1280,112 @@
     }
   }
   if ($("btnRefreshSkills")) $("btnRefreshSkills").onclick = loadSkills;
+  if ($("btnCreateSkill"))
+    $("btnCreateSkill").onclick = async () => {
+      const log = $("skillLog");
+      try {
+        await api(`/companies/${state.companyId}/skills`, {
+          method: "POST",
+          body: JSON.stringify({
+            slug: $("skillSlug").value.trim(),
+            name: $("skillName").value.trim(),
+            description: $("skillDescription").value.trim(),
+          }),
+        });
+        log.textContent = "Skill created.";
+        $("skillSlug").value = "";
+        $("skillName").value = "";
+        $("skillDescription").value = "";
+        loadSkills();
+      } catch (err) {
+        log.textContent = err.message;
+      }
+    };
+
+  // ----- Learning -----
+  async function loadLearning() {
+    if (!state.companyId) return;
+    await Promise.all([loadMemories(), loadExperiences()]);
+  }
+
+  async function loadMemories() {
+    const agentId = $("memoryAgent") && $("memoryAgent").value;
+    if (!state.companyId || !agentId || !$("memoryList")) return;
+    try {
+      const list = await api(`/companies/${state.companyId}/agents/${agentId}/memories`);
+      $("memoryList").innerHTML =
+        (list || [])
+          .map(
+            (m) => `<div class="item">
+          <strong>${escapeHtml(m.title)}</strong>
+          <div class="meta">${escapeHtml(m.category || "")}</div>
+          <div class="meta">${escapeHtml((m.content || "").slice(0, 180))}</div>
+        </div>`
+          )
+          .join("") || `<div class="empty">No memories for this agent.</div>`;
+    } catch (err) {
+      $("memoryList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  async function loadExperiences() {
+    if (!state.companyId || !$("experienceList")) return;
+    try {
+      const list = await api(`/companies/${state.companyId}/experiences`);
+      $("experienceList").innerHTML =
+        (list || [])
+          .map(
+            (e) => `<div class="item">
+          <strong>${escapeHtml(e.problem || e.id)}</strong>
+          <div class="meta">${escapeHtml(e.validation_status || "")} · confidence ${escapeHtml(String(e.confidence ?? ""))}</div>
+          <div class="meta">${escapeHtml((e.lesson || e.result || "").slice(0, 180))}</div>
+        </div>`
+          )
+          .join("") || `<div class="empty">No experiences.</div>`;
+    } catch (err) {
+      $("experienceList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+    }
+  }
+  if ($("btnRefreshMemory")) $("btnRefreshMemory").onclick = loadMemories;
+  if ($("memoryAgent")) $("memoryAgent").onchange = loadMemories;
+  if ($("btnRefreshExperiences")) $("btnRefreshExperiences").onclick = loadExperiences;
+  if ($("btnCreateMemory"))
+    $("btnCreateMemory").onclick = async () => {
+      try {
+        await api(`/companies/${state.companyId}/agents/${$("memoryAgent").value}/memories`, {
+          method: "POST",
+          body: JSON.stringify({
+            title: $("memoryTitle").value.trim(),
+            content: $("memoryContent").value.trim(),
+            category: $("memoryCategory").value.trim() || "context",
+          }),
+        });
+        $("memoryTitle").value = "";
+        $("memoryContent").value = "";
+        loadMemories();
+      } catch (err) {
+        alert(err.message);
+      }
+    };
+  if ($("btnCreateExperience"))
+    $("btnCreateExperience").onclick = async () => {
+      try {
+        await api(`/companies/${state.companyId}/experiences`, {
+          method: "POST",
+          body: JSON.stringify({
+            agent_instance_id: $("experienceAgent").value || null,
+            problem: $("experienceProblem").value.trim(),
+            lesson: $("experienceLesson").value.trim(),
+            confidence: Number($("experienceConfidence").value || 0.4),
+          }),
+        });
+        $("experienceProblem").value = "";
+        $("experienceLesson").value = "";
+        loadExperiences();
+      } catch (err) {
+        alert(err.message);
+      }
+    };
 
   // ----- Usage -----
   async function loadUsage() {
@@ -1515,6 +1410,27 @@
     }
   }
   if ($("btnRefreshUsage")) $("btnRefreshUsage").onclick = loadUsage;
+
+  // ----- Audit -----
+  async function loadAudit() {
+    if (!state.companyId) return;
+    try {
+      const list = await api(`/companies/${state.companyId}/audit-logs`);
+      $("auditList").innerHTML =
+        (list || [])
+          .slice(0, 100)
+          .map(
+            (a) => `<div class="item">
+          <strong>${escapeHtml(a.action || a.id)}</strong>
+          <div class="meta">${escapeHtml(a.status || "")} · ${escapeHtml(a.resource_type || "")} · ${escapeHtml(a.created_at || "")}</div>
+        </div>`
+          )
+          .join("") || `<div class="empty">No audit logs.</div>`;
+    } catch (err) {
+      $("auditList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+    }
+  }
+  if ($("btnRefreshAudit")) $("btnRefreshAudit").onclick = loadAudit;
 
   // ----- Tools -----
   async function loadTools() {
@@ -1675,7 +1591,7 @@
 
   if (state.companyId && state.userId) {
     setConnected(true);
-    refreshInboxBadge().then(() => showView("home"));
+    refreshInboxBadge().then(() => showView(defaultView));
   } else {
     setConnected(false);
   }

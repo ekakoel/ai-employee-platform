@@ -81,6 +81,12 @@ def load_agent_context(
 
     if agent.company is None:
         raise ValueError("Agent instance has no company.")
+    if not agent.company.is_active:
+        raise ValueError("Agent company is not active.")
+    if agent.status != "active":
+        raise ValueError("Agent instance is not active.")
+    if agent.subscription is not None and agent.subscription.status != "active":
+        raise ValueError("Agent subscription is not active.")
 
     if task is not None:
         if task.company_id != agent.company_id:
@@ -92,6 +98,13 @@ def load_agent_context(
             raise ValueError(
                 "Task does not belong to the agent instance."
             )
+        from app.services.grounding import general_reply
+        from app.services.scope_guard import check_scope
+
+        if not general_reply(task.instruction or ""):
+            match = check_scope(db, company_id=agent.company_id, agent=agent, instruction=task.instruction or task.title or "")
+            if not match.in_scope:
+                raise ValueError("Request is outside the assigned employee scope.")
 
     knowledge_query = db.query(KnowledgeItem).filter(
         KnowledgeItem.company_id == agent.company_id,
@@ -108,12 +121,11 @@ def load_agent_context(
 
     # Prefer instance snapshot (pinned at hire); fall back to catalog.
     instance_skills = list(agent.skills or [])
-    instance_tools = list(agent.allowed_tools or [])
     catalog_skills = list(catalog.skills or []) if catalog else []
-    catalog_tools = list(catalog.allowed_tools or []) if catalog else []
 
     skills = instance_skills if instance_skills else catalog_skills
-    allowed_tools = instance_tools if instance_tools else catalog_tools
+    from app.services.grounding import authorized_tools
+    allowed_tools = authorized_tools(agent)
 
     # Phase 4: formal Skill assignments enrich instructions and tools
     from app.services.skills import load_assigned_skills, skill_tool_union
@@ -127,12 +139,8 @@ def load_agent_context(
     # Tool requirement: agent may use tools in its allow-list;
     # skill tools that are also on the agent allow-list are emphasized.
     # Skills cannot grant tools outside agent allowed_tools (security).
-    allowed_set = set(allowed_tools)
-    if skill_tools and allowed_set:
-        # keep agent allow-list; skill tools only valid if already allowed
-        allowed_tools = list(allowed_set)
-    elif skill_tools and not allowed_set:
-        allowed_tools = list(skill_tools)
+    if formal_skills:
+        allowed_tools = [name for name in allowed_tools if name in skill_tools]
 
     skill_slugs = [s.slug for s in formal_skills]
     if skill_slugs:
@@ -147,6 +155,8 @@ def load_agent_context(
             "name": s.name,
             "objective": s.objective,
             "instructions": s.instructions,
+            "workflow": s.workflow,
+            "required_knowledge": s.required_knowledge,
             "allowed_tools": list(s.allowed_tools or []),
             "version": s.version,
         }

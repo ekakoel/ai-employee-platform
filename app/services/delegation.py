@@ -204,6 +204,8 @@ def execute_delegation(
         db.flush()
         raise ValueError(validation.reason)
 
+    from app.services.access import require_execution_actor
+    require_execution_actor(db, company_id=req.company_id, agent_instance_id=req.target_agent_instance_id, user_id=user_id)
     req.started_at = _now()
     if req.status == DelegationStatus.PENDING.value:
         req.status = DelegationStatus.ACCEPTED.value
@@ -213,11 +215,7 @@ def execute_delegation(
         company_id=req.company_id,
         agent_instance_id=req.target_agent_instance_id,
         title=f"[Delegated] {req.title}",
-        instruction=(
-            f"Delegated capability: {req.capability}\n"
-            f"From agent: {req.source_agent_instance_id}\n\n"
-            f"{req.instruction}"
-        ),
+        instruction=req.instruction,
         mode=mode if mode in ("execute", "consult") else "consult",
         status=TaskStatus.PENDING.value,
     )
@@ -248,10 +246,13 @@ def execute_delegation(
                 db,
                 company_id=req.company_id,
                 task_id=child.id,
+                user_id=user_id,
             )
             # run_consultation commits; refresh req
             db.refresh(req)
             db.refresh(child)
+            if child.status != TaskStatus.COMPLETED.value:
+                raise ValueError(child.result or "Delegation child task did not complete.")
             payload = {
                 "delegation_id": req.id,
                 "child_task_id": child.id,

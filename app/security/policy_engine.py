@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from typing import Any
+import math
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -72,7 +73,8 @@ def _as_number(value: Any) -> float | None:
     if value is None:
         return None
     try:
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else None
     except (TypeError, ValueError):
         return None
 
@@ -97,6 +99,9 @@ def conditions_match(
     detail: dict[str, Any] = {}
     if not conditions:
         return True, detail
+    supported = {"amount_gt", "amount_gte", "amount_lt", "amount_lte", "currency", "risk", "action", "department", "department_id", "customer", "customer_id"}
+    if set(conditions) - supported:
+        return False, {"unsupported_conditions": sorted(set(conditions) - supported)}
 
     args = dict(arguments or {})
     ctx = dict(context or {})
@@ -333,6 +338,7 @@ class PolicyEngine:
 
         agent = self.db.get(AgentInstance, agent_instance_id)
         policies = self._load_policies(company_id)
+        has_company_rule = False
 
         for policy in policies:
             configuration = dict(policy.configuration or {})
@@ -357,6 +363,7 @@ class PolicyEngine:
                 continue
 
             conditions = configuration.get("conditions") or {}
+            has_company_rule = True
             matched, cond_detail = conditions_match(
                 conditions, arguments, context=context
             )
@@ -403,7 +410,7 @@ class PolicyEngine:
             )
 
         # Fallback: agent instance snapshot policies
-        if agent and agent.company_id == company_id:
+        if agent and agent.company_id == company_id and not has_company_rule:
             agent_policies = dict(agent.policies or {})
             if tool_name in agent_policies:
                 effect = _normalize_effect(agent_policies.get(tool_name))
@@ -447,15 +454,15 @@ class PolicyEngine:
                 {
                     "policy_id": None,
                     "policy_name": "default",
-                    "effect": "allow",
+                    "effect": "deny",
                     "skipped": False,
                     "skip_reason": None,
                 }
             )
 
         return PolicyDecision(
-            effect="allow",
-            reason=f"No explicit policy matched tool '{tool_name}'.",
+            effect="deny",
+            reason=f"No explicit policy matched tool '{tool_name}'; denied by default.",
             considered_policies=considered if with_trail else [],
         )
 

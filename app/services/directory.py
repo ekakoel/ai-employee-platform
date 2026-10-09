@@ -77,7 +77,8 @@ def agent_capability_card(
     slug = catalog.slug if catalog else None
 
     skills = list(agent.skills or [])
-    tools = list(agent.allowed_tools or [])
+    from app.services.grounding import authorized_tools
+    tools = authorized_tools(agent)
     scope = list(agent.scope or [])
 
     formal = load_assigned_skills(
@@ -86,6 +87,9 @@ def agent_capability_card(
         agent_instance_id=agent.id,
     )
     skill_slugs = [s.slug for s in formal]
+    if formal:
+        from app.services.skills import skill_tool_union
+        tools = [name for name in tools if name in skill_tool_union(formal)]
     for s in skill_slugs:
         if s not in skills:
             skills.append(s)
