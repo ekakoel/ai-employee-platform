@@ -423,6 +423,21 @@
     }
   }
 
+
+  /** Job 45 — after login/connect, reload durable inventory into process connector. */
+  async function bootstrapSessionEnvironment() {
+    if (!state.companyId) return;
+    try {
+      await api(`/companies/${state.companyId}/inventory/hydrate`, {
+        method: "POST",
+        body: "{}",
+        skipSidebarRefresh: true,
+      });
+    } catch (_) {
+      // No agent.manage or empty inventory — ignore
+    }
+  }
+
   async function applyAuthSession(body) {
     state.companyId = body.company_id;
     state.userId = body.user_id;
@@ -445,6 +460,7 @@
     if (!state.permissions.length) await loadMeProfile();
     applyNavGating();
     setConnected(true);
+    await bootstrapSessionEnvironment();
     await refreshInboxBadge();
     showView(defaultLandingView());
   }
@@ -524,6 +540,7 @@
       }
       applyNavGating();
       setConnected(true);
+      await bootstrapSessionEnvironment();
       await refreshInboxBadge();
       showView(defaultLandingView());
       
@@ -569,6 +586,7 @@
       await loadMeProfile();
       applyNavGating();
       setConnected(true);
+      await bootstrapSessionEnvironment();
       await refreshInboxBadge();
       showView(defaultLandingView());
       log.textContent = "Connected.";
@@ -2039,6 +2057,7 @@ async function loadDepartments() {
       }
       applyNavGating();
       setConnected(true);
+      await bootstrapSessionEnvironment();
       await refreshInboxBadge();
       showView(defaultLandingView());
     } else {

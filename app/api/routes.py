@@ -4689,7 +4689,10 @@ def hydrate_company_inventory(
 ):
     """Reload DB inventory into process mock connector (after server restart)."""
     user = require_company_user(db, company_id, x_user_id)
-    require_permission(user, "agent.manage")
+    from app.services.access import user_permission_keys
+    keys = user_permission_keys(user)
+    if not (keys & {"agent.manage", "agent.read", "task.create"}):
+        raise HTTPException(status_code=403, detail="Permission denied: inventory hydrate")
     from app.services.inventory import hydrate_connector_from_db
     n = hydrate_connector_from_db(db, company_id)
     return {"hydrated": n}
