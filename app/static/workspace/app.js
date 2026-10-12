@@ -571,7 +571,7 @@
         }
       }
 
-      log.textContent += "\n\nWorkspace ready. Password: demo12345";
+      log.textContent += "\n\nWorkspace ready. Password: demo12345\nDemo accounts:\n  owner@demo.local (owner)\n  aiadmin@demo.local (ai_admin)\n  reservation@demo.local (reservation)\n  manager@demo.local (manager)\n  contracts@demo.local (contract_manager)\n  admin@demo.local (administration)";
     } catch (err) {
       log.textContent = "Quick start failed: " + err.message;
     }

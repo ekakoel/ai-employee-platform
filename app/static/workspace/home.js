@@ -77,6 +77,58 @@
     return common;
   }
 
+
+  function buildDemoChecklist({ agents, tasks, inventoryCount, knowledgeCount, approvals }) {
+    const activeAgents = (agents || []).filter((a) => a.status === "active" || !a.status);
+    const inv = inventoryCount == null ? null : inventoryCount;
+    const know = knowledgeCount == null ? null : knowledgeCount;
+    const openTasks = (tasks || []).filter((t) => ["pending", "running", "waiting_approval"].includes(t.status));
+    const items = [
+      {
+        id: "agents",
+        ok: activeAgents.length >= 1,
+        label: "At least one AI employee hired",
+        detail: activeAgents.length ? `${activeAgents.length} active` : "Hire from Agents or run Demo playbook",
+        action: { view: "agents", title: "Open agents" },
+      },
+      {
+        id: "inventory",
+        ok: inv == null ? false : inv >= 1,
+        label: "Reservation inventory seeded",
+        detail: inv == null ? "Unavailable" : inv >= 1 ? `${inv} product(s)` : "Seed inventory or run playbook",
+        action: { view: "inventory", title: "Open inventory" },
+      },
+      {
+        id: "knowledge",
+        ok: know == null ? true : true, // optional — show status only
+        optional: true,
+        label: "Knowledge base (optional)",
+        detail: know == null ? "Unavailable" : know >= 1 ? `${know} item(s)` : "Upload a contract extract when ready",
+        action: { view: "knowledge", title: "Open knowledge" },
+      },
+      {
+        id: "tasks",
+        ok: true,
+        optional: true,
+        label: "Task pipeline",
+        detail: `${(tasks || []).length} total · ${openTasks.length} open`,
+        action: { view: "tasks", title: "Open tasks" },
+      },
+      {
+        id: "approvals",
+        ok: true,
+        optional: true,
+        label: "Approvals queue",
+        detail: `${(approvals || []).filter((a) => a.status === "pending").length} pending`,
+        action: { view: "approvals", title: "Open approvals" },
+      },
+    ];
+    // inventory null treated as fail for required; knowledge optional always "ok" for readiness score
+    const required = items.filter((i) => !i.optional);
+    const ready = required.every((i) => i.ok);
+    return { items, ready, requiredOk: required.filter((i) => i.ok).length, requiredTotal: required.length };
+  }
+
   function create({ api, getSession, escapeHtml: esc, navigate, openTask, openResult }) {
     const $ = (id) => document.getElementById(id);
     let generation = 0;
@@ -148,6 +200,65 @@
           ).join("");
         }
         const showInv = ["owner", "ai_admin", "manager", "reservation"].includes(role);
+        // Job 53 — demo readiness checklist
+        let inventoryCount = null;
+        let knowledgeCount = null;
+        try {
+          const inv = await api(`/companies/${session.companyId}/inventory`);
+          inventoryCount = (inv.items || []).length;
+        } catch (_) { inventoryCount = null; }
+        try {
+          const know = await api(`/companies/${session.companyId}/knowledge`);
+          knowledgeCount = (know || []).length;
+        } catch (_) { knowledgeCount = null; }
+
+        const demo = buildDemoChecklist({
+          agents: data.agents || [],
+          tasks: data.tasks || [],
+          inventoryCount,
+          knowledgeCount,
+          approvals: data.approvals || [],
+        });
+        if ($("homeDemoScore")) {
+          $("homeDemoScore").textContent = demo.ready
+            ? "Ready"
+            : `${demo.requiredOk}/${demo.requiredTotal} required`;
+        }
+        if ($("homeDemoChecklist")) {
+          const banner = demo.ready
+            ? `<div class="home-demo-ready">Workspace is demo-ready. Try: Demo playbook → Run execute → Results.</div>`
+            : `<div class="home-demo-not-ready">Not fully ready. Complete the required checks below (or click Run demo playbook).</div>`;
+          $("homeDemoChecklist").innerHTML =
+            banner +
+            demo.items
+              .map((item) => {
+                const mark = item.ok ? "✓" : "✗";
+                const cls = item.ok ? "demo-check-ok" : "demo-check-bad";
+                const opt = item.optional ? " <span class=\"muted\">(optional)</span>" : "";
+                return `<div class="demo-check-row">
+              <span class="mark ${cls}">${mark}</span>
+              <div><strong>${esc(item.label)}</strong>${opt}<div class="meta">${esc(item.detail)}</div></div>
+              <button type="button" class="link-btn fix" data-home-view="${esc(item.action.view)}">${esc(item.action.title)}</button>
+            </div>`;
+              })
+              .join("");
+        }
+        if ($("btnHomeDemoRefresh")) $("btnHomeDemoRefresh").onclick = () => load();
+        if ($("btnHomeDemoPlaybook")) {
+          $("btnHomeDemoPlaybook").onclick = async () => {
+            try {
+              const res = await api(`/companies/${session.companyId}/demo/playbook-reservation`, {
+                method: "POST",
+                body: "{}",
+              });
+              if (res.task_id) openTask({ id: res.task_id });
+              await load();
+            } catch (err) {
+              alert(err.message);
+            }
+          };
+        }
+
         if ($("homeInventorySection")) $("homeInventorySection").classList.toggle("hidden", !showInv);
         if (showInv && $("homeInventoryStatus")) {
           try {
@@ -201,7 +312,7 @@
     }
     function reset() {
       generation++;
-      ["homeStats", "homeInbox", "homeProgress", "homeRecent", "homeAgents", "homeQuickActions", "homeInventoryStatus"].forEach((id) => { if ($(id)) $(id).textContent = ""; });
+      ["homeStats", "homeInbox", "homeProgress", "homeRecent", "homeAgents", "homeQuickActions", "homeInventoryStatus", "homeDemoChecklist"].forEach((id) => { if ($(id)) $(id).textContent = ""; });
       $("homeGreeting").textContent = "Workspace overview";
       $("homeUpdated").textContent = "";
       $("homeNotice").textContent = "";
@@ -211,7 +322,7 @@
     $("btnRefreshHome").onclick = load;
     return { load, reset };
   }
-  const exports = { summarize, create };
+  const exports = { summarize, create, buildDemoChecklist };
   if (typeof module !== "undefined" && module.exports) module.exports = exports;
   else root.WorkspaceHome = exports;
 })(globalThis);
