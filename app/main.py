@@ -66,6 +66,25 @@ def human_ai_workspace():
     return FileResponse(index)
 
 
+
+AUTH_DIR = Path(__file__).resolve().parent / "static" / "auth"
+
+
+@app.get("/forgot-password", response_class=HTMLResponse)
+@app.get("/forgot-password/", response_class=HTMLResponse)
+def forgot_password_page():
+    """Job 59 — standalone forgot / reset password page."""
+    path = AUTH_DIR / "forgot-password.html"
+    return FileResponse(path)
+
+
+@app.get("/reset-password", response_class=HTMLResponse)
+@app.get("/reset-password/", response_class=HTMLResponse)
+def reset_password_page():
+    """Alias: same UI; supports ?token= query for emailed links."""
+    path = AUTH_DIR / "forgot-password.html"
+    return FileResponse(path)
+
 @app.get("/developer", response_class=HTMLResponse)
 @app.get("/developer/", response_class=HTMLResponse)
 def developer_console():
@@ -81,6 +100,7 @@ def health():
         "env": settings.app_env,
         "workspace": "/workspace",
         "developer": "/developer",
+        "forgot_password": "/forgot-password",
     }
 
 

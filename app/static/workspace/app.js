@@ -635,11 +635,20 @@
     if (saved && $("loginRemember")) $("loginRemember").checked = true;
   } catch (_) {}
 
-  if ($("btnForgotPassword")) {
+  if ($("btnForgotPassword") && $("btnForgotPassword").tagName === "BUTTON") {
     $("btnForgotPassword").onclick = () => {
       if ($("forgotPanel")) $("forgotPanel").classList.remove("hidden");
       if ($("forgotEmail") && $("loginEmail")) $("forgotEmail").value = $("loginEmail").value;
     };
+  } else if ($("btnForgotPassword") && $("btnForgotPassword").tagName === "A" && $("loginEmail")) {
+    // Pass email to dedicated page
+    $("btnForgotPassword").addEventListener("click", (e) => {
+      const email = ($("loginEmail").value || "").trim();
+      if (email) {
+        e.preventDefault();
+        location.href = "/forgot-password?email=" + encodeURIComponent(email);
+      }
+    });
   }
   if ($("btnBackToLogin")) {
     $("btnBackToLogin").onclick = () => {
