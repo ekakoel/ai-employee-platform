@@ -460,7 +460,7 @@
     if (body.refresh_token) localStorage.setItem("ws_refreshToken", body.refresh_token);
     if ($("companyId")) $("companyId").value = state.companyId;
     if ($("userId")) $("userId").value = state.userId;
-    if ($("loginCompanyId")) (($("registerCompanyId") && $("registerCompanyId").value) || $("loginCompanyId").value) = state.companyId;
+    if ($("loginCompanyId")) $("loginCompanyId").value = state.companyId;
     if (!state.permissions.length) await loadMeProfile();
     applyNavGating();
     setConnected(true);
@@ -531,7 +531,7 @@
         log.textContent += "\nHire: " + e.message;
       }
 
-      if ($("loginCompanyId")) (($("registerCompanyId") && $("registerCompanyId").value) || $("loginCompanyId").value) = co.id;
+      if ($("loginCompanyId")) $("loginCompanyId").value = co.id;
       if ($("loginEmail")) $("loginEmail").value = "owner@demo.local";
       if ($("loginPassword")) $("loginPassword").value = "demo12345";
       if ($("companyId")) $("companyId").value = co.id;
@@ -2512,7 +2512,7 @@ async function loadDepartments() {
   if ($("apiBase")) $("apiBase").value = state.apiBase;
   if ($("companyId")) $("companyId").value = state.companyId;
   if ($("userId")) $("userId").value = state.userId;
-  if ($("loginCompanyId")) (($("registerCompanyId") && $("registerCompanyId").value) || $("loginCompanyId").value) = state.companyId;
+  if ($("loginCompanyId")) $("loginCompanyId").value = state.companyId;
 
   (async function bootSession() {
     applyNavGating();
