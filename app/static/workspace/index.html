@@ -466,7 +466,16 @@
           </div>
           <div id="knowResults" class="list"></div>
         </div>
-      </section>
+      
+        <div class="card">
+          <h3>Upload document → knowledge (file not stored)</h3>
+          <p class="muted">PDF, Word, Excel, text are extracted into company knowledge. Original file is discarded after extract.</p>
+          <input type="file" id="knowledgeIngestFile" accept=".pdf,.docx,.xlsx,.txt,application/pdf" />
+          <input id="knowledgeIngestTitle" placeholder="Title (optional)" />
+          <button id="btnKnowledgeIngest" class="primary">Extract to knowledge</button>
+          <pre id="knowledgeIngestLog" class="log"></pre>
+        </div>
+</section>
 
       <!-- DELEGATION -->
       <section id="view-delegation" class="view">
@@ -626,7 +635,7 @@
       <section id="view-users" class="view">
         <div class="card">
           <h2>Users &amp; roles</h2>
-          <p class="muted">Invite company members and assign roles (owner, ai_admin, manager, reservation, member).</p>
+          <p class="muted">Invite company members and assign roles (owner, ai_admin, manager, reservation, contract_manager, administration, member). Platform developers use /developer — not a company role.</p>
           <div class="grid-2">
             <label>Name
               <input id="userNameInput" placeholder="Full name" />

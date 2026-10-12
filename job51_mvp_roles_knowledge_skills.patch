@@ -1,0 +1,371 @@
+diff --git a/app/api/routes.py b/app/api/routes.py
+index c28f84b..29b0ac0 100644
+--- a/app/api/routes.py
++++ b/app/api/routes.py
+@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
+ 
+ from app.core.database import get_db
+ from app.knowledge.service import save_document
++# KnowledgeRead imported via schemas block
+ from app.knowledge.indexing import replace_chunks_for_item, replace_chunks_for_document
+ from app.knowledge.retrieval import (
+     active_agent_memories,
+@@ -1194,7 +1195,12 @@ def create_company_skill(
+     x_user_id: str | None = Header(default=None),
+ ):
+     user = require_company_user(db, company_id, x_user_id)
+-    require_permission(user, "agent.manage")
++    # Job 51 — skill catalog upgrades are platform-developer only (not company roles)
++    if not bool(getattr(user, "is_platform_admin", False)):
++        raise HTTPException(
++            status_code=403,
++            detail="Only platform developers can create or upgrade skill catalog entries. Company roles may assign existing skills to agents.",
++        )
+ 
+     existing = db.scalar(
+         select(Skill).where(
+@@ -4406,6 +4412,71 @@ def list_audit_logs(
+     )
+ 
+ 
++
++@router.post(
++    "/companies/{company_id}/knowledge/ingest-extract",
++    response_model=KnowledgeRead,
++    status_code=status.HTTP_201_CREATED,
++)
++async def ingest_knowledge_extract(
++    company_id: str,
++    file: UploadFile = File(...),
++    title: str | None = None,
++    category: str = "document",
++    agent_instance_id: str | None = None,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    """Upload a document, extract text into knowledge, discard file bytes (no storage).
++
++    Supported: pdf, docx, xlsx, txt (via knowledge.extractor).
++    """
++    user = require_company_user(db, company_id, x_user_id)
++    require_permission(user, "knowledge.write")
++
++    data = await file.read()
++    if not data:
++        raise HTTPException(status_code=400, detail="Uploaded document is empty")
++
++    if agent_instance_id:
++        get_owned_agent_or_404(db, company_id, agent_instance_id)
++
++    from app.knowledge.service import ingest_document_to_knowledge
++
++    try:
++        item = ingest_document_to_knowledge(
++            db,
++            company_id=company_id,
++            data=data,
++            original_filename=file.filename or "document",
++            content_type=file.content_type or "application/octet-stream",
++            agent_instance_id=agent_instance_id,
++            created_by_user_id=user.id,
++            title=title,
++            category=category or "document",
++        )
++    except ValueError as exc:
++        raise HTTPException(status_code=400, detail=str(exc)) from exc
++
++    record_audit(
++        db,
++        company_id=company_id,
++        user_id=user.id,
++        action="knowledge.ingest_extract",
++        resource_type="knowledge",
++        resource_id=item.id,
++        status="success",
++        details={
++            "original_filename": file.filename,
++            "bytes_processed": len(data),
++            "storage": "none",
++        },
++    )
++    db.commit()
++    db.refresh(item)
++    return item
++
++
+ @router.post(
+     "/companies/{company_id}/knowledge/documents",
+     response_model=KnowledgeDocumentRead,
+diff --git a/app/knowledge/service.py b/app/knowledge/service.py
+index 52b7822..dfec09b 100644
+--- a/app/knowledge/service.py
++++ b/app/knowledge/service.py
+@@ -76,3 +76,52 @@ def save_document(
+     db.flush()
+ 
+     return document
++
++
++
++def ingest_document_to_knowledge(
++    db: Session,
++    *,
++    company_id: str,
++    data: bytes,
++    original_filename: str,
++    content_type: str | None = None,
++    agent_instance_id: str | None = None,
++    created_by_user_id: str | None = None,
++    title: str | None = None,
++    category: str = "document",
++):
++    """Extract text from an uploaded file and store **only** knowledge (item + chunks).
++
++    Original file bytes are **not** written to object storage or disk (MVP).
++    """
++    from app.models.entities import KnowledgeItem
++    from app.knowledge.indexing import replace_chunks_for_item
++
++    if not data:
++        raise ValueError("Uploaded document is empty")
++
++    extracted = extract_text(original_filename, data)
++    if not (extracted or "").strip():
++        raise ValueError("No extractable text found in document")
++
++    item_title = (title or original_filename or "Uploaded document").strip()[:300]
++    header = (
++        f"[Extracted from {original_filename or 'document'}; "
++        f"file not retained; {len(data)} bytes processed"
++        f"{'; by ' + created_by_user_id if created_by_user_id else ''}]"
++    )
++    body = f"{header}\n\n{extracted.strip()}"
++
++    item = KnowledgeItem(
++        company_id=company_id,
++        agent_instance_id=agent_instance_id,
++        title=item_title,
++        content=body,
++        category=(category or "document")[:100],
++        is_active=True,
++    )
++    db.add(item)
++    db.flush()
++    replace_chunks_for_item(db, item)
++    return item
+diff --git a/app/services/seed.py b/app/services/seed.py
+index 9aaf1b7..1c68e28 100644
+--- a/app/services/seed.py
++++ b/app/services/seed.py
+@@ -67,6 +67,26 @@ ROLE_PERMISSIONS = {
+         "task.read",
+         "approval.read",
+     },
++    # Administration — company back-office, users, usage (not AI catalog developer)
++    "administration": {
++        "agent.read",
++        "knowledge.read",
++        "task.read",
++        "approval.read",
++        "team.manage",
++        "usage.read",
++        "audit.read",
++        "governance.read",
++    },
++    # Contract manager — upload/read contracts & knowledge; operational tasks
++    "contract_manager": {
++        "agent.read",
++        "knowledge.read",
++        "knowledge.write",
++        "task.create",
++        "task.read",
++        "approval.read",
++    },
+     "member": {
+         "agent.read",
+         "knowledge.read",
+@@ -75,6 +95,8 @@ ROLE_PERMISSIONS = {
+     },
+ }
+ 
++# Platform developer is NOT listed here — uses is_platform_admin + /developer console.
++
+ VALID_COMPANY_ROLES = frozenset(ROLE_PERMISSIONS.keys())
+ 
+ 
+diff --git a/app/static/workspace/app.js b/app/static/workspace/app.js
+index e8ab504..b9dc4e5 100644
+--- a/app/static/workspace/app.js
++++ b/app/static/workspace/app.js
+@@ -50,7 +50,7 @@
+     users: ["team.manage"],
+     departments: ["agent.manage", "team.manage"],
+     teams: ["agent.manage", "team.manage"],
+-    skills: ["agent.manage", "agent.read"],
++    skills: ["agent.manage", "agent.read"],  // assign only; catalog upgrade = platform developer
+     learning: ["agent.manage", "knowledge.write"],
+     usage: ["usage.read", "team.manage"],
+     audit: ["audit.read"],
+@@ -68,6 +68,8 @@
+     ai_admin: "agents",
+     manager: "inbox",
+     reservation: "chat",
++    contract_manager: "knowledge",
++    administration: "users",
+     member: "chat",
+   };
+ 
+@@ -1754,7 +1756,7 @@
+           <div class="meta">${escapeHtml(u.email)} · role: <code>${escapeHtml(u.role || u.role_id)}</code> · ${escapeHtml(u.status || "")}</div>
+           <div class="row" style="margin-top:.35rem">
+             <select data-user-role="${escapeHtml(u.id)}">
+-              ${["owner","ai_admin","manager","reservation","member"].map((r) =>
++              ${["owner","ai_admin","manager","reservation","contract_manager","administration","member"].map((r) =>
+                 `<option value="${r}" ${u.role === r ? "selected" : ""}>${r}</option>`
+               ).join("")}
+             </select>
+@@ -2225,3 +2227,37 @@ async function loadDepartments() {
+     }
+   })();
+ })();
++
++  if ($("btnKnowledgeIngest"))
++    $("btnKnowledgeIngest").onclick = async () => {
++      const log = $("knowledgeIngestLog");
++      const fileInput = $("knowledgeIngestFile");
++      if (!fileInput || !fileInput.files || !fileInput.files[0]) {
++        if (log) log.textContent = "Choose a file first";
++        return;
++      }
++      try {
++        const fd = new FormData();
++        fd.append("file", fileInput.files[0]);
++        const title = ($("knowledgeIngestTitle") && $("knowledgeIngestTitle").value.trim()) || "";
++        if (title) fd.append("title", title);
++        const base = (state.apiBase || "/api/v1").replace(/\/$/, "");
++        const res = await fetch(base + `/companies/${state.companyId}/knowledge/ingest-extract`, {
++          method: "POST",
++          headers: {
++            ...(state.accessToken ? { Authorization: "Bearer " + state.accessToken } : {}),
++            ...(state.userId ? { "X-User-ID": state.userId } : {}),
++          },
++          body: fd,
++        });
++        const text = await res.text();
++        let data;
++        try { data = JSON.parse(text); } catch { data = text; }
++        if (!res.ok) throw new Error(typeof data === "object" ? (data.detail || JSON.stringify(data)) : text);
++        if (log) log.textContent = "Knowledge saved (file not retained): " + (data.title || data.id);
++        if (typeof loadKnowledge === "function") loadKnowledge();
++      } catch (err) {
++        if (log) log.textContent = err.message;
++      }
++    };
++
+diff --git a/app/static/workspace/index.html b/app/static/workspace/index.html
+index 8cc0dc4..1f8e77a 100644
+--- a/app/static/workspace/index.html
++++ b/app/static/workspace/index.html
+@@ -466,7 +466,16 @@
+           </div>
+           <div id="knowResults" class="list"></div>
+         </div>
+-      </section>
++      
++        <div class="card">
++          <h3>Upload document → knowledge (file not stored)</h3>
++          <p class="muted">PDF, Word, Excel, text are extracted into company knowledge. Original file is discarded after extract.</p>
++          <input type="file" id="knowledgeIngestFile" accept=".pdf,.docx,.xlsx,.txt,application/pdf" />
++          <input id="knowledgeIngestTitle" placeholder="Title (optional)" />
++          <button id="btnKnowledgeIngest" class="primary">Extract to knowledge</button>
++          <pre id="knowledgeIngestLog" class="log"></pre>
++        </div>
++</section>
+ 
+       <!-- DELEGATION -->
+       <section id="view-delegation" class="view">
+@@ -626,7 +635,7 @@
+       <section id="view-users" class="view">
+         <div class="card">
+           <h2>Users &amp; roles</h2>
+-          <p class="muted">Invite company members and assign roles (owner, ai_admin, manager, reservation, member).</p>
++          <p class="muted">Invite company members and assign roles (owner, ai_admin, manager, reservation, contract_manager, administration, member). Platform developers use /developer — not a company role.</p>
+           <div class="grid-2">
+             <label>Name
+               <input id="userNameInput" placeholder="Full name" />
+diff --git a/tests/test_mvp_roles_knowledge_job51.py b/tests/test_mvp_roles_knowledge_job51.py
+new file mode 100644
+index 0000000..4a369d7
+--- /dev/null
++++ b/tests/test_mvp_roles_knowledge_job51.py
+@@ -0,0 +1,70 @@
++"""Job 51 — company role matrix, ephemeral knowledge ingest, platform-only skill create."""
++
++import io
++import uuid
++
++from fastapi.testclient import TestClient
++
++from app.main import app
++from app.services.seed import ROLE_PERMISSIONS, VALID_COMPANY_ROLES
++
++client = TestClient(app)
++
++
++def test_new_company_roles_exist():
++    assert "contract_manager" in VALID_COMPANY_ROLES
++    assert "administration" in VALID_COMPANY_ROLES
++    assert "knowledge.write" in ROLE_PERMISSIONS["contract_manager"]
++    assert "team.manage" in ROLE_PERMISSIONS["administration"]
++    assert "knowledge.write" not in ROLE_PERMISSIONS["reservation"]
++
++
++def test_ingest_extract_stores_knowledge_not_file():
++    suffix = uuid.uuid4().hex[:8]
++    co = client.post("/api/v1/companies", json={"name": f"Know {suffix}"}).json()
++    owner = client.post(
++        f"/api/v1/companies/{co['id']}/users",
++        json={
++            "name": "CM",
++            "email": f"cm-{suffix}@k51.test",
++            "role": "contract_manager",
++            "password": "demo12345",
++        },
++    ).json()
++    headers = {"X-User-ID": owner["id"]}
++    content = b"Hotel partnership contract. Alila rate IDR 1850000. Valid 2026."
++    res = client.post(
++        f"/api/v1/companies/{co['id']}/knowledge/ingest-extract",
++        headers=headers,
++        files={"file": ("contract.txt", io.BytesIO(content), "text/plain")},
++        data={"title": "Alila contract extract"},
++    )
++    assert res.status_code == 201, res.text
++    body = res.json()
++    assert body["title"] == "Alila contract extract"
++    assert "Alila" in body["content"]
++    assert "not retained" in body["content"].lower() or "not retained" in body["content"]
++
++
++def test_skill_create_blocked_for_company_admin():
++    suffix = uuid.uuid4().hex[:8]
++    co = client.post("/api/v1/companies", json={"name": f"Skill {suffix}"}).json()
++    admin = client.post(
++        f"/api/v1/companies/{co['id']}/users",
++        json={
++            "name": "AI Admin",
++            "email": f"ai-{suffix}@k51.test",
++            "role": "ai_admin",
++            "password": "demo12345",
++        },
++    ).json()
++    res = client.post(
++        f"/api/v1/companies/{co['id']}/skills",
++        headers={"X-User-ID": admin["id"]},
++        json={
++            "slug": f"custom-{suffix}",
++            "name": "Custom skill",
++            "description": "should fail",
++        },
++    )
++    assert res.status_code == 403, res.text

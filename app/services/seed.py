@@ -67,6 +67,26 @@ ROLE_PERMISSIONS = {
         "task.read",
         "approval.read",
     },
+    # Administration — company back-office, users, usage (not AI catalog developer)
+    "administration": {
+        "agent.read",
+        "knowledge.read",
+        "task.read",
+        "approval.read",
+        "team.manage",
+        "usage.read",
+        "audit.read",
+        "governance.read",
+    },
+    # Contract manager — upload/read contracts & knowledge; operational tasks
+    "contract_manager": {
+        "agent.read",
+        "knowledge.read",
+        "knowledge.write",
+        "task.create",
+        "task.read",
+        "approval.read",
+    },
     "member": {
         "agent.read",
         "knowledge.read",
@@ -74,6 +94,8 @@ ROLE_PERMISSIONS = {
         "task.read",
     },
 }
+
+# Platform developer is NOT listed here — uses is_platform_admin + /developer console.
 
 VALID_COMPANY_ROLES = frozenset(ROLE_PERMISSIONS.keys())
 

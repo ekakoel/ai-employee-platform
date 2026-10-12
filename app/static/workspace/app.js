@@ -50,7 +50,7 @@
     users: ["team.manage"],
     departments: ["agent.manage", "team.manage"],
     teams: ["agent.manage", "team.manage"],
-    skills: ["agent.manage", "agent.read"],
+    skills: ["agent.manage", "agent.read"],  // assign only; catalog upgrade = platform developer
     learning: ["agent.manage", "knowledge.write"],
     usage: ["usage.read", "team.manage"],
     audit: ["audit.read"],
@@ -68,6 +68,8 @@
     ai_admin: "agents",
     manager: "inbox",
     reservation: "chat",
+    contract_manager: "knowledge",
+    administration: "users",
     member: "chat",
   };
 
@@ -1754,7 +1756,7 @@
           <div class="meta">${escapeHtml(u.email)} · role: <code>${escapeHtml(u.role || u.role_id)}</code> · ${escapeHtml(u.status || "")}</div>
           <div class="row" style="margin-top:.35rem">
             <select data-user-role="${escapeHtml(u.id)}">
-              ${["owner","ai_admin","manager","reservation","member"].map((r) =>
+              ${["owner","ai_admin","manager","reservation","contract_manager","administration","member"].map((r) =>
                 `<option value="${r}" ${u.role === r ? "selected" : ""}>${r}</option>`
               ).join("")}
             </select>
@@ -2225,3 +2227,37 @@ async function loadDepartments() {
     }
   })();
 })();
+
+  if ($("btnKnowledgeIngest"))
+    $("btnKnowledgeIngest").onclick = async () => {
+      const log = $("knowledgeIngestLog");
+      const fileInput = $("knowledgeIngestFile");
+      if (!fileInput || !fileInput.files || !fileInput.files[0]) {
+        if (log) log.textContent = "Choose a file first";
+        return;
+      }
+      try {
+        const fd = new FormData();
+        fd.append("file", fileInput.files[0]);
+        const title = ($("knowledgeIngestTitle") && $("knowledgeIngestTitle").value.trim()) || "";
+        if (title) fd.append("title", title);
+        const base = (state.apiBase || "/api/v1").replace(/\/$/, "");
+        const res = await fetch(base + `/companies/${state.companyId}/knowledge/ingest-extract`, {
+          method: "POST",
+          headers: {
+            ...(state.accessToken ? { Authorization: "Bearer " + state.accessToken } : {}),
+            ...(state.userId ? { "X-User-ID": state.userId } : {}),
+          },
+          body: fd,
+        });
+        const text = await res.text();
+        let data;
+        try { data = JSON.parse(text); } catch { data = text; }
+        if (!res.ok) throw new Error(typeof data === "object" ? (data.detail || JSON.stringify(data)) : text);
+        if (log) log.textContent = "Knowledge saved (file not retained): " + (data.title || data.id);
+        if (typeof loadKnowledge === "function") loadKnowledge();
+      } catch (err) {
+        if (log) log.textContent = err.message;
+      }
+    };
+

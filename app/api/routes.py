@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.knowledge.service import save_document
+# KnowledgeRead imported via schemas block
 from app.knowledge.indexing import replace_chunks_for_item, replace_chunks_for_document
 from app.knowledge.retrieval import (
     active_agent_memories,
@@ -1194,7 +1195,12 @@ def create_company_skill(
     x_user_id: str | None = Header(default=None),
 ):
     user = require_company_user(db, company_id, x_user_id)
-    require_permission(user, "agent.manage")
+    # Job 51 — skill catalog upgrades are platform-developer only (not company roles)
+    if not bool(getattr(user, "is_platform_admin", False)):
+        raise HTTPException(
+            status_code=403,
+            detail="Only platform developers can create or upgrade skill catalog entries. Company roles may assign existing skills to agents.",
+        )
 
     existing = db.scalar(
         select(Skill).where(
@@ -4404,6 +4410,71 @@ def list_audit_logs(
             )
         ).all()
     )
+
+
+
+@router.post(
+    "/companies/{company_id}/knowledge/ingest-extract",
+    response_model=KnowledgeRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def ingest_knowledge_extract(
+    company_id: str,
+    file: UploadFile = File(...),
+    title: str | None = None,
+    category: str = "document",
+    agent_instance_id: str | None = None,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """Upload a document, extract text into knowledge, discard file bytes (no storage).
+
+    Supported: pdf, docx, xlsx, txt (via knowledge.extractor).
+    """
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "knowledge.write")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Uploaded document is empty")
+
+    if agent_instance_id:
+        get_owned_agent_or_404(db, company_id, agent_instance_id)
+
+    from app.knowledge.service import ingest_document_to_knowledge
+
+    try:
+        item = ingest_document_to_knowledge(
+            db,
+            company_id=company_id,
+            data=data,
+            original_filename=file.filename or "document",
+            content_type=file.content_type or "application/octet-stream",
+            agent_instance_id=agent_instance_id,
+            created_by_user_id=user.id,
+            title=title,
+            category=category or "document",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=user.id,
+        action="knowledge.ingest_extract",
+        resource_type="knowledge",
+        resource_id=item.id,
+        status="success",
+        details={
+            "original_filename": file.filename,
+            "bytes_processed": len(data),
+            "storage": "none",
+        },
+    )
+    db.commit()
+    db.refresh(item)
+    return item
 
 
 @router.post(

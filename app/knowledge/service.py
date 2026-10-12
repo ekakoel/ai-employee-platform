@@ -76,3 +76,52 @@ def save_document(
     db.flush()
 
     return document
+
+
+
+def ingest_document_to_knowledge(
+    db: Session,
+    *,
+    company_id: str,
+    data: bytes,
+    original_filename: str,
+    content_type: str | None = None,
+    agent_instance_id: str | None = None,
+    created_by_user_id: str | None = None,
+    title: str | None = None,
+    category: str = "document",
+):
+    """Extract text from an uploaded file and store **only** knowledge (item + chunks).
+
+    Original file bytes are **not** written to object storage or disk (MVP).
+    """
+    from app.models.entities import KnowledgeItem
+    from app.knowledge.indexing import replace_chunks_for_item
+
+    if not data:
+        raise ValueError("Uploaded document is empty")
+
+    extracted = extract_text(original_filename, data)
+    if not (extracted or "").strip():
+        raise ValueError("No extractable text found in document")
+
+    item_title = (title or original_filename or "Uploaded document").strip()[:300]
+    header = (
+        f"[Extracted from {original_filename or 'document'}; "
+        f"file not retained; {len(data)} bytes processed"
+        f"{'; by ' + created_by_user_id if created_by_user_id else ''}]"
+    )
+    body = f"{header}\n\n{extracted.strip()}"
+
+    item = KnowledgeItem(
+        company_id=company_id,
+        agent_instance_id=agent_instance_id,
+        title=item_title,
+        content=body,
+        category=(category or "document")[:100],
+        is_active=True,
+    )
+    db.add(item)
+    db.flush()
+    replace_chunks_for_item(db, item)
+    return item
