@@ -290,7 +290,19 @@ def get_owned_agent_or_404(
 def create_company(
     payload: CompanyCreate,
     db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
 ):
+    """Create a company tenant.
+
+    Job 57 — When ``public_company_create`` is False (production), only platform
+    developers may create companies. Local/dev/pytest may leave the flag True.
+    Prefer ``POST /api/v1/admin/companies`` for provisioned onboarding.
+    """
+    from app.core.config import settings as app_settings
+    if not app_settings.public_company_create:
+        from app.services.platform_admin import require_platform_admin
+        require_platform_admin(db, x_user_id)
+
     existing_company = db.scalar(
         select(Company).where(
             Company.name == payload.name

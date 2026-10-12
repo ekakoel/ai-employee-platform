@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     # Job 23 — platform admin / support
     # Comma-separated emails granted platform admin on login/bootstrap
     platform_admin_emails: str = ""
+    # Job 57: when False, only platform developers may POST /companies
+    # Keep True for local pytest; set PUBLIC_COMPANY_CREATE=false in production.
+    public_company_create: bool = True
     allow_impersonation: bool = False
 
     log_level: str = "INFO"

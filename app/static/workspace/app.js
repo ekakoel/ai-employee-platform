@@ -71,6 +71,7 @@
     contract_manager: "knowledge",
     administration: "users",
     member: "chat",
+    accounting: "home",
   };
 
   function hasPermission(key) {
@@ -459,7 +460,7 @@
     if (body.refresh_token) localStorage.setItem("ws_refreshToken", body.refresh_token);
     if ($("companyId")) $("companyId").value = state.companyId;
     if ($("userId")) $("userId").value = state.userId;
-    if ($("loginCompanyId")) $("loginCompanyId").value = state.companyId;
+    if ($("loginCompanyId")) (($("registerCompanyId") && $("registerCompanyId").value) || $("loginCompanyId").value) = state.companyId;
     if (!state.permissions.length) await loadMeProfile();
     applyNavGating();
     setConnected(true);
@@ -530,7 +531,7 @@
         log.textContent += "\nHire: " + e.message;
       }
 
-      if ($("loginCompanyId")) $("loginCompanyId").value = co.id;
+      if ($("loginCompanyId")) (($("registerCompanyId") && $("registerCompanyId").value) || $("loginCompanyId").value) = co.id;
       if ($("loginEmail")) $("loginEmail").value = "owner@demo.local";
       if ($("loginPassword")) $("loginPassword").value = "demo12345";
       if ($("companyId")) $("companyId").value = co.id;
@@ -607,32 +608,22 @@
   
 
   
-  if ($("btnCreateCompany"))
+  // Job 57 — public workspace no longer creates companies (developer provisions)
+  if ($("btnCreateCompany")) {
     $("btnCreateCompany").onclick = async () => {
       const log = $("loginLog");
-      try {
-        const name = ($("newCompanyName") && $("newCompanyName").value.trim()) || "";
-        if (!name) throw new Error("Isi nama company baru");
-        const co = await api("/companies", {
-          method: "POST",
-          body: JSON.stringify({ name }),
-          skipAuth: true,
-        });
-        if ($("loginCompanyId")) $("loginCompanyId").value = co.id;
-        if ($("companyId")) $("companyId").value = co.id;
+      if (log) {
         log.textContent =
-          "Company dibuat.\nID: " + co.id +
-          "\n\nLanjut: isi Email + Password (min 8 karakter), lalu klik Register.\n" +
-          "Role default register = member. Untuk owner + demo agents, pakai Quick start.";
-      } catch (err) {
-        log.textContent = "Create company failed: " + err.message;
+          "Create company is restricted to platform developers.\n" +
+          "Open /developer → Provision company (platform admin required).";
       }
     };
+  }
 
   $("btnLogin").onclick = async () => {
     const log = $("loginLog");
     try {
-      const companyId = ($("loginCompanyId").value || $("companyId").value || "").trim();
+      const companyId = (($("loginCompanyId") && $("loginCompanyId").value) || ($("companyId") && $("companyId").value) || "").trim();
       const body = await api("/auth/login", {
         method: "POST",
         body: JSON.stringify({
@@ -650,25 +641,36 @@
   };
 
   $("btnRegister").onclick = async () => {
-    const log = $("loginLog");
+    const log = $("registerLog") || $("loginLog");
     try {
-      const companyId = ($("loginCompanyId").value || $("companyId").value || "").trim();
-      const email = $("loginEmail").value.trim();
+      const companyId = (
+        ($("registerCompanyId") && $("registerCompanyId").value) ||
+        ($("loginCompanyId") && $("loginCompanyId").value) ||
+        ""
+      ).trim();
+      const email = (($("registerEmail") && $("registerEmail").value) || ($("loginEmail") && $("loginEmail").value) || "").trim();
+      const name = (($("registerName") && $("registerName").value) || email.split("@")[0] || "User").trim();
+      const password = (($("registerPassword") && $("registerPassword").value) || ($("loginPassword") && $("loginPassword").value) || "");
+      let role = ($("registerRole") && $("registerRole").value) || "member";
+      // Self-register cannot elevate to owner/ai_admin/manager
+      if (["owner", "ai_admin", "manager"].includes(role)) role = "member";
       const body = await api("/auth/register", {
         method: "POST",
         body: JSON.stringify({
           company_id: companyId,
           email,
-          name: email.split("@")[0] || "User",
-          password: $("loginPassword").value,
-          role: "member",
+          name,
+          password,
+          role,
         }),
         skipAuth: true,
       });
-      log.textContent = "Registered " + (body.email || body.user_id);
-      await applyAuthSession(body);
+      if (log) log.textContent = "Registered " + (body.email || body.user_id) + " as " + role + ". You can Sign in.";
+      // Prefill login
+      if ($("loginCompanyId")) $("loginCompanyId").value = companyId;
+      if ($("loginEmail")) $("loginEmail").value = email;
     } catch (err) {
-      log.textContent = "Register failed: " + err.message;
+      if (log) log.textContent = "Register failed: " + err.message;
     }
   };
 
@@ -1858,7 +1860,7 @@
           <div class="meta">${escapeHtml(u.email)} · role: <code>${escapeHtml(u.role || u.role_id)}</code> · ${escapeHtml(u.status || "")}</div>
           <div class="row" style="margin-top:.35rem">
             <select data-user-role="${escapeHtml(u.id)}">
-              ${["owner","ai_admin","manager","reservation","contract_manager","administration","member"].map((r) =>
+              ${["owner","ai_admin","manager","reservation","contract_manager","administration","accounting","member"].map((r) =>
                 `<option value="${r}" ${u.role === r ? "selected" : ""}>${r}</option>`
               ).join("")}
             </select>
@@ -2307,11 +2309,113 @@ async function loadDepartments() {
     };
 
 
+  
+  // ----- Job 57: platform provision (developer workspace) -----
+  if ($("btnProvisionCompany")) {
+    $("btnProvisionCompany").onclick = async () => {
+      const log = $("provLog");
+      try {
+        if (!state.userId && !state.accessToken) {
+          throw new Error("Connect as platform admin first (Login or Connect IDs).");
+        }
+        const res = await api(`/admin/companies`, {
+          method: "POST",
+          body: JSON.stringify({
+            name: ($("provCompanyName") && $("provCompanyName").value.trim()) || "",
+            owner_name: ($("provOwnerName") && $("provOwnerName").value.trim()) || "Owner",
+            owner_email: ($("provOwnerEmail") && $("provOwnerEmail").value.trim()) || "",
+            owner_password: ($("provOwnerPassword") && $("provOwnerPassword").value) || "demo12345",
+          }),
+        });
+        if (log) {
+          log.textContent =
+            "Provisioned company " + res.company.id + "\nOwner: " + res.owner.email +
+            "\nGive Company ID + credentials to the owner for /workspace login.";
+        }
+        if (typeof loadAdminCompanies === "function") loadAdminCompanies();
+      } catch (err) {
+        if (log) log.textContent = err.message;
+      }
+    };
+  }
+
+  async function loadAdminCompanies() {
+    const list = $("adminCompanyList");
+    if (!list) return;
+    try {
+      const rows = await api(`/admin/companies`);
+      list.innerHTML =
+        (rows || [])
+          .map(
+            (c) => `<div class="item">
+          <strong>${escapeHtml(c.name)}</strong>
+          <div class="meta">${escapeHtml(c.id)} · users ${c.user_count} · ${c.is_active ? "active" : "disabled"}</div>
+          <div class="actions">
+            <button class="secondary btn-admin-users" data-id="${c.id}">Users</button>
+            <button class="secondary btn-admin-agents" data-id="${c.id}">AI employees</button>
+            <button class="secondary btn-admin-toggle" data-id="${c.id}" data-active="${c.is_active ? "1" : "0"}">${c.is_active ? "Disable" : "Enable"}</button>
+          </div>
+        </div>`
+          )
+          .join("") || `<div class="empty">No companies.</div>`;
+      document.querySelectorAll(".btn-admin-users").forEach((b) => {
+        b.onclick = async () => {
+          const detail = $("adminCompanyDetail");
+          try {
+            const data = await api(`/admin/companies/${b.dataset.id}/users`);
+            detail.innerHTML =
+              `<h4>${escapeHtml(data.company_name)} — human users</h4>` +
+              (data.users || [])
+                .map(
+                  (u) =>
+                    `<div class="item"><strong>${escapeHtml(u.name)}</strong>
+                    <div class="meta">${escapeHtml(u.email)} · ${escapeHtml(u.role || "")} · ${escapeHtml(u.status || "")}</div></div>`
+                )
+                .join("") || `<div class="empty">No users</div>`;
+          } catch (err) {
+            detail.innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+          }
+        };
+      });
+      document.querySelectorAll(".btn-admin-agents").forEach((b) => {
+        b.onclick = async () => {
+          const detail = $("adminCompanyDetail");
+          try {
+            const data = await api(`/admin/companies/${b.dataset.id}/agents`);
+            detail.innerHTML =
+              `<h4>AI employees</h4>` +
+              (data.agents || [])
+                .map(
+                  (a) =>
+                    `<div class="item"><strong>${escapeHtml(a.name)}</strong>
+                    <div class="meta">${escapeHtml(a.status)} · ${escapeHtml(a.id)}</div></div>`
+                )
+                .join("") || `<div class="empty">No agents</div>`;
+          } catch (err) {
+            detail.innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+          }
+        };
+      });
+      document.querySelectorAll(".btn-admin-toggle").forEach((b) => {
+        b.onclick = async () => {
+          const active = b.dataset.active === "1";
+          const path = active ? "disable" : "enable";
+          await api(`/admin/companies/${b.dataset.id}/${path}`, { method: "POST", body: "{}" });
+          await loadAdminCompanies();
+        };
+      });
+    } catch (err) {
+      list.innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+    }
+  }
+  if ($("btnAdminRefreshCompanies")) $("btnAdminRefreshCompanies").onclick = loadAdminCompanies;
+
+
   // ----- Boot -----
   if ($("apiBase")) $("apiBase").value = state.apiBase;
   if ($("companyId")) $("companyId").value = state.companyId;
   if ($("userId")) $("userId").value = state.userId;
-  if ($("loginCompanyId")) $("loginCompanyId").value = state.companyId;
+  if ($("loginCompanyId")) (($("registerCompanyId") && $("registerCompanyId").value) || $("loginCompanyId").value) = state.companyId;
 
   (async function bootSession() {
     applyNavGating();

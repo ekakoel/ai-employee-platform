@@ -15,6 +15,183 @@ from app.services.quotas import usage_summary
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
+from pydantic import BaseModel, Field
+
+
+class AdminCompanyCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=200)
+    owner_name: str = Field(default="Owner", min_length=1, max_length=200)
+    owner_email: str = Field(min_length=3, max_length=320)
+    owner_password: str = Field(default="demo12345", min_length=8, max_length=128)
+
+
+class AdminCompanyUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=200)
+    is_active: bool | None = None
+
+
+@router.post("/companies", status_code=201)
+def admin_create_company(
+    payload: AdminCompanyCreate,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    """Platform developer provisions a company + owner account."""
+    admin = require_platform_admin(db, x_user_id)
+    existing = db.scalar(select(Company).where(Company.name == payload.name))
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Company '{payload.name}' already exists.")
+
+    company = Company(name=payload.name)
+    db.add(company)
+    db.flush()
+    try:
+        from app.services.quotas import get_or_assign_plan
+        get_or_assign_plan(db, company.id)
+    except Exception:
+        pass
+
+    from app.services.seed import get_or_create_role
+    from app.core.passwords import hash_password
+
+    role = get_or_create_role(db, "owner")
+    try:
+        password_hash = hash_password(payload.owner_password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    owner = User(
+        company_id=company.id,
+        name=payload.owner_name,
+        email=payload.owner_email.strip().lower(),
+        role_id=role.id,
+        password_hash=password_hash,
+    )
+    db.add(owner)
+    db.flush()
+
+    record_audit(
+        db,
+        company_id=company.id,
+        user_id=admin.id,
+        action="admin.company.create",
+        resource_type="company",
+        resource_id=company.id,
+        status="success",
+        details={"owner_email": owner.email},
+    )
+    db.commit()
+    db.refresh(company)
+    db.refresh(owner)
+    return {
+        "company": {
+            "id": company.id,
+            "name": company.name,
+            "is_active": bool(getattr(company, "is_active", True)),
+        },
+        "owner": {
+            "id": owner.id,
+            "email": owner.email,
+            "name": owner.name,
+            "role": "owner",
+        },
+        "message": "Company provisioned. Owner can sign in on /workspace with email + password.",
+    }
+
+
+@router.patch("/companies/{company_id}")
+def admin_update_company(
+    company_id: str,
+    payload: AdminCompanyUpdate,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    admin = require_platform_admin(db, x_user_id)
+    company = db.get(Company, company_id)
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    if payload.name is not None:
+        company.name = payload.name
+    if payload.is_active is not None:
+        company.is_active = payload.is_active
+    record_audit(
+        db,
+        company_id=company_id,
+        user_id=admin.id,
+        action="admin.company.update",
+        resource_type="company",
+        resource_id=company_id,
+        status="success",
+        details=payload.model_dump(exclude_none=True),
+    )
+    db.commit()
+    return {
+        "id": company.id,
+        "name": company.name,
+        "is_active": bool(getattr(company, "is_active", True)),
+    }
+
+
+@router.get("/companies/{company_id}/users")
+def admin_list_company_users(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    require_platform_admin(db, x_user_id)
+    company = db.get(Company, company_id)
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    users = list(
+        db.scalars(select(User).where(User.company_id == company_id).order_by(User.created_at.desc())).all()
+    )
+    out = []
+    for u in users:
+        role_name = u.role.name if u.role else None
+        out.append(
+            {
+                "id": u.id,
+                "name": u.name,
+                "email": u.email,
+                "role": role_name,
+                "status": u.status,
+                "is_platform_admin": bool(getattr(u, "is_platform_admin", False)),
+            }
+        )
+    return {"company_id": company_id, "company_name": company.name, "users": out}
+
+
+@router.get("/companies/{company_id}/agents")
+def admin_list_company_agents(
+    company_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str | None = Header(default=None),
+):
+    require_platform_admin(db, x_user_id)
+    from app.models.entities import AgentInstance
+    company = db.get(Company, company_id)
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    agents = list(
+        db.scalars(
+            select(AgentInstance).where(AgentInstance.company_id == company_id)
+        ).all()
+    )
+    return {
+        "company_id": company_id,
+        "agents": [
+            {
+                "id": a.id,
+                "name": a.name,
+                "status": a.status,
+                "catalog_agent_id": a.catalog_agent_id,
+            }
+            for a in agents
+        ],
+    }
+
+
+
 
 @router.get("/companies")
 def admin_list_companies(

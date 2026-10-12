@@ -19,18 +19,15 @@
       </div>
 
       <div class="login-tabs">
-        <button type="button" class="tab" data-tab="quick">Quick start</button>
         <button type="button" class="tab active" data-tab="login">Login</button>
+        <button type="button" class="tab" data-tab="register">Register</button>
+        <button type="button" class="tab developer-only" data-tab="quick">Quick start</button>
         <button type="button" class="tab developer-only" data-tab="connect">Connect IDs</button>
-      </div>
-
-      <div id="tab-quick" class="tab-panel">
-        <p class="muted">Create a demo company, owner account, and hire sample AI employees in one click.</p>
-        <button id="btnQuickStart" class="primary block">Launch demo workspace</button>
-        <pre id="quickLog" class="log"></pre>
+        <button type="button" class="tab developer-only" data-tab="provision">Provision company</button>
       </div>
 
       <div id="tab-login" class="tab-panel active">
+        <p class="muted">Sign in with the company ID and account issued by your company owner or platform developer.</p>
         <label>Company ID
           <input id="loginCompanyId" placeholder="Company ID" autocomplete="organization" />
         </label>
@@ -40,16 +37,67 @@
         <label>Password
           <input id="loginPassword" type="password" placeholder="Password" autocomplete="current-password" />
         </label>
-        <div class="row">
-          <button id="btnLogin" class="primary">Sign in</button>
-          <button id="btnRegister" class="secondary">Register</button>
-        </div>
-        <p class="muted" style="margin-top:.75rem">Belum punya company? Isi nama company baru lalu buat, atau pakai tab Quick start.</p>
-        <label>New company name
-          <input id="newCompanyName" placeholder="e.g. Demo Travel Co" />
-        </label>
-        <button id="btnCreateCompany" class="secondary block">Create company</button>
+        <button id="btnLogin" class="primary block">Sign in</button>
         <pre id="loginLog" class="log"></pre>
+      </div>
+
+      <div id="tab-register" class="tab-panel">
+        <p class="muted">Join an <strong>existing</strong> company. New companies are created only by platform developers (open <a href="/developer">/developer</a>).</p>
+        <label>Company ID
+          <input id="registerCompanyId" placeholder="Company ID from your owner" />
+        </label>
+        <label>Full name
+          <input id="registerName" placeholder="Your name" />
+        </label>
+        <label>Email
+          <input id="registerEmail" type="email" placeholder="you@company.com" />
+        </label>
+        <label>Password (min 8)
+          <input id="registerPassword" type="password" placeholder="Password" />
+        </label>
+        <label>Job position
+          <select id="registerRole">
+            <option value="member">Member</option>
+            <option value="reservation">Reservation</option>
+            <option value="accounting">Accounting</option>
+            <option value="administration">Administration</option>
+            <option value="contract_manager">Contract manager</option>
+          </select>
+        </label>
+        <p class="muted">Note: elevated roles (owner, ai_admin, manager) are assigned by the company owner under Users &amp; Roles — not self-selected here.</p>
+        <button id="btnRegister" class="secondary block">Register to company</button>
+        <pre id="registerLog" class="log"></pre>
+      </div>
+
+      <div id="tab-quick" class="tab-panel developer-only">
+        <p class="muted">Developer only: demo company + personas + sample agents.</p>
+        <button id="btnQuickStart" class="primary block">Launch demo workspace</button>
+        <pre id="quickLog" class="log"></pre>
+      </div>
+
+      <div id="tab-provision" class="tab-panel developer-only">
+        <p class="muted">Platform developer: provision a real company + owner account (requires platform admin user).</p>
+        <label>Company name
+          <input id="provCompanyName" placeholder="Acme Travel" />
+        </label>
+        <label>Owner name
+          <input id="provOwnerName" placeholder="Owner Name" value="Owner" />
+        </label>
+        <label>Owner email
+          <input id="provOwnerEmail" type="email" placeholder="owner@acme.com" />
+        </label>
+        <label>Owner password
+          <input id="provOwnerPassword" type="password" value="demo12345" />
+        </label>
+        <button id="btnProvisionCompany" class="primary block">Provision company</button>
+        <pre id="provLog" class="log"></pre>
+        <hr />
+        <div class="row between">
+          <h3>Tenant directory</h3>
+          <button type="button" id="btnAdminRefreshCompanies" class="secondary">Refresh</button>
+        </div>
+        <div id="adminCompanyList" class="list"></div>
+        <div id="adminCompanyDetail" class="list"></div>
       </div>
 
       <div id="tab-connect" class="tab-panel developer-only">

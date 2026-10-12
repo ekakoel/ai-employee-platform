@@ -153,6 +153,15 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail="Email already registered")
 
     role_name = payload.role if payload.role in VALID_COMPANY_ROLES else "member"
+    # Job 57: self-registration cannot claim privileged management roles
+    privileged = {"owner", "ai_admin", "manager"}
+    if role_name in privileged:
+        user_count = db.scalar(
+            select(User.id).where(User.company_id == payload.company_id).limit(1)
+        )
+        # Only allow owner if company has no users yet (bootstrap edge case)
+        if user_count is not None or role_name != "owner":
+            role_name = "member"
     role = get_or_create_role(db, role_name)
 
     try:

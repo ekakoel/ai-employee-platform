@@ -93,6 +93,16 @@ ROLE_PERMISSIONS = {
         "task.create",
         "task.read",
     },
+    # Accounting — finance-oriented read of tasks/knowledge/governance
+    "accounting": {
+        "agent.read",
+        "knowledge.read",
+        "task.read",
+        "approval.read",
+        "governance.read",
+        "usage.read",
+        "audit.read",
+    },
 }
 
 # Platform developer is NOT listed here — uses is_platform_admin + /developer console.
