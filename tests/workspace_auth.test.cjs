@@ -30,11 +30,12 @@ function fixture({ saved = {}, respond, mode = 'user' } = {}) {
   const get = id => elements.get(id) || null;
   const calls = [];
   const resets = [];
-  let session;
+  let session, request;
   // Stub dashboard rendering only; execute the real controller and its auth handlers.
   const dashboard = {
     create(options) {
       session = options.getSession;
+      request = options.api;
       return Object.fromEntries(['reset', 'refresh', 'reconcile', 'show', 'load', 'results']
         .map(name => [name, () => { if (name === 'reset') resets.push(options); }]));
     },
@@ -57,9 +58,10 @@ function fixture({ saved = {}, respond, mode = 'user' } = {}) {
     },
     WorkspaceResults: dashboard, WorkspaceHome: dashboard, WorkspaceInbox: dashboard,
     WorkspaceSidebar: dashboard, WorkspaceChat: dashboard,
+    FormData: class { append() {} },
     MutationObserver: class { observe() {} }, console: { warn() {} }, location: {},
   }, { filename: 'app.js', timeout: 1000 });
-  return { get, calls, storage, resets, session: () => session() };
+  return { get, calls, storage, resets, session: () => session(), request: (...args) => request(...args) };
 }
 
 const profile = { company_id: 'tenant-a', user_id: 'user-a', name: 'Test User',
@@ -70,6 +72,74 @@ const savedSession = {
   ws_accessToken: profile.access_token, ws_refreshToken: profile.refresh_token,
   ws_userName: profile.name, ws_role: 'owner', ws_permissions: '["team.manage"]', ws_isPlatformAdmin: '1',
 };
+
+test('expired resource request clears only the matching session', async () => {
+  const f = fixture({ saved: savedSession, respond: url => url.endsWith('/auth/me')
+    ? { status: 200, body: profile } : url.endsWith('/tasks')
+      ? { status: 401, body: { detail: 'Expired' } } : undefined });
+  await settle();
+  await assert.rejects(f.request('/companies/tenant-a/tasks'), { status: 401 });
+  assertUnauthenticated(f);
+  assert.equal(f.get('loginLog').textContent, 'Session expired. Please sign in again.');
+  const call = f.calls.find(item => item.url.endsWith('/tasks'));
+  assert.ok(call.options.headers.Authorization === `Bearer ${profile.access_token}`);
+  assert.equal(call.options.headers['X-User-ID'], undefined);
+});
+
+test('resource 503 preserves the current credentials', async () => {
+  const f = fixture({ saved: savedSession, respond: url => url.endsWith('/auth/me')
+    ? { status: 200, body: profile } : url.endsWith('/tasks')
+      ? { status: 503, body: { detail: 'Unavailable' } } : undefined });
+  await settle();
+  await assert.rejects(f.request('/companies/tenant-a/tasks'), { status: 503 });
+  assert.ok(f.storage.get('ws_accessToken') === profile.access_token);
+  assert.equal(f.session().userId, profile.user_id);
+});
+
+test('document upload sends Bearer only and clears the session on 401', async () => {
+  const f = fixture({ saved: savedSession, respond: url => url.endsWith('/auth/me')
+    ? { status: 200, body: profile } : url.endsWith('/knowledge/ingest-extract')
+      ? { status: 401, body: { detail: 'Session expired' } } : undefined });
+  await settle();
+  f.get('knowledgeIngestFile').files = [{ name: 'synthetic.pdf' }];
+  await f.get('btnKnowledgeIngest').onclick();
+  const call = f.calls.find(item => item.url.endsWith('/knowledge/ingest-extract'));
+  assert.ok(call.options.headers.Authorization === `Bearer ${profile.access_token}`);
+  assert.equal(call.options.headers['X-User-ID'], undefined);
+  assertUnauthenticated(f);
+});
+
+test('late resource 401 cannot clear a newer login', async () => {
+  let finish;
+  let delay = false;
+  const pending = new Promise(resolve => { finish = resolve; });
+  const next = { ...profile, company_id: 'tenant-b', user_id: 'user-b' };
+  const f = fixture({ saved: savedSession, respond: url => url.endsWith('/auth/me')
+    ? { status: 200, body: profile } : delay && url.endsWith('/tenant-a/tasks') ? pending
+      : url.endsWith('/auth/login') ? { status: 200, body: next } : undefined });
+  await settle();
+  delay = true;
+  const oldRequest = f.request('/companies/tenant-a/tasks');
+  f.get('loginEmail').value = 'other@example.test';
+  f.get('loginPassword').value = 'mock-password';
+  await f.get('btnLogin').onclick();
+  finish({ status: 401, body: { detail: 'Old session expired' } });
+  await assert.rejects(oldRequest, { status: 401 });
+  assert.equal(f.session().userId, next.user_id);
+  assert.ok(f.storage.get('ws_accessToken') === next.access_token);
+});
+
+test('login sends explicit company context without treating it as authority', async () => {
+  const f = fixture({ respond: url => url.endsWith('/auth/login') ? { status: 200, body: profile } : undefined });
+  f.get('loginEmail').value = 'user@example.test';
+  f.get('loginPassword').value = 'mock-password';
+  f.get('loginCompanyId').value = ' tenant-a ';
+  await f.get('btnLogin').onclick();
+  const call = f.calls.find(item => item.url.endsWith('/auth/login'));
+  assert.equal(JSON.parse(call.options.body).company_id, 'tenant-a');
+  assert.equal(call.options.headers.Authorization, undefined);
+  assert.equal(call.options.headers['X-User-ID'], undefined);
+});
 
 test('workspace initializes the login gate and registers login/logout/Enter handlers', async () => {
   const f = fixture();
@@ -244,7 +314,7 @@ test('logout prevents late profile response from restoring identity', async () =
   finish({ status: 200, body: profile });
   await settle();
   assertUnauthenticated(f);
-  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls.length, 2);
 });
 
 test('logout prevents late successful login from restoring identity', async () => {
@@ -332,5 +402,34 @@ test('logout during login bootstrap stops further workspace initialization', asy
   finish({ status: 200, body: {} });
   await login;
   assertUnauthenticated(f);
-  assert.equal(f.calls.length, 2);
+  assert.equal(f.calls.length, 3);
 });
+
+test('logout posts the captured Bearer to the server after clearing local identity', async () => {
+  const f = fixture({ saved: savedSession, respond: url => url.endsWith('/auth/me')
+    ? { status: 200, body: profile } : { status: 204, body: null } });
+  await settle();
+  await f.get('btnLogout').onclick();
+  const logout = f.calls.find(call => call.url.endsWith('/auth/logout'));
+  assert.equal(logout.options.method, 'POST');
+  assert.ok(logout.options.headers.Authorization === `Bearer ${profile.access_token}`);
+  assert.equal(logout.options.headers['X-User-ID'], undefined);
+  assertUnauthenticated(f);
+  assert.equal(f.get('loginLog').textContent, 'Signed out. Server session revoked.');
+});
+
+for (const failure of ['network', 503, 401]) {
+  test(`logout ${failure} always clears local session without claiming server revocation`, async () => {
+    const f = fixture({ saved: savedSession, respond: url => {
+      if (url.endsWith('/auth/me')) return { status: 200, body: profile };
+      if (!url.endsWith('/auth/logout')) return undefined;
+      if (failure === 'network') throw new TypeError('Failed to fetch');
+      return { status: failure, body: { detail: 'Unavailable' } };
+    } });
+    await settle();
+    await f.get('btnClearSession').onclick();
+    assertUnauthenticated(f);
+    assert.equal(f.get('loginLog').textContent, 'Signed out locally. Server session revocation was not confirmed.');
+    assert.equal(f.get('loginLog').classList.contains('error'), true);
+  });
+}

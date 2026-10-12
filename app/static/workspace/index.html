@@ -30,6 +30,9 @@
         <label for="loginEmail">Email
           <input id="loginEmail" type="email" placeholder="you@company.com" autocomplete="username" required />
         </label>
+        <label for="loginCompanyId">Company ID (optional)
+          <input id="loginCompanyId" placeholder="Company ID" autocomplete="off" />
+        </label>
         <label for="loginPassword">Password
           <div class="password-field">
             <input id="loginPassword" type="password" placeholder="Password" autocomplete="current-password" required />
@@ -96,7 +99,6 @@
         <div id="adminCompanyDetail" class="list"></div>
       </div>
 
-      <input type="hidden" id="loginCompanyId" value="" />
       <div id="tab-connect" class="tab-panel developer-only">
         <p class="muted">Dev mode: paste existing company + user IDs (X-User-ID).</p>
         <label>API base

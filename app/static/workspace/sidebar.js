@@ -1,5 +1,7 @@
 (function (root) {
   const configs = {
+    inventory: { title: "Inventory references", resources: ["knowledge"], links: [["Review tasks", "tasks"]] },
+    users: { title: "Team structure", resources: ["departments", "teams"], links: [["View departments", "departments"]] },
     home: { title: "Workspace updates", resources: ["notifications", "workflows"], links: [["Read notifications", "notifications"], ["View workflows", "workflows"]] },
     inbox: { title: "Inbox guide", resources: ["policies", "knowledge"], links: [["Company policies", "policy-management"]], guide: {
       summary: "A shared queue for work that needs your attention.",
@@ -33,6 +35,8 @@
     "result-preview": { title: "Selected result", resources: ["tasks"], links: [["View tasks", "tasks"]] },
   };
   const guides = {
+    inventory: ["Inventory", "Company inventory used by availability workflows.", "Review current items and their source.", "Check related tasks before changing availability."],
+    users: ["Users", "Company accounts and their assigned roles.", "Review team membership before granting access.", "Confirm a person's role matches their responsibilities."],
     home: ["Home", "An overview of workspace priorities and recent work.", "Review items that need attention.", "Open a task or conversation to continue work."],
     tasks: ["Tasks", "Assigned AI work, progress, and saved outcomes.", "Create a task with an AI employee and a clear instruction.", "Review status and results; execution remains subject to policy."],
     approvals: ["Approvals", "Human decisions for actions that require authorization.", "Check the reason and requested action.", "Approve or reject with an appropriate review comment."],

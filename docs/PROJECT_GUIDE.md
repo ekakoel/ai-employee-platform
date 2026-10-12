@@ -120,7 +120,7 @@ Definisi field dan relasi aktual ada di `entities.py`, bukan tabel ringkasan ini
 
 ### Login dan session
 
-`POST /api/v1/auth/login` menerima email/password dan optional legacy
+`POST /api/v1/auth/login` menerima email/password dan optional
 `company_id`. Respons berisi access token, optional refresh token, identitas,
 role, permissions, dan status platform admin.
 
@@ -128,7 +128,10 @@ Controller frontend menyimpan session di localStorage dengan prefix `ws_`.
 Pada boot, access token diverifikasi melalui `GET /api/v1/auth/me`. Respons
 profil menjadi sumber identitas user/company. HTTP 401 membersihkan session;
 network error atau 5xx mempertahankan kredensial tetapi menahan UI di login/offline.
-Logout saat ini membersihkan session lokal, bukan mencabut JWT di server.
+Logout membersihkan session lokal lalu meminta revocation server melalui Bearer
+access token. Session server-side, rotation/replay dan single-use reset dijelaskan
+di [Auth Session Lifecycle](AUTH_SESSION_LIFECYCLE.md). Token legacy ditolak;
+email pada beberapa company memerlukan company context eksplisit.
 
 Frontend masih dapat mengirim `X-User-ID`, tetapi backend mengabaikannya sebagai
 kredensial. Jangan menjadikan header itu sumber otoritas baru.

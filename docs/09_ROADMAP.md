@@ -197,6 +197,12 @@ Work:
 
 Only after the core platform is stable:
 
+Implementation snapshot (2026-10-12): webhook ingress checks active company,
+HMAC on the body, rejection audit, and server-owned event metadata. Email and
+calendar connectors remain stubs; Contract Manager CRM integration is not yet
+implemented. Representative PostgreSQL and browser E2E checks remain pilot
+gates. This snapshot does not mark the integration phase complete.
+
 - email;
 - CRM;
 - calendar;

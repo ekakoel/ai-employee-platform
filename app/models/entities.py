@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -234,6 +234,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(320), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    auth_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     role_id: Mapped[str] = mapped_column(ForeignKey("roles.id"), nullable=False)
     department_id: Mapped[str | None] = mapped_column(
         ForeignKey("departments.id", ondelete="SET NULL"),
@@ -247,6 +248,54 @@ class User(Base):
     company: Mapped[Company] = relationship(back_populates="users")
     role: Mapped[Role] = relationship()
     department: Mapped["Department | None"] = relationship(back_populates="users")
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+    __table_args__ = (
+        CheckConstraint("auth_version >= 0", name="ck_session_auth_version"),
+        Index("ix_auth_session_owner", "user_id", "company_id", "revoked_at"),
+        Index("ix_auth_session_expiry", "absolute_expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), nullable=False)
+    auth_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    absolute_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoke_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+
+class RefreshTokenRecord(Base):
+    __tablename__ = "refresh_token_records"
+    __table_args__ = (
+        Index("ix_refresh_session", "session_id"),
+        Index("ix_refresh_expiry", "expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    session_id: Mapped[str] = mapped_column(ForeignKey("auth_sessions.id", ondelete="CASCADE"), nullable=False)
+    token_digest: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    replaced_by: Mapped[str | None] = mapped_column(ForeignKey("refresh_token_records.id"), nullable=True)
+
+
+class PasswordResetRecord(Base):
+    __tablename__ = "password_reset_records"
+    __table_args__ = (Index("ix_reset_owner", "user_id", "expires_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), nullable=False)
+    auth_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    token_digest: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AgentCatalog(Base):

@@ -147,13 +147,20 @@ Jalankan hanya file ini dalam proses terpisah, setelah memeriksa source fixture:
 ```powershell
 $env:APP_ENV = 'test'
 $env:DATABASE_URL = 'sqlite://'
+$env:JWT_EXPIRE_MINUTES = '15'
 $env:PYTHONDONTWRITEBYTECODE = '1'
 .\.venv\Scripts\python.exe -B -m pytest tests/test_auth_p0_isolated.py -q -p no:cacheprovider
 ```
 
 Gunakan terminal khusus untuk menghindari perubahan environment yang terbawa
 ke proses aplikasi lain. Jangan menggabungkan tes P0 ini dengan fixture lama.
-Hasil suite ini tidak diklaim sudah diverifikasi ulang pada sesi dokumentasi.
+Suite P0 telah diverifikasi ulang pada Phase 2D: 66 lulus.
+Tes lifecycle `tests/test_auth_sessions_isolated.py` harus dijalankan dalam proses
+berbeda dengan environment/flag yang sama. Fixture memakai SQLite disposable
+di temporary OS, bukan file workspace. Hasil terbaru: 46 lulus dalam suite dan
+1 tes race tambahan lulus terarah. Enam tes PostgreSQL opt-in belum dieksekusi
+terhadap server PostgreSQL. Lihat
+[Auth Session Lifecycle](AUTH_SESSION_LIFECYCLE.md) untuk target aman dan cutover.
 
 ### Mengapa bukan langsung full pytest?
 

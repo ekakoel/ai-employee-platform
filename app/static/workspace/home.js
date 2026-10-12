@@ -189,7 +189,7 @@
         // Job 41 — role-aware greeting + quick actions + inventory status
         const role = session.role || "member";
         const roleName = ROLE_LABELS[role] || role;
-        $("homeGreeting").textContent = `Welcome · ${roleName}`;
+        $("homeGreeting").textContent = session.userName ? `Hello, ${session.userName}` : `Welcome · ${roleName}`;
         if ($("homeRoleLabel")) $("homeRoleLabel").textContent = roleName;
         const actions = roleQuickActions(role);
         if ($("homeQuickActions")) {

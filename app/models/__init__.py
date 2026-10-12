@@ -1,4 +1,7 @@
 from app.models.entities import (
+    AuthSession,
+    RefreshTokenRecord,
+    PasswordResetRecord,
     MarketplaceInstallation,
     Integration,
     IntegrationStatus,
@@ -48,6 +51,9 @@ from app.models.entities import (
 )
 
 __all__ = [
+    "AuthSession",
+    "RefreshTokenRecord",
+    "PasswordResetRecord",
     "MarketplaceInstallation",
     "Integration",
     "IntegrationStatus",

@@ -1,12 +1,11 @@
 # Status Implementasi dan Handoff
 
 Snapshot: 2026-10-12. Branch saat dokumentasi dibuat: `development`.
-HEAD yang diperiksa: `d14a75eca5222e6be372cbe3091d4d0dc75aede5`.
+HEAD yang diperiksa pada Phase 2D: `d0f586516a06061072088c197c3e2be6abb939b8`.
 
-Pada awal sesi dokumentasi terdapat perubahan AUTH-014 yang belum di-commit
-di `app/static/workspace/app.js` dan `tests/workspace_auth.test.cjs`.
-Perubahan itu dipertahankan. Status di dokumen ini harus diperbarui setelah
-review/commit/perubahan kode berikutnya; jangan menganggap hash ini selalu HEAD.
+Working tree awal Phase 2D bersih. Perubahan lifecycle/backend/frontend/test
+dan dokumentasi Phase 2D belum di-commit. Status harus diperbarui setelah
+review/commit/perubahan berikutnya; jangan menganggap hash ini selalu HEAD.
 
 ## 1. Implementasi bukan sertifikasi kesiapan
 
@@ -22,10 +21,10 @@ atau semua temuan keamanan telah tertutup.
 
 | Area | Baseline dan batas bukti |
 | --- | --- |
-| P0 AUTH-001 sampai AUTH-005 | Bearer-only identity, legacy token/public register ditutup, onboarding/admin grant dibatasi, validasi deployed settings tersedia di source. Suite P0 khusus tidak dijalankan ulang pada sesi dokumentasi ini |
+| P0 AUTH-001 sampai AUTH-005 | Perlindungan dipertahankan; regresi terisolasi 66 lulus pada Phase 2D |
 | AUTH-011 | Tiga assignment JavaScript invalid diperbaiki; perbaikan sudah ada di HEAD di atas |
-| AUTH-014 | Perubahan lokal: `/auth/me` 401 membersihkan session; network/5xx tidak menghapus token dan tidak membuka workspace sebagai terverifikasi; identity berasal dari profil server; guard respons auth terlambat |
-| AUTH-007 / AUTH-008 | Tetap pekerjaan terpisah; tidak dinyatakan selesai oleh AUTH-011/014 atau dokumentasi ini |
+| AUTH-014 | Baseline: `/auth/me` 401 membersihkan session; network/5xx tidak membuka workspace sebagai terverifikasi; identity server; guard respons terlambat |
+| AUTH-007 / AUTH-008 | Session/rotation/replay/reset/version invalidation terimplementasi; 46 tes lifecycle lulus dalam suite dan 1 tes race tambahan lulus terarah. PG dan browser E2E belum diverifikasi |
 
 Jangan menebak pemetaan judul/detail AUTH-007 dan AUTH-008 dari nomornya.
 Gunakan laporan audit asli saat membuka pekerjaan berikutnya; source tetap
@@ -33,14 +32,19 @@ menjadi dasar pemeriksaan ulang.
 
 ## 3. Bukti pengujian terakhir
 
-Hasil berikut berasal dari sesi implementasi AUTH-014 sebelum dokumentasi ini,
-bukan hasil eksekusi ulang pada sesi dokumentasi:
+Hasil berikut dieksekusi pada kelanjutan Phase 2D (2026-10-12):
 
-- Tes `workspace_auth.test.cjs`: **21 lulus, 0 gagal**.
-- Enam file tes frontend: **57 tes; 55 lulus, 2 gagal**.
-- Syntax check enam script workspace dan file tes auth: lulus.
-- `git diff --check` pada perubahan AUTH-014: lulus; ada peringatan LF/CRLF.
-- Browser E2E, backend integration nyata, dan full pytest: tidak dijalankan.
+- P0 backend in-memory: **66 lulus**.
+- Lifecycle SQLite disposable, termasuk concurrency, webhook, tenant isolation,
+  dan migration: **46 lulus** dalam suite; refresh versus change-password:
+  **1 lulus** pada tes terarah sesudahnya.
+- Empat file unit backend tanpa database: **12 lulus**.
+- PostgreSQL opt-in: **blocked**, URL disposable tidak tersedia. Lima tes PG
+  sempat skipped pada sesi sebelumnya, bukan bukti PG lulus.
+- Tes frontend auth: **30 lulus**; tiga file terdampak sebelumnya: **42 lulus**.
+- Enam file tes frontend: **66 lulus** setelah tes upload 401 ditambahkan.
+- Python AST/import dan enam script workspace: lulus; `git diff --check`: lulus.
+- Browser E2E, integrasi deployment/production, dan full pytest: tidak dijalankan.
 
 Coverage auth meliputi login berhasil/gagal, `/auth/me` 200/401/network/5xx,
 logout, pembersihan state/identitas, pergantian user/tenant, cached IDs tanpa
@@ -48,30 +52,37 @@ Bearer, developer console yang ditolak, dan respons auth terlambat.
 Dashboard pada fixture auth dimock; coverage ini bukan bukti rendering seluruh
 halaman atau tidak adanya kebocoran data di semua alur produk.
 
-### Dua kegagalan lama
+### Dua kegagalan lama yang ditangani
 
 | Tes | Kondisi |
 | --- | --- |
-| `workspace_home.test.cjs:71` | Ekspektasi `Hello, Member`; implementasi menghasilkan `Welcome · Member` |
-| `workspace_sidebar.test.cjs:16` | Konfigurasi konteks `inventory` belum tersedia |
+| `workspace_home.test.cjs:71` | Greeting personal tetap tampil setelah data role dimuat; tes lulus |
+| `workspace_sidebar.test.cjs:16` | Konteks inventory dan users ditambahkan; tes lulus |
 
-Keduanya di luar scope perubahan auth terakhir dan tidak diperbaiki. Jangan
-menyebut seluruh tes frontend lulus sampai keduanya ditangani dan dijalankan ulang.
+Perubahan mengikuti behavior UI: greeting awal yang personal tidak lagi
+ditimpa, dan semua view navigasi memiliki konteks yang sesuai.
 
 ## 4. Risiko dan pekerjaan terbuka
 
-- Logout masih lokal; JWT server tidak dicabut oleh logout frontend.
+- Logout meminta revocation server; access expired/network failure hanya logout
+  lokal dengan pesan revocation belum terkonfirmasi.
 - Refresh token tersimpan, tetapi frontend tidak memiliki automatic refresh.
-  Backend memiliki endpoint refresh; revocation/rotation/replay membutuhkan
-  review desain dan tes terpisah, bukan retry otomatis yang ditambahkan sembarang.
+  Backend refresh kini rotasi single-use; retry token lama mencabut family.
+  Automatic/coordinated client refresh tetap pekerjaan review terpisah.
 - Token localStorage tetap memiliki risiko XSS. Jangan menganggap perbaikan
   session ini mengganti hardening browser, CSP, atau peninjauan sanitasi.
-- 401 endpoint workspace lain belum memicu logout terpusat di API wrapper.
+- 401 request resource terautentikasi kini menghapus sesi yang sesuai; respons
+  lama tidak dapat menghapus sesi login baru. 503 mempertahankan kredensial.
+- Upload dokumen langsung juga menggunakan Bearer saja dan menangani 401
+  untuk sesi yang tepat.
 - First-platform-admin provisioning pada database baru belum memiliki operator
   bootstrap yang disepakati; jangan memakai allowlist email atau anonymous API.
 - Quick start/Connect IDs lama bukan cara onboarding yang didukung P0.
-- Password-reset replay, delivery email, rate limiting, dan session revocation
-  masih perlu peninjauan; token reset terpisah dari token login pada baseline P0.
+- Reset single-use dan session revocation teruji pada SQLite; delivery email,
+  rate limiting, retensi/purge dan verifikasi PostgreSQL tetap terbuka.
+- Webhook menolak company nonaktif dan hanya memakai event dari body bertanda
+  tangan. Secret custom baru ditolak; integrasi lama dengan secret lemah belum
+  dirotasi. Secret runtime masih tersimpan dalam konfigurasi integrasi database.
 - Isolasi fixture backend lama belum dibuktikan aman untuk full suite.
 - Readiness database tidak memverifikasi LLM, storage, seluruh tool/connector,
   worker, approval, atau tenant isolation secara end-to-end.
@@ -80,7 +91,7 @@ menyebut seluruh tes frontend lulus sampai keduanya ditangani dan dijalankan ula
 
 Checklist ini adalah kriteria review, bukan izin deployment:
 
-1. Review perubahan AUTH-014 dan laporan audit asli; prioritaskan risiko auth
+1. Review Phase 2D dan [rencana cutover](AUTH_SESSION_LIFECYCLE.md); prioritaskan risiko auth
    terbuka tanpa melonggarkan perlindungan P0.
 2. Siapkan environment staging terpisah, database/storage terpisah, operator
    admin sah, credential kuat, dan prosedur backup/restore yang diverifikasi.
@@ -90,7 +101,7 @@ Checklist ini adalah kriteria review, bukan izin deployment:
    approval/resume, chat/task, dan output yang benar-benar tersimpan.
 5. Verifikasi dependency eksternal serta batas side effect tool. Jangan mengirim
    email/webhook atau mengubah sistem bisnis asli saat menguji simulasi.
-6. Perbaiki dua kegagalan frontend lama dan audit isolasi tes backend.
+6. Audit isolasi fixture backend lama sebelum full suite; lengkapi browser E2E.
 7. Tetapkan owner pilot, workflow terbatas, indikator keberhasilan, monitoring,
    rollback, dan persetujuan deployment yang eksplisit.
 

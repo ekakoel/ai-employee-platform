@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     allow_legacy_user_header: bool = False
     jwt_secret: str = "dev-change-me-in-production"
     jwt_algorithm: str = "HS256"
-    jwt_expire_minutes: int = 60 * 12
+    jwt_expire_minutes: int = 15
     jwt_refresh_expire_minutes: int = 60 * 24 * 14
 
     storage_backend: str = "local"
@@ -82,6 +82,10 @@ class Settings(BaseSettings):
 
     def validate_security(self) -> None:
         """Reject unsafe deployed settings without including secret values."""
+        if not 1 <= self.jwt_expire_minutes <= 15:
+            raise ValueError("JWT_EXPIRE_MINUTES must be between 1 and 15")
+        if not 1 <= self.jwt_refresh_expire_minutes <= 60 * 24 * 14:
+            raise ValueError("JWT_REFRESH_EXPIRE_MINUTES must be between 1 and 20160")
         environment = self.normalize_app_env(self.app_env)
         if environment in {"development", "test"}:
             return

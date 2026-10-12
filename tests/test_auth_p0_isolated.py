@@ -31,8 +31,8 @@ from app.api import admin_routes, auth_routes, inbox_routes, result_routes, rout
 from app.core.config import Settings, settings
 from app.core.database import Base, engine as application_engine, get_db
 from app.core.passwords import hash_password
-from app.core.security import create_access_token, create_refresh_token, decode_token
-from app.models.entities import AuditLog, Company, User
+from app.core.security import create_access_token, decode_token
+from app.models.entities import AuditLog, AuthSession, Company, User
 from app.services.seed import get_or_create_role, seed_catalog
 
 
@@ -81,7 +81,13 @@ def isolated():
             )
             db.add(user)
             db.flush()
-            identities[key] = {"id": user.id, "company_id": company.id, "email": user.email}
+            session = AuthSession(user_id=user.id, company_id=company.id, auth_version=user.auth_version,
+                                  absolute_expires_at=datetime.now(timezone.utc) + timedelta(days=14))
+            db.add(session)
+            db.flush()
+            token = create_access_token(subject=user.id, company_id=company.id,
+                                        session_id=session.id, auth_version=user.auth_version)
+            identities[key] = {"id": user.id, "company_id": company.id, "email": user.email, "token": token}
         db.commit()
         empty_company_id = companies[2].id
 
@@ -102,7 +108,11 @@ def isolated():
 
 def bearer(identities, key, **extra):
     user = identities[key]
-    token = create_access_token(subject=user["id"], company_id=user["company_id"], extra=extra or None)
+    token = user["token"]
+    if extra:
+        claims = decode_token(token)
+        claims.update(extra)
+        token = jwt.encode(claims, settings.jwt_secret, algorithm=settings.jwt_algorithm)
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -177,14 +187,20 @@ def test_admin_and_company_fail_closed_for_invalid_credentials(isolated, kind):
                             "exp": datetime.now(timezone.utc) - timedelta(minutes=1)},
                            settings.jwt_secret, algorithm=settings.jwt_algorithm)
     elif kind == "refresh":
-        token = create_refresh_token(subject=user["id"], company_id=user["company_id"])
+        claims = decode_token(user["token"])
+        claims["type"] = "refresh"
+        token = jwt.encode(claims, settings.jwt_secret, algorithm=settings.jwt_algorithm)
     elif kind == "unknown_user":
-        token = create_access_token(subject="missing-user", company_id=user["company_id"])
+        claims = decode_token(user["token"])
+        claims["sub"] = "missing-user"
+        token = jwt.encode(claims, settings.jwt_secret, algorithm=settings.jwt_algorithm)
     else:
         extra = {"purpose": "password_reset"} if kind in {"reset", "old_reset"} else None
         if kind == "reset":
             extra["type"] = "password_reset"
-        token = create_access_token(subject=user["id"], company_id=user["company_id"], extra=extra)
+        claims = decode_token(user["token"])
+        claims.update(extra or {})
+        token = jwt.encode(claims, settings.jwt_secret, algorithm=settings.jwt_algorithm)
         if kind == "inactive":
             with sessions() as db:
                 db.get(User, user["id"]).status = "inactive"

@@ -262,14 +262,44 @@
     if (json) h["Content-Type"] = "application/json";
     if (!skipAuth) {
       if (state.accessToken) h["Authorization"] = "Bearer " + state.accessToken;
-      if (state.userId) h["X-User-ID"] = state.userId;
     }
     return h;
+  }
+
+  async function logoutSession() {
+    const token = state.accessToken;
+    clearSession();
+    const version = sessionVersion;
+    if (!token) return;
+    let confirmed = false;
+    try {
+      await api("/auth/logout", { method: "POST", skipAuth: true, skipSidebarRefresh: true,
+        headers: { Authorization: "Bearer " + token } });
+      confirmed = true;
+    } catch (_) {}
+    if (version !== sessionVersion) return;
+    if ($("loginLog")) {
+      $("loginLog").classList.toggle("error", !confirmed);
+      $("loginLog").textContent = confirmed
+        ? "Signed out. Server session revoked."
+        : "Signed out locally. Server session revocation was not confirmed.";
+    }
+  }
+
+  function expireCurrentSession(version, token) {
+    if (!token || version !== sessionVersion || token !== state.accessToken) return;
+    clearSession();
+    if ($("loginLog")) {
+      $("loginLog").classList.add("error");
+      $("loginLog").textContent = "Session expired. Please sign in again.";
+    }
   }
 
   async function api(path, opts = {}) {
     const base = (state.apiBase || "/api/v1").replace(/\/$/, "");
     const url = path.startsWith("http") ? path : base + path;
+    const version = sessionVersion;
+    const token = state.accessToken;
     const res = await fetch(url, {
       ...opts,
       headers: { ...headers(true, opts.skipAuth), ...(opts.headers || {}) },
@@ -282,6 +312,7 @@
       data = text;
     }
     if (!res.ok) {
+      if (res.status === 401 && !opts.skipAuth && path !== "/auth/me") expireCurrentSession(version, token);
       const detail =
         data && typeof data === "object"
           ? data.detail || JSON.stringify(data)
@@ -634,8 +665,8 @@
     }
   };
 
-  $("btnClearSession").onclick = clearSession;
-  if ($("btnLogout")) $("btnLogout").onclick = clearSession;
+  $("btnClearSession").onclick = logoutSession;
+  if ($("btnLogout")) $("btnLogout").onclick = logoutSession;
 
   
 
@@ -753,6 +784,7 @@
   $("btnLogin").onclick = async () => {
     const log = $("loginLog");
     const btn = $("btnLogin");
+    const companyId = (($("loginCompanyId") && $("loginCompanyId").value) || "").trim();
     clearSession();
     const version = sessionVersion;
     try {
@@ -769,7 +801,7 @@
       if (!email || !password) throw new Error("Email and password are required");
       const body = await api("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, ...(companyId ? { company_id: companyId } : {}) }),
         skipAuth: true,
       });
       if (version !== sessionVersion) return;
@@ -796,7 +828,7 @@
   };
 
   // Enter key submits login
-  ["loginEmail", "loginPassword"].forEach((id) => {
+  ["loginEmail", "loginPassword", "loginCompanyId"].forEach((id) => {
     const el = $(id);
     if (el) {
       el.addEventListener("keydown", (e) => {
@@ -1717,12 +1749,11 @@
         if (title) fd.append("title", title);
         fd.append("category", "document");
         const base = (state.apiBase || "/api/v1").replace(/\/$/, "");
+        const version = sessionVersion;
+        const token = state.accessToken;
         const res = await fetch(base + `/companies/${state.companyId}/knowledge/ingest-extract`, {
           method: "POST",
-          headers: {
-            ...(state.accessToken ? { Authorization: "Bearer " + state.accessToken } : {}),
-            ...(state.userId ? { "X-User-ID": state.userId } : {}),
-          },
+          headers: token ? { Authorization: "Bearer " + token } : {},
           body: fd,
         });
         const text = await res.text();
@@ -1733,6 +1764,7 @@
           data = text;
         }
         if (!res.ok) {
+          if (res.status === 401) expireCurrentSession(version, token);
           throw new Error(typeof data === "object" ? data.detail || JSON.stringify(data) : text);
         }
         if (log) log.textContent = "Knowledge saved (file not retained): " + (data.title || data.id);

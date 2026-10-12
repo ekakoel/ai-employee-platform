@@ -71,6 +71,9 @@ def migrate_sqlite_schema() -> None:
 
     if "users" in table_names:
         user_cols = {c["name"] for c in inspector.get_columns("users")}
+        if "auth_version" not in user_cols:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE users ADD COLUMN auth_version INTEGER NOT NULL DEFAULT 0"))
         if "password_hash" not in user_cols:
             with engine.begin() as connection:
                 connection.execute(

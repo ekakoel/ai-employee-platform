@@ -69,8 +69,12 @@ Never commit the actual values. Missing Compose variables fail interpolation.
 
 Password-reset tokens now have their own type and cannot authenticate API
 requests or refresh a login. Previously issued access-type reset tokens are
-rejected as API credentials. Reset replay, session revocation, rate limiting,
-and reset email delivery remain follow-up work.
+rejected as API credentials. Phase 2D implements durable sessions, refresh
+rotation/replay revocation, single-use reset, and password-version invalidation.
+Rate limiting and reset email delivery remain follow-up work. Access tokens now
+expire within 15 minutes; sessions within 14 absolute days. Legacy stateless
+tokens are rejected. See [Auth Session Lifecycle](AUTH_SESSION_LIFECYCLE.md)
+for API contracts, migration/cutover, concurrency, and verification limits.
 
 ### Compatibility and Verification
 
@@ -80,7 +84,7 @@ Connect IDs, anonymous Quick start, legacy token requests, and public
 registration no longer work. Provisioning requires an explicit owner password.
 The Phase 2A report originally recorded a frontend JavaScript syntax blocker.
 AUTH-011 has since corrected the three invalid assignments. AUTH-014 changes
-in the current working tree distinguish `/auth/me` 401 from network/server
+in the baseline distinguish `/auth/me` 401 from network/server
 failures and prevent optimistic session restoration after failed verification.
 See [Project Status](PROJECT_STATUS.md) for the dated verification evidence and
 review/commit status. These isolated frontend tests do not establish browser
@@ -92,6 +96,6 @@ rejects connections to the global application engine.
 An additional Python audit hook rejects every file-backed SQLite connection
 before the driver opens it, and each fixture checks its empty database filename.
 Run only that file with
-`DATABASE_URL=sqlite://`, `APP_ENV=test`, bytecode disabled, and pytest's cache
+`DATABASE_URL=sqlite://`, `APP_ENV=test`, `JWT_EXPIRE_MINUTES=15`, bytecode disabled, and pytest's cache
 provider disabled. Do not run the existing file-based fixtures against workspace
 databases. Broader regression fixture isolation remains follow-up work.

@@ -63,10 +63,10 @@ git diff --check
 ```
 
 Tes auth memakai mock dan tidak membuktikan browser E2E atau integrasi backend.
-Baseline terakhir: 21 tes auth lulus; seluruh tes frontend 55/57 lulus dengan
-dua kegagalan lama Home/sidebar. Detail dan batas bukti ada di
-[Project Status](docs/PROJECT_STATUS.md). Hasil ini bukan eksekusi ulang pada
-sesi dokumentasi.
+Validasi lanjutan: 30 tes auth frontend lulus dan seluruh 66 tes frontend lulus.
+Detail dan batas bukti ada di [Project Status](docs/PROJECT_STATUS.md). Hasil
+ini dieksekusi pada kelanjutan Phase 2D;
+lihat [Auth Session Lifecycle](docs/AUTH_SESSION_LIFECYCLE.md) untuk batas bukti.
 
 Untuk backend, baca isolasi fixture dan perintah suite P0 khusus dalam
 [Development Guide](docs/DEVELOPMENT_GUIDE.md#7-tes-backend-p0-yang-terisolasi).

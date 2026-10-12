@@ -302,7 +302,7 @@ def fire_event(
             db,
             rule=rule,
             idempotency_key=key,
-            payload={"trigger": "event", "event_type": event_type, **(payload or {})},
+            payload={**(payload or {}), "trigger": "event", "event_type": event_type},
             user_id=user_id,
         )
         runs.append(run)

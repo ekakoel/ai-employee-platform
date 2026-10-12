@@ -191,7 +191,7 @@ def get_current_user(
     from app.core.auth import resolve_user_id
 
     # x_user_id is supplied by the Bearer dependency, never a client header.
-    user_id = resolve_user_id(authorization=authorization, x_user_id=None) if authorization else x_user_id
+    user_id = resolve_user_id(db=db, authorization=authorization, x_user_id=None) if authorization else x_user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="Authentication required")
     user = db.get(User, user_id)
@@ -3218,6 +3218,8 @@ async def integration_webhook(
     """
     from app.services.integrations import handle_webhook
 
+    if event_name is not None:
+        raise HTTPException(status_code=400, detail="Event name must be in the signed body")
     raw = await request.body()
     signature = x_signature or x_hub_signature_256
     try:
@@ -3227,11 +3229,11 @@ async def integration_webhook(
             integration_id=integration_id,
             raw_body=raw,
             signature_header=signature,
-            event_name=event_name,
         )
     except LookupError:
         raise HTTPException(status_code=404, detail="Integration not found")
     except PermissionError as exc:
+        db.commit()
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -3306,14 +3308,14 @@ def integration_calendar_list(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 @router.get("/tools")
-def list_platform_tools():
+def list_platform_tools(
+    db: Session = Depends(get_db),
+    x_user_id: str = Depends(get_authenticated_user_id),
+):
     """Job 19 — global tool catalog (metadata: side_effect, risk)."""
     from app.tools.domain import build_default_tools
-    from app.core.database import SessionLocal
-
-    with SessionLocal() as db:
-        tools = build_default_tools(db)
-        return [t.to_catalog_dict() for t in tools]
+    tools = build_default_tools(db)
+    return [t.to_catalog_dict() for t in tools]
 
 
 @router.post(
