@@ -6,26 +6,52 @@ on:
   pull_request:
     branches: [development, main]
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-sqlite:
+    name: Pytest (SQLite)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install dependencies
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install system deps (tesseract optional for OCR paths)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq tesseract-ocr || true
+
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest httpx
-      - name: Pytest (SQLite)
+
+      - name: Pytest full suite (SQLite)
         env:
           DATABASE_URL: sqlite:///./ci_test.db
-        run: pytest -q
+          # Avoid external LLM calls in CI
+          OLLAMA_HOST: ""
+        run: |
+          pytest -q --tb=line -m "not integration"
+
+      - name: Smoke E2E (Job 54)
+        env:
+          DATABASE_URL: sqlite:///./ci_smoke.db
+        run: |
+          pytest -q tests/test_smoke_e2e_job54.py --tb=short
 
   test-postgres:
+    name: Pytest subset (Postgres)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16-alpine
@@ -42,20 +68,30 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install dependencies
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest httpx
+
       - name: Alembic upgrade head
         env:
           DATABASE_URL: postgresql+psycopg://aiep:aiep@localhost:5432/aiep
         run: alembic upgrade head
-      - name: Pytest subset (Postgres)
+
+      - name: Pytest infra subset
         env:
           DATABASE_URL: postgresql+psycopg://aiep:aiep@localhost:5432/aiep
         run: |
-          pytest -q tests/test_production_infra.py tests/test_quotas_job22.py tests/test_admin_job23.py tests/test_alembic_job24.py
+          pytest -q --tb=line \
+            tests/test_production_infra.py \
+            tests/test_quotas_job22.py \
+            tests/test_admin_job23.py \
+            tests/test_alembic_job24.py \
+            tests/test_smoke_e2e_job54.py

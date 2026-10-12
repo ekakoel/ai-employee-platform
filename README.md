@@ -1,5 +1,8 @@
 # AI Employee Platform — Local MVP 0.1
 
+[![CI](https://github.com/ekakoel/ai-employee-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/ekakoel/ai-employee-platform/actions/workflows/ci.yml)
+
+
 Vertical slice awal untuk membuktikan model:
 
 **Company → Agent Catalog → Hire Agent → Agent Instance → Knowledge → Task**
