@@ -3,7 +3,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: aiep
-      POSTGRES_PASSWORD: aiep
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD before starting Compose}
       POSTGRES_DB: aiep
     ports:
       - "5432:5432"
@@ -22,9 +22,11 @@ services:
     environment:
       APP_ENV: production
       DEBUG: "false"
-      DATABASE_URL: postgresql+psycopg://aiep:aiep@db:5432/aiep
-      JWT_SECRET: change-me-in-production
-      AUTH_ENABLED: "false"
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL with the matching database credentials}
+      JWT_SECRET: ${JWT_SECRET:?Set a strong JWT_SECRET before starting Compose}
+      AUTH_ENABLED: "true"
+      ALLOW_LEGACY_USER_HEADER: "false"
+      PUBLIC_COMPANY_CREATE: "false"
       STORAGE_BACKEND: local
       STORAGE_LOCAL_PATH: /data/storage
       LOG_JSON: "true"
@@ -40,7 +42,12 @@ services:
     command: ["python", "-m", "app.workers.automation_worker", "--all"]
     environment:
       APP_ENV: production
-      DATABASE_URL: postgresql+psycopg://aiep:aiep@db:5432/aiep
+      DEBUG: "false"
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL with the matching database credentials}
+      JWT_SECRET: ${JWT_SECRET:?Set a strong JWT_SECRET before starting Compose}
+      AUTH_ENABLED: "true"
+      ALLOW_LEGACY_USER_HEADER: "false"
+      PUBLIC_COMPANY_CREATE: "false"
       WORKER_POLL_SECONDS: "30"
       LOG_JSON: "true"
     depends_on:

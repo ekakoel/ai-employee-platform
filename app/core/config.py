@@ -1,20 +1,20 @@
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     app_name: str = "AI Employee Platform"
     app_env: str = "development"
-    debug: bool = True
+    debug: bool = False
 
     database_url: str = "sqlite:///./ai_employee.db"
     db_pool_size: int = 5
     db_max_overflow: int = 10
 
     # Auth (Job 15)
-    auth_enabled: bool = False
-    # When auth_enabled=True, still allow X-User-ID only if this is True (dev only)
-    allow_legacy_user_header: bool = True
+    auth_enabled: bool = True
+    # Deprecated: headers cannot authenticate users, even in development.
+    allow_legacy_user_header: bool = False
     jwt_secret: str = "dev-change-me-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 12
@@ -31,11 +31,10 @@ class Settings(BaseSettings):
     worker_poll_seconds: int = 30
 
     # Job 23 — platform admin / support
-    # Comma-separated emails granted platform admin on login/bootstrap
+    # Deprecated and ignored: platform grants use persisted admin privileges.
     platform_admin_emails: str = ""
-    # Job 57: when False, only platform developers may POST /companies
-    # Keep True for local pytest; set PUBLIC_COMPANY_CREATE=false in production.
-    public_company_create: bool = True
+    # Deprecated: company creation always requires a platform administrator.
+    public_company_create: bool = False
     allow_impersonation: bool = False
 
     log_level: str = "INFO"
@@ -60,7 +59,42 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",
+        hide_input_in_errors=True,
     )
+
+    @field_validator("app_env", mode="before")
+    @classmethod
+    def normalize_app_env(cls, value):
+        normalized = str(value).strip().lower()
+        aliases = {
+            "dev": "development", "local": "development", "testing": "test",
+            "prod": "production", "release": "production", "stage": "staging",
+        }
+        normalized = aliases.get(normalized, normalized)
+        if normalized not in {"development", "test", "staging", "production"}:
+            raise ValueError("APP_ENV must identify development, test, staging, or production")
+        return normalized
+
+    @model_validator(mode="after")
+    def check_security_configuration(self):
+        self.validate_security()
+        return self
+
+    def validate_security(self) -> None:
+        """Reject unsafe deployed settings without including secret values."""
+        environment = self.normalize_app_env(self.app_env)
+        if environment in {"development", "test"}:
+            return
+        if not self.auth_enabled or self.allow_legacy_user_header:
+            raise ValueError("Deployed environments require AUTH_ENABLED=true and ALLOW_LEGACY_USER_HEADER=false")
+        if self.debug or self.public_company_create:
+            raise ValueError("Deployed environments require DEBUG=false and PUBLIC_COMPANY_CREATE=false")
+        secret = self.jwt_secret.strip()
+        weak_markers = ("change-me", "changeme", "development", "dev-change", "placeholder", "replace-me")
+        if len(secret) < 32 or any(marker in secret.lower() for marker in weak_markers):
+            raise ValueError("Deployed environments require a non-development JWT signing secret of at least 32 characters")
+        if self.jwt_algorithm not in {"HS256", "HS384", "HS512"}:
+            raise ValueError("Unsupported deployed JWT signing algorithm")
 
     @field_validator("debug", mode="before")
     @classmethod

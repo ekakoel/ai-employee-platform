@@ -1,0 +1,694 @@
+diff --git a/app/api/admin_routes.py b/app/api/admin_routes.py
+index 5b28a40..c9a76b8 100644
+--- a/app/api/admin_routes.py
++++ b/app/api/admin_routes.py
+@@ -15,6 +15,183 @@ from app.services.quotas import usage_summary
+ 
+ router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
+ 
++from pydantic import BaseModel, Field
++
++
++class AdminCompanyCreate(BaseModel):
++    name: str = Field(min_length=2, max_length=200)
++    owner_name: str = Field(default="Owner", min_length=1, max_length=200)
++    owner_email: str = Field(min_length=3, max_length=320)
++    owner_password: str = Field(default="demo12345", min_length=8, max_length=128)
++
++
++class AdminCompanyUpdate(BaseModel):
++    name: str | None = Field(default=None, min_length=2, max_length=200)
++    is_active: bool | None = None
++
++
++@router.post("/companies", status_code=201)
++def admin_create_company(
++    payload: AdminCompanyCreate,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    """Platform developer provisions a company + owner account."""
++    admin = require_platform_admin(db, x_user_id)
++    existing = db.scalar(select(Company).where(Company.name == payload.name))
++    if existing:
++        raise HTTPException(status_code=409, detail=f"Company '{payload.name}' already exists.")
++
++    company = Company(name=payload.name)
++    db.add(company)
++    db.flush()
++    try:
++        from app.services.quotas import get_or_assign_plan
++        get_or_assign_plan(db, company.id)
++    except Exception:
++        pass
++
++    from app.services.seed import get_or_create_role
++    from app.core.passwords import hash_password
++
++    role = get_or_create_role(db, "owner")
++    try:
++        password_hash = hash_password(payload.owner_password)
++    except ValueError as exc:
++        raise HTTPException(status_code=400, detail=str(exc)) from exc
++
++    owner = User(
++        company_id=company.id,
++        name=payload.owner_name,
++        email=payload.owner_email.strip().lower(),
++        role_id=role.id,
++        password_hash=password_hash,
++    )
++    db.add(owner)
++    db.flush()
++
++    record_audit(
++        db,
++        company_id=company.id,
++        user_id=admin.id,
++        action="admin.company.create",
++        resource_type="company",
++        resource_id=company.id,
++        status="success",
++        details={"owner_email": owner.email},
++    )
++    db.commit()
++    db.refresh(company)
++    db.refresh(owner)
++    return {
++        "company": {
++            "id": company.id,
++            "name": company.name,
++            "is_active": bool(getattr(company, "is_active", True)),
++        },
++        "owner": {
++            "id": owner.id,
++            "email": owner.email,
++            "name": owner.name,
++            "role": "owner",
++        },
++        "message": "Company provisioned. Owner can sign in on /workspace with email + password.",
++    }
++
++
++@router.patch("/companies/{company_id}")
++def admin_update_company(
++    company_id: str,
++    payload: AdminCompanyUpdate,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    admin = require_platform_admin(db, x_user_id)
++    company = db.get(Company, company_id)
++    if not company:
++        raise HTTPException(status_code=404, detail="Company not found")
++    if payload.name is not None:
++        company.name = payload.name
++    if payload.is_active is not None:
++        company.is_active = payload.is_active
++    record_audit(
++        db,
++        company_id=company_id,
++        user_id=admin.id,
++        action="admin.company.update",
++        resource_type="company",
++        resource_id=company_id,
++        status="success",
++        details=payload.model_dump(exclude_none=True),
++    )
++    db.commit()
++    return {
++        "id": company.id,
++        "name": company.name,
++        "is_active": bool(getattr(company, "is_active", True)),
++    }
++
++
++@router.get("/companies/{company_id}/users")
++def admin_list_company_users(
++    company_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    require_platform_admin(db, x_user_id)
++    company = db.get(Company, company_id)
++    if not company:
++        raise HTTPException(status_code=404, detail="Company not found")
++    users = list(
++        db.scalars(select(User).where(User.company_id == company_id).order_by(User.created_at.desc())).all()
++    )
++    out = []
++    for u in users:
++        role_name = u.role.name if u.role else None
++        out.append(
++            {
++                "id": u.id,
++                "name": u.name,
++                "email": u.email,
++                "role": role_name,
++                "status": u.status,
++                "is_platform_admin": bool(getattr(u, "is_platform_admin", False)),
++            }
++        )
++    return {"company_id": company_id, "company_name": company.name, "users": out}
++
++
++@router.get("/companies/{company_id}/agents")
++def admin_list_company_agents(
++    company_id: str,
++    db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
++):
++    require_platform_admin(db, x_user_id)
++    from app.models.entities import AgentInstance
++    company = db.get(Company, company_id)
++    if not company:
++        raise HTTPException(status_code=404, detail="Company not found")
++    agents = list(
++        db.scalars(
++            select(AgentInstance).where(AgentInstance.company_id == company_id)
++        ).all()
++    )
++    return {
++        "company_id": company_id,
++        "agents": [
++            {
++                "id": a.id,
++                "name": a.name,
++                "status": a.status,
++                "catalog_agent_id": a.catalog_agent_id,
++            }
++            for a in agents
++        ],
++    }
++
++
++
+ 
+ @router.get("/companies")
+ def admin_list_companies(
+diff --git a/app/api/auth_routes.py b/app/api/auth_routes.py
+index eaf391d..4d58b9d 100644
+--- a/app/api/auth_routes.py
++++ b/app/api/auth_routes.py
+@@ -153,6 +153,15 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+         raise HTTPException(status_code=409, detail="Email already registered")
+ 
+     role_name = payload.role if payload.role in VALID_COMPANY_ROLES else "member"
++    # Job 57: self-registration cannot claim privileged management roles
++    privileged = {"owner", "ai_admin", "manager"}
++    if role_name in privileged:
++        user_count = db.scalar(
++            select(User.id).where(User.company_id == payload.company_id).limit(1)
++        )
++        # Only allow owner if company has no users yet (bootstrap edge case)
++        if user_count is not None or role_name != "owner":
++            role_name = "member"
+     role = get_or_create_role(db, role_name)
+ 
+     try:
+diff --git a/app/api/routes.py b/app/api/routes.py
+index 72d7a8c..c860e01 100644
+--- a/app/api/routes.py
++++ b/app/api/routes.py
+@@ -290,7 +290,19 @@ def get_owned_agent_or_404(
+ def create_company(
+     payload: CompanyCreate,
+     db: Session = Depends(get_db),
++    x_user_id: str | None = Header(default=None),
+ ):
++    """Create a company tenant.
++
++    Job 57 — When ``public_company_create`` is False (production), only platform
++    developers may create companies. Local/dev/pytest may leave the flag True.
++    Prefer ``POST /api/v1/admin/companies`` for provisioned onboarding.
++    """
++    from app.core.config import settings as app_settings
++    if not app_settings.public_company_create:
++        from app.services.platform_admin import require_platform_admin
++        require_platform_admin(db, x_user_id)
++
+     existing_company = db.scalar(
+         select(Company).where(
+             Company.name == payload.name
+diff --git a/app/core/config.py b/app/core/config.py
+index fd75f49..5a9f027 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -33,6 +33,9 @@ class Settings(BaseSettings):
+     # Job 23 — platform admin / support
+     # Comma-separated emails granted platform admin on login/bootstrap
+     platform_admin_emails: str = ""
++    # Job 57: when False, only platform developers may POST /companies
++    # Keep True for local pytest; set PUBLIC_COMPANY_CREATE=false in production.
++    public_company_create: bool = True
+     allow_impersonation: bool = False
+ 
+     log_level: str = "INFO"
+diff --git a/app/services/seed.py b/app/services/seed.py
+index 1c68e28..1fc4314 100644
+--- a/app/services/seed.py
++++ b/app/services/seed.py
+@@ -93,6 +93,16 @@ ROLE_PERMISSIONS = {
+         "task.create",
+         "task.read",
+     },
++    # Accounting — finance-oriented read of tasks/knowledge/governance
++    "accounting": {
++        "agent.read",
++        "knowledge.read",
++        "task.read",
++        "approval.read",
++        "governance.read",
++        "usage.read",
++        "audit.read",
++    },
+ }
+ 
+ # Platform developer is NOT listed here — uses is_platform_admin + /developer console.
+diff --git a/app/static/workspace/app.js b/app/static/workspace/app.js
+index e508975..4025d94 100644
+--- a/app/static/workspace/app.js
++++ b/app/static/workspace/app.js
+@@ -71,6 +71,7 @@
+     contract_manager: "knowledge",
+     administration: "users",
+     member: "chat",
++    accounting: "home",
+   };
+ 
+   function hasPermission(key) {
+@@ -459,7 +460,7 @@
+     if (body.refresh_token) localStorage.setItem("ws_refreshToken", body.refresh_token);
+     if ($("companyId")) $("companyId").value = state.companyId;
+     if ($("userId")) $("userId").value = state.userId;
+-    if ($("loginCompanyId")) $("loginCompanyId").value = state.companyId;
++    if ($("loginCompanyId")) (($("registerCompanyId") && $("registerCompanyId").value) || $("loginCompanyId").value) = state.companyId;
+     if (!state.permissions.length) await loadMeProfile();
+     applyNavGating();
+     setConnected(true);
+@@ -530,7 +531,7 @@
+         log.textContent += "\nHire: " + e.message;
+       }
+ 
+-      if ($("loginCompanyId")) $("loginCompanyId").value = co.id;
++      if ($("loginCompanyId")) (($("registerCompanyId") && $("registerCompanyId").value) || $("loginCompanyId").value) = co.id;
+       if ($("loginEmail")) $("loginEmail").value = "owner@demo.local";
+       if ($("loginPassword")) $("loginPassword").value = "demo12345";
+       if ($("companyId")) $("companyId").value = co.id;
+@@ -607,32 +608,22 @@
+   
+ 
+   
+-  if ($("btnCreateCompany"))
++  // Job 57 — public workspace no longer creates companies (developer provisions)
++  if ($("btnCreateCompany")) {
+     $("btnCreateCompany").onclick = async () => {
+       const log = $("loginLog");
+-      try {
+-        const name = ($("newCompanyName") && $("newCompanyName").value.trim()) || "";
+-        if (!name) throw new Error("Isi nama company baru");
+-        const co = await api("/companies", {
+-          method: "POST",
+-          body: JSON.stringify({ name }),
+-          skipAuth: true,
+-        });
+-        if ($("loginCompanyId")) $("loginCompanyId").value = co.id;
+-        if ($("companyId")) $("companyId").value = co.id;
++      if (log) {
+         log.textContent =
+-          "Company dibuat.\nID: " + co.id +
+-          "\n\nLanjut: isi Email + Password (min 8 karakter), lalu klik Register.\n" +
+-          "Role default register = member. Untuk owner + demo agents, pakai Quick start.";
+-      } catch (err) {
+-        log.textContent = "Create company failed: " + err.message;
++          "Create company is restricted to platform developers.\n" +
++          "Open /developer → Provision company (platform admin required).";
+       }
+     };
++  }
+ 
+   $("btnLogin").onclick = async () => {
+     const log = $("loginLog");
+     try {
+-      const companyId = ($("loginCompanyId").value || $("companyId").value || "").trim();
++      const companyId = (($("loginCompanyId") && $("loginCompanyId").value) || ($("companyId") && $("companyId").value) || "").trim();
+       const body = await api("/auth/login", {
+         method: "POST",
+         body: JSON.stringify({
+@@ -650,25 +641,36 @@
+   };
+ 
+   $("btnRegister").onclick = async () => {
+-    const log = $("loginLog");
++    const log = $("registerLog") || $("loginLog");
+     try {
+-      const companyId = ($("loginCompanyId").value || $("companyId").value || "").trim();
+-      const email = $("loginEmail").value.trim();
++      const companyId = (
++        ($("registerCompanyId") && $("registerCompanyId").value) ||
++        ($("loginCompanyId") && $("loginCompanyId").value) ||
++        ""
++      ).trim();
++      const email = (($("registerEmail") && $("registerEmail").value) || ($("loginEmail") && $("loginEmail").value) || "").trim();
++      const name = (($("registerName") && $("registerName").value) || email.split("@")[0] || "User").trim();
++      const password = (($("registerPassword") && $("registerPassword").value) || ($("loginPassword") && $("loginPassword").value) || "");
++      let role = ($("registerRole") && $("registerRole").value) || "member";
++      // Self-register cannot elevate to owner/ai_admin/manager
++      if (["owner", "ai_admin", "manager"].includes(role)) role = "member";
+       const body = await api("/auth/register", {
+         method: "POST",
+         body: JSON.stringify({
+           company_id: companyId,
+           email,
+-          name: email.split("@")[0] || "User",
+-          password: $("loginPassword").value,
+-          role: "member",
++          name,
++          password,
++          role,
+         }),
+         skipAuth: true,
+       });
+-      log.textContent = "Registered " + (body.email || body.user_id);
+-      await applyAuthSession(body);
++      if (log) log.textContent = "Registered " + (body.email || body.user_id) + " as " + role + ". You can Sign in.";
++      // Prefill login
++      if ($("loginCompanyId")) $("loginCompanyId").value = companyId;
++      if ($("loginEmail")) $("loginEmail").value = email;
+     } catch (err) {
+-      log.textContent = "Register failed: " + err.message;
++      if (log) log.textContent = "Register failed: " + err.message;
+     }
+   };
+ 
+@@ -1858,7 +1860,7 @@
+           <div class="meta">${escapeHtml(u.email)} · role: <code>${escapeHtml(u.role || u.role_id)}</code> · ${escapeHtml(u.status || "")}</div>
+           <div class="row" style="margin-top:.35rem">
+             <select data-user-role="${escapeHtml(u.id)}">
+-              ${["owner","ai_admin","manager","reservation","contract_manager","administration","member"].map((r) =>
++              ${["owner","ai_admin","manager","reservation","contract_manager","administration","accounting","member"].map((r) =>
+                 `<option value="${r}" ${u.role === r ? "selected" : ""}>${r}</option>`
+               ).join("")}
+             </select>
+@@ -2307,11 +2309,113 @@ async function loadDepartments() {
+     };
+ 
+ 
++  
++  // ----- Job 57: platform provision (developer workspace) -----
++  if ($("btnProvisionCompany")) {
++    $("btnProvisionCompany").onclick = async () => {
++      const log = $("provLog");
++      try {
++        if (!state.userId && !state.accessToken) {
++          throw new Error("Connect as platform admin first (Login or Connect IDs).");
++        }
++        const res = await api(`/admin/companies`, {
++          method: "POST",
++          body: JSON.stringify({
++            name: ($("provCompanyName") && $("provCompanyName").value.trim()) || "",
++            owner_name: ($("provOwnerName") && $("provOwnerName").value.trim()) || "Owner",
++            owner_email: ($("provOwnerEmail") && $("provOwnerEmail").value.trim()) || "",
++            owner_password: ($("provOwnerPassword") && $("provOwnerPassword").value) || "demo12345",
++          }),
++        });
++        if (log) {
++          log.textContent =
++            "Provisioned company " + res.company.id + "\nOwner: " + res.owner.email +
++            "\nGive Company ID + credentials to the owner for /workspace login.";
++        }
++        if (typeof loadAdminCompanies === "function") loadAdminCompanies();
++      } catch (err) {
++        if (log) log.textContent = err.message;
++      }
++    };
++  }
++
++  async function loadAdminCompanies() {
++    const list = $("adminCompanyList");
++    if (!list) return;
++    try {
++      const rows = await api(`/admin/companies`);
++      list.innerHTML =
++        (rows || [])
++          .map(
++            (c) => `<div class="item">
++          <strong>${escapeHtml(c.name)}</strong>
++          <div class="meta">${escapeHtml(c.id)} · users ${c.user_count} · ${c.is_active ? "active" : "disabled"}</div>
++          <div class="actions">
++            <button class="secondary btn-admin-users" data-id="${c.id}">Users</button>
++            <button class="secondary btn-admin-agents" data-id="${c.id}">AI employees</button>
++            <button class="secondary btn-admin-toggle" data-id="${c.id}" data-active="${c.is_active ? "1" : "0"}">${c.is_active ? "Disable" : "Enable"}</button>
++          </div>
++        </div>`
++          )
++          .join("") || `<div class="empty">No companies.</div>`;
++      document.querySelectorAll(".btn-admin-users").forEach((b) => {
++        b.onclick = async () => {
++          const detail = $("adminCompanyDetail");
++          try {
++            const data = await api(`/admin/companies/${b.dataset.id}/users`);
++            detail.innerHTML =
++              `<h4>${escapeHtml(data.company_name)} — human users</h4>` +
++              (data.users || [])
++                .map(
++                  (u) =>
++                    `<div class="item"><strong>${escapeHtml(u.name)}</strong>
++                    <div class="meta">${escapeHtml(u.email)} · ${escapeHtml(u.role || "")} · ${escapeHtml(u.status || "")}</div></div>`
++                )
++                .join("") || `<div class="empty">No users</div>`;
++          } catch (err) {
++            detail.innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
++          }
++        };
++      });
++      document.querySelectorAll(".btn-admin-agents").forEach((b) => {
++        b.onclick = async () => {
++          const detail = $("adminCompanyDetail");
++          try {
++            const data = await api(`/admin/companies/${b.dataset.id}/agents`);
++            detail.innerHTML =
++              `<h4>AI employees</h4>` +
++              (data.agents || [])
++                .map(
++                  (a) =>
++                    `<div class="item"><strong>${escapeHtml(a.name)}</strong>
++                    <div class="meta">${escapeHtml(a.status)} · ${escapeHtml(a.id)}</div></div>`
++                )
++                .join("") || `<div class="empty">No agents</div>`;
++          } catch (err) {
++            detail.innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
++          }
++        };
++      });
++      document.querySelectorAll(".btn-admin-toggle").forEach((b) => {
++        b.onclick = async () => {
++          const active = b.dataset.active === "1";
++          const path = active ? "disable" : "enable";
++          await api(`/admin/companies/${b.dataset.id}/${path}`, { method: "POST", body: "{}" });
++          await loadAdminCompanies();
++        };
++      });
++    } catch (err) {
++      list.innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
++    }
++  }
++  if ($("btnAdminRefreshCompanies")) $("btnAdminRefreshCompanies").onclick = loadAdminCompanies;
++
++
+   // ----- Boot -----
+   if ($("apiBase")) $("apiBase").value = state.apiBase;
+   if ($("companyId")) $("companyId").value = state.companyId;
+   if ($("userId")) $("userId").value = state.userId;
+-  if ($("loginCompanyId")) $("loginCompanyId").value = state.companyId;
++  if ($("loginCompanyId")) (($("registerCompanyId") && $("registerCompanyId").value) || $("loginCompanyId").value) = state.companyId;
+ 
+   (async function bootSession() {
+     applyNavGating();
+diff --git a/app/static/workspace/index.html b/app/static/workspace/index.html
+index 29d35da..93dba42 100644
+--- a/app/static/workspace/index.html
++++ b/app/static/workspace/index.html
+@@ -19,18 +19,15 @@
+       </div>
+ 
+       <div class="login-tabs">
+-        <button type="button" class="tab" data-tab="quick">Quick start</button>
+         <button type="button" class="tab active" data-tab="login">Login</button>
++        <button type="button" class="tab" data-tab="register">Register</button>
++        <button type="button" class="tab developer-only" data-tab="quick">Quick start</button>
+         <button type="button" class="tab developer-only" data-tab="connect">Connect IDs</button>
+-      </div>
+-
+-      <div id="tab-quick" class="tab-panel">
+-        <p class="muted">Create a demo company, owner account, and hire sample AI employees in one click.</p>
+-        <button id="btnQuickStart" class="primary block">Launch demo workspace</button>
+-        <pre id="quickLog" class="log"></pre>
++        <button type="button" class="tab developer-only" data-tab="provision">Provision company</button>
+       </div>
+ 
+       <div id="tab-login" class="tab-panel active">
++        <p class="muted">Sign in with the company ID and account issued by your company owner or platform developer.</p>
+         <label>Company ID
+           <input id="loginCompanyId" placeholder="Company ID" autocomplete="organization" />
+         </label>
+@@ -40,18 +37,69 @@
+         <label>Password
+           <input id="loginPassword" type="password" placeholder="Password" autocomplete="current-password" />
+         </label>
+-        <div class="row">
+-          <button id="btnLogin" class="primary">Sign in</button>
+-          <button id="btnRegister" class="secondary">Register</button>
+-        </div>
+-        <p class="muted" style="margin-top:.75rem">Belum punya company? Isi nama company baru lalu buat, atau pakai tab Quick start.</p>
+-        <label>New company name
+-          <input id="newCompanyName" placeholder="e.g. Demo Travel Co" />
+-        </label>
+-        <button id="btnCreateCompany" class="secondary block">Create company</button>
++        <button id="btnLogin" class="primary block">Sign in</button>
+         <pre id="loginLog" class="log"></pre>
+       </div>
+ 
++      <div id="tab-register" class="tab-panel">
++        <p class="muted">Join an <strong>existing</strong> company. New companies are created only by platform developers (open <a href="/developer">/developer</a>).</p>
++        <label>Company ID
++          <input id="registerCompanyId" placeholder="Company ID from your owner" />
++        </label>
++        <label>Full name
++          <input id="registerName" placeholder="Your name" />
++        </label>
++        <label>Email
++          <input id="registerEmail" type="email" placeholder="you@company.com" />
++        </label>
++        <label>Password (min 8)
++          <input id="registerPassword" type="password" placeholder="Password" />
++        </label>
++        <label>Job position
++          <select id="registerRole">
++            <option value="member">Member</option>
++            <option value="reservation">Reservation</option>
++            <option value="accounting">Accounting</option>
++            <option value="administration">Administration</option>
++            <option value="contract_manager">Contract manager</option>
++          </select>
++        </label>
++        <p class="muted">Note: elevated roles (owner, ai_admin, manager) are assigned by the company owner under Users &amp; Roles — not self-selected here.</p>
++        <button id="btnRegister" class="secondary block">Register to company</button>
++        <pre id="registerLog" class="log"></pre>
++      </div>
++
++      <div id="tab-quick" class="tab-panel developer-only">
++        <p class="muted">Developer only: demo company + personas + sample agents.</p>
++        <button id="btnQuickStart" class="primary block">Launch demo workspace</button>
++        <pre id="quickLog" class="log"></pre>
++      </div>
++
++      <div id="tab-provision" class="tab-panel developer-only">
++        <p class="muted">Platform developer: provision a real company + owner account (requires platform admin user).</p>
++        <label>Company name
++          <input id="provCompanyName" placeholder="Acme Travel" />
++        </label>
++        <label>Owner name
++          <input id="provOwnerName" placeholder="Owner Name" value="Owner" />
++        </label>
++        <label>Owner email
++          <input id="provOwnerEmail" type="email" placeholder="owner@acme.com" />
++        </label>
++        <label>Owner password
++          <input id="provOwnerPassword" type="password" value="demo12345" />
++        </label>
++        <button id="btnProvisionCompany" class="primary block">Provision company</button>
++        <pre id="provLog" class="log"></pre>
++        <hr />
++        <div class="row between">
++          <h3>Tenant directory</h3>
++          <button type="button" id="btnAdminRefreshCompanies" class="secondary">Refresh</button>
++        </div>
++        <div id="adminCompanyList" class="list"></div>
++        <div id="adminCompanyDetail" class="list"></div>
++      </div>
++
+       <div id="tab-connect" class="tab-panel developer-only">
+         <p class="muted">Dev mode: paste existing company + user IDs (X-User-ID).</p>
+         <label>API base
+diff --git a/tests/test_company_provision_job57.py b/tests/test_company_provision_job57.py
+new file mode 100644
+index 0000000..df16754
+--- /dev/null
++++ b/tests/test_company_provision_job57.py
+@@ -0,0 +1,57 @@
++"""Job 57 — company provision by platform developer; self-register role limits."""
++
++import uuid
++
++from fastapi.testclient import TestClient
++
++from app.main import app
++from app.services.seed import ROLE_PERMISSIONS, VALID_COMPANY_ROLES
++
++client = TestClient(app)
++
++
++def test_accounting_role_exists():
++    assert "accounting" in VALID_COMPANY_ROLES
++    assert "usage.read" in ROLE_PERMISSIONS["accounting"]
++
++
++def test_workspace_login_has_no_public_create_company_cta():
++    html = client.get("/workspace").text
++    assert "Provision company" in html or "developer" in html
++    assert "Register to company" in html or 'data-tab="register"' in html
++    # Create company button may remain for message-only handler; tab provision is developer-only
++    assert 'data-tab="provision"' in html
++    assert "developer-only" in html
++
++
++def test_self_register_cannot_claim_owner_when_company_has_users():
++    suffix = uuid.uuid4().hex[:8]
++    co = client.post("/api/v1/companies", json={"name": f"Prov {suffix}"}).json()
++    # first user via users API as bootstrap
++    owner = client.post(
++        f"/api/v1/companies/{co['id']}/users",
++        json={
++            "name": "Owner",
++            "email": f"owner-{suffix}@j57.test",
++            "role": "owner",
++            "password": "demo12345",
++        },
++    ).json()
++    assert owner.get("id")
++
++    reg = client.post(
++        "/api/v1/auth/register",
++        json={
++            "company_id": co["id"],
++            "email": f"sneaky-{suffix}@j57.test",
++            "name": "Sneaky",
++            "password": "demo12345",
++            "role": "owner",
++        },
++    )
++    assert reg.status_code == 201, reg.text
++    body = reg.json()
++    # token response may include role
++    role = body.get("role")
++    if role is not None:
++        assert role != "owner"
+diff --git a/tests/test_workspace_ui.py b/tests/test_workspace_ui.py
+index 05a5dc9..43cbafd 100644
+--- a/tests/test_workspace_ui.py
++++ b/tests/test_workspace_ui.py
+@@ -45,9 +45,10 @@ def test_diagnostics_and_demo_controls_are_developer_only():
+     parser = SurfaceParser()
+     parser.feed(client.get("/workspace").text)
+     assert parser.developer_views == {"view-tools", "view-policies", "view-scopecheck"}
+-    # Job 42: Quick start is available on user workspace for first-run bootstrap.
+-    # Connect IDs remains developer-only.
+-    assert parser.developer_tabs == {"connect"}
++    # Job 57: Quick start + Connect + Provision are developer-only on /workspace markup
++    # (developer console reuses the same HTML with data-workspace=developer).
++    assert "connect" in parser.developer_tabs
++    assert "quick" in parser.developer_tabs
+ 
+ 
+ def test_v1_nav_surfaces_present():

@@ -73,4 +73,7 @@ def decode_token(token: str, *, expected_type: str | None = None) -> dict[str, A
 
 
 def decode_access_token(token: str) -> dict[str, Any]:
-    return decode_token(token, expected_type="access")
+    payload = decode_token(token, expected_type="access")
+    if payload.get("purpose") == "password_reset":
+        raise ValueError("Password reset tokens cannot authenticate requests")
+    return payload

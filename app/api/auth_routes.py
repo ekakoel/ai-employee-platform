@@ -14,18 +14,11 @@ from app.core.security import (
     create_refresh_token,
     decode_token,
 )
-from app.models.entities import Company, Role, User
+from app.models.entities import User
 from app.services.audit import record_audit
-from app.services.seed import VALID_COMPANY_ROLES, get_or_create_role
-from app.services.platform_admin import sync_platform_admin_flag
 from app.services.access import user_permission_keys
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
-
-
-class TokenRequest(BaseModel):
-    company_id: str
-    email: str = Field(min_length=3)
 
 
 class LoginRequest(BaseModel):
@@ -33,14 +26,6 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     # Optional — legacy clients may still send company_id
     company_id: str | None = None
-
-
-class RegisterRequest(BaseModel):
-    company_id: str
-    email: str = Field(min_length=3, max_length=320)
-    name: str = Field(min_length=1, max_length=200)
-    password: str = Field(min_length=8, max_length=128)
-    role: str = Field(default="member", max_length=50)
 
 
 class RefreshRequest(BaseModel):
@@ -94,21 +79,10 @@ def _issue_pair(user: User) -> TokenResponse:
     )
 
 
-@router.post("/token", response_model=TokenResponse)
-def issue_token_legacy(payload: TokenRequest, db: Session = Depends(get_db)):
-    """Dev/legacy: issue tokens by company + email without password."""
-    user = db.scalar(
-        select(User).where(
-            User.company_id == payload.company_id,
-            User.email == payload.email,
-        )
-    )
-    if not user or user.status != "active":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials",
-        )
-    return _issue_pair(user)
+@router.post("/token")
+def issue_token_legacy():
+    """Passwordless token issuance is disabled in every environment."""
+    raise HTTPException(status_code=410, detail="Use password authentication at /auth/login")
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -133,7 +107,6 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
-    sync_platform_admin_flag(db, user)
     record_audit(
         db,
         company_id=user.company_id,
@@ -147,64 +120,10 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     return _issue_pair(user)
 
 
-@router.post(
-    "/register",
-    response_model=TokenResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-def register(payload: RegisterRequest, db: Session = Depends(get_db)):
-    company = db.get(Company, payload.company_id)
-    if not company:
-        raise HTTPException(status_code=404, detail="Company not found")
-
-    existing = db.scalar(
-        select(User).where(
-            User.company_id == payload.company_id,
-            User.email == payload.email.strip().lower(),
-        )
-    )
-    if existing:
-        raise HTTPException(status_code=409, detail="Email already registered")
-
-    role_name = payload.role if payload.role in VALID_COMPANY_ROLES else "member"
-    # Job 57: self-registration cannot claim privileged management roles
-    privileged = {"owner", "ai_admin", "manager"}
-    if role_name in privileged:
-        user_count = db.scalar(
-            select(User.id).where(User.company_id == payload.company_id).limit(1)
-        )
-        # Only allow owner if company has no users yet (bootstrap edge case)
-        if user_count is not None or role_name != "owner":
-            role_name = "member"
-    role = get_or_create_role(db, role_name)
-
-    try:
-        pw_hash = hash_password(payload.password)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    user = User(
-        company_id=payload.company_id,
-        email=payload.email.strip().lower(),
-        name=payload.name.strip(),
-        password_hash=pw_hash,
-        role_id=role.id,
-        status="active",
-    )
-    db.add(user)
-    db.flush()
-    record_audit(
-        db,
-        company_id=user.company_id,
-        user_id=user.id,
-        action="auth.register",
-        resource_type="user",
-        resource_id=user.id,
-        status="success",
-    )
-    db.commit()
-    db.refresh(user)
-    return _issue_pair(user)
+@router.post("/register")
+def register():
+    """Company membership is provisioned by an authorized administrator."""
+    raise HTTPException(status_code=403, detail="Public registration is disabled; contact your company administrator")
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -256,7 +175,6 @@ def read_me(
     _ = user.role
     if user.role is not None:
         _ = user.role.permissions
-    sync_platform_admin_flag(db, user)
     db.commit()
     return MeResponse(
         user_id=user.id,
@@ -278,7 +196,6 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
     When app debug is on, includes a reset_token for local testing without SMTP.
     """
     from app.core.config import settings
-    from datetime import timedelta
 
     email = payload.email.strip().lower()
     users = list(
@@ -295,7 +212,7 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
     token = create_access_token(
         subject=user.id,
         company_id=user.company_id,
-        extra={"purpose": "password_reset", "email": user.email},
+        extra={"type": "password_reset", "purpose": "password_reset", "email": user.email},
         expires_minutes=30,
     )
     record_audit(
@@ -318,7 +235,7 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
 def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
     """Set a new password using a forgot-password token."""
     try:
-        data = decode_token(payload.token, expected_type="access")
+        data = decode_token(payload.token, expected_type="password_reset")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid or expired reset token") from exc
 

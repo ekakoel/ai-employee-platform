@@ -18,7 +18,7 @@ from app.core.database import (
     migrate_sqlite_schema,
 )
 from app.core.logging import setup_logging
-from app.core.middleware import AuthBootstrapMiddleware, RequestIdMiddleware
+from app.core.middleware import RequestIdMiddleware
 from app.services.seed import seed_catalog
 
 WORKSPACE_DIR = Path(__file__).resolve().parent / "static" / "workspace"
@@ -26,6 +26,7 @@ WORKSPACE_DIR = Path(__file__).resolve().parent / "static" / "workspace"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    settings.validate_security()
     setup_logging()
     Base.metadata.create_all(bind=engine)
     migrate_sqlite_schema()
@@ -43,7 +44,6 @@ app = FastAPI(
 )
 
 app.add_middleware(RequestIdMiddleware)
-app.add_middleware(AuthBootstrapMiddleware)
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(router)

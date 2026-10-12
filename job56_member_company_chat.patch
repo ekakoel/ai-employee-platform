@@ -1,0 +1,367 @@
+diff --git a/app/api/routes.py b/app/api/routes.py
+index 0d7bf8f..72d7a8c 100644
+--- a/app/api/routes.py
++++ b/app/api/routes.py
+@@ -134,6 +134,9 @@ from app.services.access import (
+     require_agent_approve,
+     require_agent_manage,
+     require_agent_use,
++    require_agent_chat,
++    grant_operational_access_for_agent,
++    grant_all_agents_to_user,
+ )
+ from app.services.approval import ApprovalService
+ from app.services.consultation import run_consultation
+@@ -455,6 +458,11 @@ def create_user(
+         status="success",
+     )
+ 
++    # Job 56: new employee can chat with existing AI employees
++    try:
++        grant_all_agents_to_user(db, company_id=company_id, user_id=user.id)
++    except Exception:
++        pass
+     db.commit()
+     db.refresh(user)
+     _ = user.role
+@@ -681,6 +689,14 @@ def hire_agent(
+                 skill_id=skill.id,
+             )
+ 
++    # Job 56: every company employee can advisory-chat with hired agents
++    try:
++        grant_operational_access_for_agent(
++            db, company_id=company_id, agent_instance_id=instance.id
++        )
++    except Exception:
++        pass
++
+     record_audit(
+         db,
+         company_id=company_id,
+@@ -2724,12 +2740,14 @@ def list_conversations_api(
+         user_id=None,
+         agent_instance_id=agent_instance_id,
+     )
+-    from app.services.access import get_agent_access, is_company_admin
+-    if not is_company_admin(user):
+-        conversations = [item for item in conversations if (
+-            (access := get_agent_access(db, company_id=company_id, agent_instance_id=item.agent_instance_id, user_id=user.id))
+-            and access.can_use
+-        )]
++    # Job 56: employees with agent.read may see company conversations they can chat with
++    from app.services.access import can_chat_with_agent
++    conversations = [
++        item for item in conversations
++        if can_chat_with_agent(
++            db, user, company_id=company_id, agent_instance_id=item.agent_instance_id
++        )
++    ]
+     return conversation_reads(db, company_id=company_id, conversations=conversations)
+ 
+ 
+@@ -2749,7 +2767,7 @@ def create_conversation_api(
+     user = require_company_user(db, company_id, x_user_id)
+     require_permission(user, "task.create")
+     agent = get_owned_agent_or_404(db, company_id, payload.agent_instance_id)
+-    require_agent_use(
++    require_agent_chat(
+         db, user, company_id=company_id, agent_instance_id=agent.id
+     )
+     try:
+@@ -2786,7 +2804,7 @@ def list_messages_api(
+     )
+     if not conv:
+         raise HTTPException(status_code=404, detail="Conversation not found")
+-    require_agent_use(db, user, company_id=company_id, agent_instance_id=conv.agent_instance_id)
++    require_agent_chat(db, user, company_id=company_id, agent_instance_id=conv.agent_instance_id)
+     messages = list_messages(
+         db, company_id=company_id, conversation_id=conversation_id
+     )
+@@ -2818,7 +2836,7 @@ def post_message_api(
+     )
+     if not conv:
+         raise HTTPException(status_code=404, detail="Conversation not found")
+-    require_agent_use(
++    require_agent_chat(
+         db, user, company_id=company_id, agent_instance_id=conv.agent_instance_id
+     )
+     get_owned_agent_or_404(db, company_id, conv.agent_instance_id)
+diff --git a/app/services/access.py b/app/services/access.py
+index 2197ae6..fa502fe 100644
+--- a/app/services/access.py
++++ b/app/services/access.py
+@@ -66,6 +66,163 @@ def require_agent_use(
+     )
+ 
+ 
++# Roles that may chat/consult any company agent for shared knowledge (advisory).
++OPERATIONAL_CHAT_ROLES = frozenset({
++    "member",
++    "reservation",
++    "contract_manager",
++    "administration",
++    "manager",
++    "ai_admin",
++    "owner",
++})
++
++
++def can_chat_with_agent(
++    db: Session,
++    user: User,
++    *,
++    company_id: str,
++    agent_instance_id: str,
++) -> bool:
++    """Advisory chat: company admins, explicit can_use, or any active employee with agent.read."""
++    if user.company_id != company_id or user.status != "active":
++        return False
++    if is_company_admin(user):
++        return True
++    access = get_agent_access(
++        db,
++        company_id=company_id,
++        agent_instance_id=agent_instance_id,
++        user_id=user.id,
++    )
++    if access and access.can_use:
++        return True
++    keys = user_permission_keys(user)
++    # Company knowledge Q&A: employees with agent.read may open advisory chat
++    if "agent.read" in keys:
++        return True
++    role_name = user.role.name if user.role else ""
++    return role_name in OPERATIONAL_CHAT_ROLES
++
++
++def require_agent_chat(
++    db: Session,
++    user: User,
++    *,
++    company_id: str,
++    agent_instance_id: str,
++) -> None:
++    """Allow advisory conversation for company employees (knowledge Q&A).
++
++    Execute/tools still use require_agent_use (stricter).
++    """
++    if user.company_id != company_id or user.status != "active" or user.company is None or not user.company.is_active:
++        raise HTTPException(status_code=403, detail="User is not active in this company")
++    if can_chat_with_agent(
++        db, user, company_id=company_id, agent_instance_id=agent_instance_id
++    ):
++        return
++    raise HTTPException(
++        status_code=403,
++        detail=(
++            "You are not allowed to chat with this AI Employee. "
++            "Ask an owner or AI admin to grant access, or use an agent shared with your role."
++        ),
++    )
++
++
++def grant_operational_access_for_agent(
++    db: Session,
++    *,
++    company_id: str,
++    agent_instance_id: str,
++) -> int:
++    """Grant can_use to all active operational company users for one agent."""
++    from app.models.entities import Role
++
++    users = list(
++        db.scalars(
++            select(User).where(
++                User.company_id == company_id,
++                User.status == "active",
++            )
++        ).all()
++    )
++    granted = 0
++    for u in users:
++        role_name = u.role.name if u.role else ""
++        keys = user_permission_keys(u)
++        if role_name in {"owner", "ai_admin"}:
++            continue  # admin bypass
++        if role_name not in OPERATIONAL_CHAT_ROLES and "agent.read" not in keys:
++            continue
++        existing = get_agent_access(
++            db,
++            company_id=company_id,
++            agent_instance_id=agent_instance_id,
++            user_id=u.id,
++        )
++        if existing and existing.can_use:
++            continue
++        grant_access(
++            db,
++            company_id=company_id,
++            agent_instance_id=agent_instance_id,
++            user_id=u.id,
++            can_use=True,
++            can_manage=False,
++            can_approve=False,
++            is_supervisor=False,
++        )
++        granted += 1
++    return granted
++
++
++def grant_all_agents_to_user(
++    db: Session,
++    *,
++    company_id: str,
++    user_id: str,
++) -> int:
++    """When a new employee joins, grant can_use on every active hired agent."""
++    from app.models.entities import AgentInstance
++
++    user = db.get(User, user_id)
++    if not user or user.company_id != company_id:
++        return 0
++    agents = list(
++        db.scalars(
++            select(AgentInstance).where(
++                AgentInstance.company_id == company_id,
++                AgentInstance.status == "active",
++            )
++        ).all()
++    )
++    n = 0
++    for agent in agents:
++        existing = get_agent_access(
++            db,
++            company_id=company_id,
++            agent_instance_id=agent.id,
++            user_id=user_id,
++        )
++        if existing and existing.can_use:
++            continue
++        grant_access(
++            db,
++            company_id=company_id,
++            agent_instance_id=agent.id,
++            user_id=user_id,
++            can_use=True,
++            can_manage=False,
++            can_approve=False,
++            is_supervisor=False,
++        )
++        n += 1
++    return n
++
++
+ def require_agent_manage(
+     db: Session,
+     user: User,
+diff --git a/app/services/demo_reservation.py b/app/services/demo_reservation.py
+index 214e371..00e0669 100644
+--- a/app/services/demo_reservation.py
++++ b/app/services/demo_reservation.py
+@@ -265,6 +265,13 @@ def run_reservation_playbook(
+         db.add(agent)
+         db.flush()
+         hired_now = True
++        try:
++            from app.services.access import grant_operational_access_for_agent
++            grant_operational_access_for_agent(
++                db, company_id=company_id, agent_instance_id=agent.id
++            )
++        except Exception:
++            pass
+         # Ensure supervisor can use the agent (Job 37 access model)
+         if user_id:
+             try:
+diff --git a/tests/test_member_chat_job56.py b/tests/test_member_chat_job56.py
+new file mode 100644
+index 0000000..7a96e61
+--- /dev/null
++++ b/tests/test_member_chat_job56.py
+@@ -0,0 +1,86 @@
++"""Job 56 — company members can advisory-chat for shared knowledge Q&A."""
++
++import uuid
++
++from fastapi.testclient import TestClient
++
++from app.main import app
++from app.tools.connectors import MockExternalSystemClient, set_external_client
++
++client = TestClient(app)
++
++
++def test_member_can_create_conversation_and_post_message():
++    set_external_client(MockExternalSystemClient())
++    suffix = uuid.uuid4().hex[:8]
++    co = client.post("/api/v1/companies", json={"name": f"Chat {suffix}"}).json()
++    owner = client.post(
++        f"/api/v1/companies/{co['id']}/users",
++        json={
++            "name": "Owner",
++            "email": f"owner-{suffix}@c56.test",
++            "role": "owner",
++            "password": "demo12345",
++        },
++    ).json()
++    oh = {"X-User-ID": owner["id"]}
++
++    # Hire via playbook (auto-hire + operational grants)
++    pb = client.post(
++        f"/api/v1/companies/{co['id']}/demo/playbook-reservation",
++        headers=oh,
++        json={},
++    )
++    assert pb.status_code == 200, pb.text
++    agent_id = pb.json()["agent_instance_id"]
++    assert agent_id
++
++    member = client.post(
++        f"/api/v1/companies/{co['id']}/users",
++        headers=oh,
++        json={
++            "name": "Member",
++            "email": f"member-{suffix}@c56.test",
++            "role": "member",
++            "password": "demo12345",
++        },
++    ).json()
++    mh = {"X-User-ID": member["id"]}
++
++    # Seed company knowledge
++    client.post(
++        f"/api/v1/companies/{co['id']}/knowledge",
++        headers=oh,
++        json={
++            "title": "Company policy leave",
++            "content": "Employees receive 12 days annual leave. Contact HR for requests.",
++            "category": "policy",
++        },
++    )
++
++    conv = client.post(
++        f"/api/v1/companies/{co['id']}/conversations",
++        headers=mh,
++        json={"agent_instance_id": agent_id, "title": "Ask policy"},
++    )
++    assert conv.status_code == 201, conv.text
++    cid = conv.json()["id"]
++
++    msg = client.post(
++        f"/api/v1/companies/{co['id']}/conversations/{cid}/messages",
++        headers=mh,
++        json={"content": "How many annual leave days do employees get?"},
++    )
++    assert msg.status_code == 200, msg.text
++    body = msg.json()
++    # response shape may be {messages: ...} or similar
++    text = str(body).lower()
++    assert "not allowed" not in text
++    assert msg.status_code == 200
++
++
++def test_require_agent_chat_in_access_module():
++    from app.services.access import can_chat_with_agent, require_agent_chat
++
++    assert callable(can_chat_with_agent)
++    assert callable(require_agent_chat)

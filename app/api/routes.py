@@ -5,7 +5,9 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.auth import get_authenticated_user_id
 from app.core.database import get_db
+from app.services.platform_admin import require_platform_admin
 from app.knowledge.service import save_document
 # KnowledgeRead imported via schemas block
 from app.knowledge.indexing import replace_chunks_for_item, replace_chunks_for_document
@@ -188,7 +190,10 @@ def get_current_user(
 ) -> User:
     from app.core.auth import resolve_user_id
 
-    user_id = resolve_user_id(authorization=authorization, x_user_id=x_user_id)
+    # x_user_id is supplied by the Bearer dependency, never a client header.
+    user_id = resolve_user_id(authorization=authorization, x_user_id=None) if authorization else x_user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
     user = db.get(User, user_id)
     if not user or user.status != "active":
         raise HTTPException(
@@ -290,19 +295,12 @@ def get_owned_agent_or_404(
 def create_company(
     payload: CompanyCreate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    admin: User = Depends(require_platform_admin),
 ):
-    """Create a company tenant.
+    """Only a verified platform admin may create tenants.
 
-    Job 57 — When ``public_company_create`` is False (production), only platform
-    developers may create companies. Local/dev/pytest may leave the flag True.
-    Prefer ``POST /api/v1/admin/companies`` for provisioned onboarding.
+    Prefer /admin/companies to provision the owner in the same transaction.
     """
-    from app.core.config import settings as app_settings
-    if not app_settings.public_company_create:
-        from app.services.platform_admin import require_platform_admin
-        require_platform_admin(db, x_user_id)
-
     existing_company = db.scalar(
         select(Company).where(
             Company.name == payload.name
@@ -333,8 +331,6 @@ def create_company(
             detail=f"Company '{payload.name}' already exists.",
         ) from exc
 
-    # Company creator is intentionally separated from
-    # user authentication for this local MVP.
     db.commit()
     db.refresh(company)
 
@@ -350,7 +346,7 @@ def execute_agent_tool(
     tool_name: str,
     payload: dict,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(
         db,
@@ -395,33 +391,20 @@ def create_user(
     company_id: str,
     payload: UserCreate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     company = get_company_or_404(
         db,
         company_id,
     )
 
-    existing_users = db.scalar(
-        select(User.id).where(User.company_id == company_id).limit(1)
-    )
-    # First user for a company is bootstrap (Quick start / open setup).
-    # Later users require team.manage from a valid company member.
-    if existing_users is not None:
-        if not x_user_id:
-            raise HTTPException(
-                status_code=401,
-                detail="Authentication required to add users",
-            )
-        current = require_company_user(
-            db,
-            company_id,
-            x_user_id,
-        )
-        require_permission(
-            current,
-            "team.manage",
-        )
+    current = require_company_user(db, company_id, x_user_id)
+    require_permission(current, "team.manage")
+    from app.services.seed import VALID_COMPANY_ROLES
+    if payload.role not in VALID_COMPANY_ROLES:
+        raise HTTPException(status_code=400, detail="Invalid company role")
+    if payload.role == "owner":
+        raise HTTPException(status_code=403, detail="Owners are created through platform onboarding")
 
     role = get_or_create_role(
         db,
@@ -490,7 +473,7 @@ def create_user(
 def list_company_users(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """List company users (Job 36 — team admin)."""
     user = require_company_user(db, company_id, x_user_id)
@@ -516,7 +499,7 @@ def update_company_user_role(
     user_id: str,
     payload: UserRoleUpdate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """Change a company user's role (owner / team.manage only)."""
     from app.services.seed import VALID_COMPANY_ROLES
@@ -531,6 +514,10 @@ def update_company_user_role(
     role_name = payload.role if payload.role in VALID_COMPANY_ROLES else None
     if not role_name:
         raise HTTPException(status_code=400, detail=f"Invalid role: {payload.role}")
+    if role_name == "owner":
+        raise HTTPException(status_code=403, detail="Owner assignment is restricted to platform onboarding")
+    if target.role and target.role.name == "owner" and actor.role.name != "owner":
+        raise HTTPException(status_code=403, detail="Only an owner may change another owner's role")
     role = get_or_create_role(db, role_name)
     target.role_id = role.id
     db.flush()
@@ -594,7 +581,7 @@ def hire_agent(
     catalog_agent_id: str,
     payload: HireAgentRequest,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(
         db,
@@ -738,7 +725,7 @@ def hire_agent(
 def list_company_subscriptions(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(
         db,
@@ -768,7 +755,7 @@ def cancel_subscription(
     company_id: str,
     subscription_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(
         db,
@@ -834,7 +821,7 @@ def cancel_subscription(
 def list_company_agents(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
     department_id: str | None = None,
 ):
     user = require_company_user(
@@ -864,7 +851,7 @@ def update_company_agent(
     agent_instance_id: str,
     payload: AgentInstanceUpdate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """Company customization of a hired Agent Instance."""
     user = require_company_user(
@@ -950,7 +937,7 @@ def list_agent_access(
     company_id: str,
     agent_instance_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     get_owned_agent_or_404(db, company_id, agent_instance_id)
@@ -974,7 +961,7 @@ def list_agent_access(
 def grant_operational_agent_access(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """
     Job 37 — Grant can_use on every hired agent to operational users
@@ -1045,7 +1032,7 @@ def assign_agent_access(
     agent_instance_id: str,
     payload: AgentAccessCreate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     agent = get_owned_agent_or_404(db, company_id, agent_instance_id)
@@ -1108,7 +1095,7 @@ def update_agent_access(
     access_id: str,
     payload: AgentAccessUpdate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     agent = get_owned_agent_or_404(db, company_id, agent_instance_id)
@@ -1158,7 +1145,7 @@ def revoke_agent_access(
     agent_instance_id: str,
     access_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     agent = get_owned_agent_or_404(db, company_id, agent_instance_id)
@@ -1204,7 +1191,7 @@ def revoke_agent_access(
 def list_company_skills(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.read")
@@ -1220,7 +1207,7 @@ def create_company_skill(
     company_id: str,
     payload: SkillCreate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     # Job 51 — skill catalog upgrades are platform-developer only (not company roles)
@@ -1269,7 +1256,7 @@ def list_agent_skill_assignments(
     company_id: str,
     agent_instance_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     get_owned_agent_or_404(db, company_id, agent_instance_id)
@@ -1289,7 +1276,7 @@ def assign_agent_skill(
     agent_instance_id: str,
     payload: AgentSkillAssign,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     agent = get_owned_agent_or_404(db, company_id, agent_instance_id)
@@ -1354,7 +1341,7 @@ def unassign_agent_skill(
     agent_instance_id: str,
     assignment_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     agent = get_owned_agent_or_404(db, company_id, agent_instance_id)
@@ -1400,7 +1387,7 @@ def unassign_agent_skill(
 def list_company_policies(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.read")
@@ -1422,7 +1409,7 @@ def create_company_policy(
     company_id: str,
     payload: PolicyCreate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.manage")
@@ -1472,7 +1459,7 @@ def update_company_policy(
     policy_id: str,
     payload: PolicyUpdate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.manage")
@@ -1513,7 +1500,7 @@ def delete_company_policy(
     company_id: str,
     policy_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.manage")
@@ -1551,7 +1538,7 @@ def search_company_knowledge(
     company_id: str,
     payload: KnowledgeSearchRequest,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
     agent_instance_id: str | None = None,
 ):
     user = require_company_user(db, company_id, x_user_id)
@@ -1584,7 +1571,7 @@ def list_agent_memories(
     company_id: str,
     agent_instance_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     get_owned_agent_or_404(db, company_id, agent_instance_id)
@@ -1604,7 +1591,7 @@ def create_agent_memory(
     agent_instance_id: str,
     payload: AgentMemoryCreate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     agent = get_owned_agent_or_404(db, company_id, agent_instance_id)
@@ -1650,7 +1637,7 @@ def update_agent_memory(
     memory_id: str,
     payload: AgentMemoryUpdate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     agent = get_owned_agent_or_404(db, company_id, agent_instance_id)
@@ -1697,7 +1684,7 @@ def delete_agent_memory(
     agent_instance_id: str,
     memory_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     agent = get_owned_agent_or_404(db, company_id, agent_instance_id)
@@ -1740,7 +1727,7 @@ def delete_agent_memory(
 def list_company_experiences(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
     status_filter: str | None = None,
 ):
     user = require_company_user(db, company_id, x_user_id)
@@ -1763,7 +1750,7 @@ def create_experience_candidate(
     company_id: str,
     payload: ExperienceCreate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "task.create")
@@ -1841,7 +1828,7 @@ def create_experience_from_task(
     task_id: str,
     payload: ExperienceFromTaskRequest,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "task.create")
@@ -1886,7 +1873,7 @@ def validate_company_experience(
     experience_id: str,
     payload: ExperienceValidateRequest,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     # validation is a management/governance action
@@ -1943,7 +1930,7 @@ def get_company_experience(
     company_id: str,
     experience_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.read")
@@ -1964,7 +1951,7 @@ def feedback_company_experience(
     experience_id: str,
     payload: ExperienceFeedbackRequest,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """Job 10 — human feedback on a validated experience (confidence + correction)."""
     user = require_company_user(db, company_id, x_user_id)
@@ -2016,7 +2003,7 @@ def reuse_company_experience(
     company_id: str,
     experience_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """Record that a validated experience was reused successfully (confidence nudge)."""
     user = require_company_user(db, company_id, x_user_id)
@@ -2056,7 +2043,7 @@ def archive_company_experience(
     company_id: str,
     experience_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.manage")
@@ -2089,7 +2076,7 @@ def search_company_experiences(
     company_id: str,
     payload: ExperienceSearchRequest,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.read")
@@ -2112,7 +2099,7 @@ def create_knowledge(
     company_id: str,
     payload: KnowledgeCreate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(
         db,
@@ -2168,7 +2155,7 @@ def create_agent_knowledge(
     agent_instance_id: str,
     payload: KnowledgeCreate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(
         db,
@@ -2228,7 +2215,7 @@ def list_knowledge(
     company_id: str,
     agent_instance_id: str | None = None,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(
         db,
@@ -2271,7 +2258,7 @@ def update_knowledge(
     knowledge_id: str,
     payload: KnowledgeUpdate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(
         db,
@@ -2327,7 +2314,7 @@ def delete_knowledge(
     company_id: str,
     knowledge_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(
         db,
@@ -2378,7 +2365,7 @@ def delete_knowledge(
 def list_departments(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.read")
@@ -2400,7 +2387,7 @@ def create_department(
     company_id: str,
     payload: DepartmentCreate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "team.manage")
@@ -2443,7 +2430,7 @@ def update_department(
     department_id: str,
     payload: DepartmentUpdate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "team.manage")
@@ -2470,7 +2457,7 @@ def update_department(
 def list_agent_teams(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
     department_id: str | None = None,
 ):
     user = require_company_user(db, company_id, x_user_id)
@@ -2512,7 +2499,7 @@ def create_agent_team(
     company_id: str,
     payload: AgentTeamCreate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.manage")
@@ -2587,7 +2574,7 @@ def add_team_members(
     team_id: str,
     payload: AgentTeamAddMembers,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.manage")
@@ -2644,7 +2631,7 @@ def add_team_members(
 def list_user_notifications(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
     unread_only: bool = False,
     limit: int = 50,
 ):
@@ -2681,7 +2668,7 @@ def list_user_notifications(
 def notifications_unread_count(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     from app.services.notifications import unread_count
 
@@ -2696,7 +2683,7 @@ def mark_notification_read(
     company_id: str,
     notification_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     from app.services.notifications import mark_read
 
@@ -2722,7 +2709,7 @@ def mark_notification_read(
 def mark_all_notifications_read(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     from app.services.notifications import mark_all_read
 
@@ -2739,7 +2726,7 @@ def mark_all_notifications_read(
 def list_conversations_api(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
     agent_instance_id: str | None = None,
 ):
     from app.services.conversation import conversation_reads, list_conversations
@@ -2772,7 +2759,7 @@ def create_conversation_api(
     company_id: str,
     payload: ConversationCreate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     from app.services.conversation import conversation_reads, create_conversation
 
@@ -2805,7 +2792,7 @@ def list_messages_api(
     company_id: str,
     conversation_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     from app.services.conversation import get_conversation, list_messages, message_reads
 
@@ -2833,7 +2820,7 @@ def post_message_api(
     conversation_id: str,
     payload: MessageCreate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """
     Post human message + advisory agent reply.
@@ -2909,7 +2896,7 @@ def list_plans(db: Session = Depends(get_db)):
 def get_company_usage(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     from app.services.quotas import usage_summary
     user = require_company_user(db, company_id, x_user_id)
@@ -2924,7 +2911,7 @@ def set_company_plan_api(
     company_id: str,
     payload: dict,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """Assign plan by code (owner/admin). No payment gateway yet."""
     from app.services.quotas import set_company_plan, usage_summary
@@ -2945,7 +2932,7 @@ def set_company_plan_api(
 def list_workflows(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     from app.models.entities import WorkflowDefinition
 
@@ -2977,7 +2964,7 @@ def create_workflow(
     company_id: str,
     payload: dict,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     from app.services.workflow import create_definition
 
@@ -3016,7 +3003,7 @@ def start_workflow_run(
     workflow_id: str,
     payload: dict | None = None,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     from app.models.entities import WorkflowDefinition
     from app.services.workflow import start_run
@@ -3059,7 +3046,7 @@ def get_workflow_run(
     company_id: str,
     run_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     from app.models.entities import WorkflowRun
 
@@ -3091,7 +3078,7 @@ def resume_workflow_run(
     company_id: str,
     run_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     from app.models.entities import WorkflowRun
     from app.services.workflow import resume_run
@@ -3127,7 +3114,7 @@ def advance_workflow_run(
     company_id: str,
     run_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     from app.models.entities import WorkflowRun
     from app.services.workflow import advance_run
@@ -3158,7 +3145,7 @@ def advance_workflow_run(
 def list_integrations(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     from app.models.entities import Integration
     from app.services.integrations import public_view
@@ -3183,7 +3170,7 @@ def create_integration_api(
     company_id: str,
     payload: dict,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     from app.services.integrations import create_integration, public_view
 
@@ -3260,7 +3247,7 @@ def integration_email_send(
     integration_id: str,
     payload: dict,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     from app.models.entities import Integration
     from app.services.integrations import email_outbound_send, public_view
@@ -3295,7 +3282,7 @@ def integration_calendar_list(
     integration_id: str,
     payload: dict | None = None,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     from app.models.entities import Integration
     from app.services.integrations import calendar_stub_list_events
@@ -3336,7 +3323,7 @@ def simulate_policy(
     company_id: str,
     payload: PolicySimulateRequest,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """Job 17 — dry-run policy decision with explanation trail."""
     user = require_company_user(db, company_id, x_user_id)
@@ -3359,7 +3346,7 @@ def scope_check_endpoint(
     company_id: str,
     payload: dict,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """Job 16 — check whether instruction fits agent scope; suggest specialists."""
     from app.schemas.domain import ScopeCheckRequest
@@ -3389,7 +3376,7 @@ def create_task(
     company_id: str,
     payload: TaskCreate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(
         db,
@@ -3472,7 +3459,7 @@ def create_task(
 def list_tasks(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(
         db,
@@ -3505,7 +3492,7 @@ def list_tasks(
 def get_agent_directory(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """List active AI Employees with capability registry cards."""
     user = require_company_user(db, company_id, x_user_id)
@@ -3521,7 +3508,7 @@ def get_agent_directory(
 def search_agent_directory(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
     capability: str | None = None,
     skill: str | None = None,
     tool: str | None = None,
@@ -3551,7 +3538,7 @@ def validate_directory_target(
     company_id: str,
     payload: TargetValidationRequest,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """Validate a target agent for structured delegation."""
     user = require_company_user(db, company_id, x_user_id)
@@ -3575,7 +3562,7 @@ def create_delegation_request(
     company_id: str,
     payload: DelegationRequestCreate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """
     Create a structured delegation request after target validation.
@@ -3664,7 +3651,7 @@ def create_delegation_request(
 def list_delegation_requests(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.read")
@@ -3687,7 +3674,7 @@ def get_delegation_request(
     company_id: str,
     request_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.read")
@@ -3713,7 +3700,7 @@ def accept_delegation_request(
     company_id: str,
     request_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "task.create")
@@ -3743,7 +3730,7 @@ def reject_delegation_request(
     company_id: str,
     request_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
     reason: str = "",
 ):
     user = require_company_user(db, company_id, x_user_id)
@@ -3773,7 +3760,7 @@ def cancel_delegation_request(
     company_id: str,
     request_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "task.create")
@@ -3803,7 +3790,7 @@ def execute_delegation_request(
     request_id: str,
     payload: DelegationExecuteRequest | None = None,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """
     Run inter-agent delegation: create child task on target, optionally
@@ -3837,7 +3824,7 @@ def propagate_delegation_result(
     company_id: str,
     request_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """Propagate completed child task result back to the delegation request."""
     user = require_company_user(db, company_id, x_user_id)
@@ -3865,7 +3852,7 @@ def propagate_delegation_result(
 def list_automation_rules(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.read")
@@ -3887,7 +3874,7 @@ def create_automation_rule(
     company_id: str,
     payload: AutomationRuleCreate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.manage")
@@ -3955,7 +3942,7 @@ def create_automation_rule(
 def tick_company_automations(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """Process due scheduled automations (call from cron or manually)."""
     user = require_company_user(db, company_id, x_user_id)
@@ -3971,7 +3958,7 @@ def fire_company_automation_event(
     company_id: str,
     payload: AutomationEventRequest,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "task.create")
@@ -3992,7 +3979,7 @@ def fire_company_automation_event(
 def list_automation_runs(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
     rule_id: str | None = None,
 ):
     user = require_company_user(db, company_id, x_user_id)
@@ -4011,7 +3998,7 @@ def retry_automation_run(
     company_id: str,
     run_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.manage")
@@ -4037,7 +4024,7 @@ def retry_automation_run(
 def governance_overview(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """Job 14 — company-wide performance & governance snapshot."""
     user = require_company_user(db, company_id, x_user_id)
@@ -4051,7 +4038,7 @@ def governance_overview(
 def governance_agents(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.read")
@@ -4064,7 +4051,7 @@ def governance_agents(
 def governance_approvals(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.read")
@@ -4077,7 +4064,7 @@ def governance_approvals(
 def governance_experiences(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.read")
@@ -4091,7 +4078,7 @@ def governance_experiences(
 def governance_cost(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """Job 28 — LLM token/cost dashboard."""
     from app.services.governance import llm_cost_dashboard
@@ -4106,7 +4093,7 @@ def governance_cost(
 def governance_audit(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
     limit: int = 100,
 ):
     user = require_company_user(db, company_id, x_user_id)
@@ -4122,7 +4109,7 @@ def consult_task(
     company_id: str,
     task_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """
     Run consultation mode: recommendation only, no side-effect tools.
@@ -4175,7 +4162,7 @@ def execute_task(
     company_id: str,
     task_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(
         db,
@@ -4216,7 +4203,7 @@ def execute_task_llm(
     company_id: str,
     task_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(
         db,
@@ -4256,7 +4243,7 @@ def execute_task_llm(
 def list_company_approvals(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(
         db,
@@ -4291,7 +4278,7 @@ def approve_company_approval(
     approval_id: str,
     payload: ApprovalReviewRequest,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(
         db,
@@ -4354,7 +4341,7 @@ def reject_company_approval(
     approval_id: str,
     payload: ApprovalReviewRequest,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(
         db,
@@ -4416,7 +4403,7 @@ def reject_company_approval(
 def list_audit_logs(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(
         db,
@@ -4455,7 +4442,7 @@ async def ingest_knowledge_extract(
     category: str = Form(default="document"),
     agent_instance_id: str | None = Form(default=None),
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """Upload a document, extract text into knowledge, discard file bytes (no storage).
 
@@ -4516,7 +4503,7 @@ async def upload_knowledge_document(
     company_id: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(
         db,
@@ -4581,7 +4568,7 @@ async def upload_agent_knowledge_document(
     agent_instance_id: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(
         db,
@@ -4685,7 +4672,7 @@ def marketplace_install_template(
     company_id: str,
     catalog_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None, alias="X-User-ID"),
+    x_user_id: str = Depends(get_authenticated_user_id),
     authorization: str | None = Header(default=None),
 ):
     """Install published template into company: copy platform skills → company skills."""
@@ -4728,7 +4715,7 @@ def marketplace_install_template(
 def marketplace_list_installations(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None, alias="X-User-ID"),
+    x_user_id: str = Depends(get_authenticated_user_id),
     authorization: str | None = Header(default=None),
 ):
     from app.services.marketplace import list_installations
@@ -4743,7 +4730,7 @@ def marketplace_list_installations(
 def seed_reservation_demo_api(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """Job 38 — Seed demo hotel availability + knowledge for reservation flows."""
     user = require_company_user(db, company_id, x_user_id)
@@ -4773,7 +4760,7 @@ def seed_reservation_demo_api(
 def playbook_reservation_demo_api(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """Job 49 — Seed demo data and create a pending execute task for Alila availability."""
     user = require_company_user(db, company_id, x_user_id)
@@ -4803,7 +4790,7 @@ def list_company_inventory(
     company_id: str,
     system: str = "availability",
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """Job 39 — list durable inventory rows for company."""
     user = require_company_user(db, company_id, x_user_id)
@@ -4816,7 +4803,7 @@ def list_company_inventory(
 def hydrate_company_inventory(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     """Reload DB inventory into process mock connector (after server restart)."""
     user = require_company_user(db, company_id, x_user_id)

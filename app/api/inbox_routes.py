@@ -3,12 +3,13 @@
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app.api.routes import require_company_user, require_permission
+from app.core.auth import get_authenticated_user_id
 from app.core.database import get_db
 from app.models.entities import AgentInstance, Approval, AuditLog, DelegationRequest, Task, User
 
@@ -28,7 +29,7 @@ def list_inbox_attribution(
     company_id: str,
     kind: Literal["task", "approval", "delegation"],
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     model, permission, resource_type, statuses = {

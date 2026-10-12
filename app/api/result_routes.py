@@ -1,10 +1,11 @@
 """Personal bookmarks for persisted AI task results."""
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.routes import require_company_user, require_permission
+from app.core.auth import get_authenticated_user_id
 from app.core.database import get_db
 from app.models.entities import Task, TaskResultPin
 
@@ -15,7 +16,7 @@ router = APIRouter(prefix="/api/v1/companies/{company_id}", tags=["task-results"
 def list_result_pins(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "task.read")
@@ -29,7 +30,7 @@ def pin_result(
     company_id: str,
     task_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "task.read")
@@ -49,7 +50,7 @@ def unpin_result(
     company_id: str,
     task_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "task.read")

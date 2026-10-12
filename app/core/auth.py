@@ -1,11 +1,10 @@
-"""Authentication dependencies — JWT Bearer + optional legacy X-User-ID."""
+"""Authentication dependencies: identities always come from Bearer tokens."""
 
 from __future__ import annotations
 
 from fastapi import Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import decode_access_token
 from app.models import User
@@ -23,13 +22,7 @@ def resolve_user_id(
     authorization: str | None,
     x_user_id: str | None,
 ) -> str:
-    """
-    Resolve authenticated user id.
-
-    Priority:
-    1. Authorization: Bearer <access jwt>
-    2. X-User-ID (only if allowed by settings)
-    """
+    """Resolve the token subject; client identity headers have no authority."""
     if authorization and authorization.lower().startswith("bearer "):
         token = authorization.split(" ", 1)[1].strip()
         try:
@@ -37,21 +30,13 @@ def resolve_user_id(
         except ValueError as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
         user_id = payload.get("sub")
-        if not user_id:
+        if not isinstance(user_id, str) or not user_id.strip():
             raise HTTPException(status_code=401, detail="Token missing subject")
         return str(user_id)
 
-    if x_user_id:
-        if settings.auth_enabled and not settings.allow_legacy_user_header:
-            raise HTTPException(
-                status_code=401,
-                detail="Legacy X-User-ID disabled; use Bearer token",
-            )
-        return x_user_id
-
     raise HTTPException(
         status_code=401,
-        detail="Authentication required (Bearer token or X-User-ID)",
+        detail="Authentication required (Bearer token)",
     )
 
 
@@ -62,3 +47,8 @@ def get_current_user(
 ) -> User:
     user_id = resolve_user_id(authorization=authorization, x_user_id=x_user_id)
     return _load_user(db, user_id)
+
+
+def get_authenticated_user_id(user: User = Depends(get_current_user)) -> str:
+    """Supply a verified ID to existing company handlers and their audit calls."""
+    return user.id

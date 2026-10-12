@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -22,7 +22,7 @@ class AdminCompanyCreate(BaseModel):
     name: str = Field(min_length=2, max_length=200)
     owner_name: str = Field(default="Owner", min_length=1, max_length=200)
     owner_email: str = Field(min_length=3, max_length=320)
-    owner_password: str = Field(default="demo12345", min_length=8, max_length=128)
+    owner_password: str = Field(min_length=8, max_length=128)
 
 
 class AdminCompanyUpdate(BaseModel):
@@ -34,10 +34,9 @@ class AdminCompanyUpdate(BaseModel):
 def admin_create_company(
     payload: AdminCompanyCreate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    admin: User = Depends(require_platform_admin),
 ):
     """Platform developer provisions a company + owner account."""
-    admin = require_platform_admin(db, x_user_id)
     existing = db.scalar(select(Company).where(Company.name == payload.name))
     if existing:
         raise HTTPException(status_code=409, detail=f"Company '{payload.name}' already exists.")
@@ -104,9 +103,8 @@ def admin_update_company(
     company_id: str,
     payload: AdminCompanyUpdate,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    admin: User = Depends(require_platform_admin),
 ):
-    admin = require_platform_admin(db, x_user_id)
     company = db.get(Company, company_id)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -136,9 +134,8 @@ def admin_update_company(
 def admin_list_company_users(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    admin: User = Depends(require_platform_admin),
 ):
-    require_platform_admin(db, x_user_id)
     company = db.get(Company, company_id)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -165,9 +162,8 @@ def admin_list_company_users(
 def admin_list_company_agents(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    admin: User = Depends(require_platform_admin),
 ):
-    require_platform_admin(db, x_user_id)
     from app.models.entities import AgentInstance
     company = db.get(Company, company_id)
     if not company:
@@ -196,10 +192,9 @@ def admin_list_company_agents(
 @router.get("/companies")
 def admin_list_companies(
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    admin: User = Depends(require_platform_admin),
     limit: int = 100,
 ):
-    require_platform_admin(db, x_user_id)
     companies = list(
         db.scalars(
             select(Company).order_by(Company.created_at.desc()).limit(min(limit, 500))
@@ -226,9 +221,8 @@ def admin_list_companies(
 def admin_disable_company(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    admin: User = Depends(require_platform_admin),
 ):
-    admin = require_platform_admin(db, x_user_id)
     company = db.get(Company, company_id)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -250,9 +244,8 @@ def admin_disable_company(
 def admin_enable_company(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    admin: User = Depends(require_platform_admin),
 ):
-    admin = require_platform_admin(db, x_user_id)
     company = db.get(Company, company_id)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -274,11 +267,10 @@ def admin_enable_company(
 def admin_company_audit(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    admin: User = Depends(require_platform_admin),
     limit: int = 100,
 ):
     """Cross-tenant audit view — platform admin only."""
-    require_platform_admin(db, x_user_id)
     company = db.get(Company, company_id)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -308,9 +300,8 @@ def admin_company_audit(
 def admin_company_usage(
     company_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    admin: User = Depends(require_platform_admin),
 ):
-    require_platform_admin(db, x_user_id)
     company = db.get(Company, company_id)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -323,9 +314,8 @@ def admin_company_usage(
 def admin_grant_platform_admin(
     user_id: str,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    admin: User = Depends(require_platform_admin),
 ):
-    admin = require_platform_admin(db, x_user_id)
     try:
         user = grant_platform_admin(db, user_id)
     except ValueError as exc:
@@ -351,13 +341,12 @@ def admin_grant_platform_admin(
 def admin_impersonate(
     payload: dict,
     db: Session = Depends(get_db),
-    x_user_id: str | None = Header(default=None),
+    admin: User = Depends(require_platform_admin),
 ):
     """
     Support impersonation — DISABLED by default (ALLOW_IMPERSONATION=false).
     When enabled, returns target user id for session bootstrap only.
     """
-    admin = require_platform_admin(db, x_user_id)
     if not settings.allow_impersonation:
         raise HTTPException(
             status_code=403,
