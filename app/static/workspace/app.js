@@ -608,71 +608,159 @@
   
 
   
-  // Job 57 — public workspace no longer creates companies (developer provisions)
+  // Job 58 — simplified email + password login (no public register)
+  function togglePasswordVisibility(inputId, btnId) {
+    const input = $(inputId);
+    const btn = $(btnId);
+    if (!input || !btn) return;
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    btn.textContent = show ? "Hide" : "Show";
+    btn.setAttribute("aria-label", show ? "Hide password" : "Show password");
+  }
+
+  if ($("btnToggleLoginPassword")) {
+    $("btnToggleLoginPassword").onclick = () =>
+      togglePasswordVisibility("loginPassword", "btnToggleLoginPassword");
+  }
+  if ($("btnToggleResetPassword")) {
+    $("btnToggleResetPassword").onclick = () =>
+      togglePasswordVisibility("resetPassword", "btnToggleResetPassword");
+  }
+
+  // Remember email
+  try {
+    const saved = localStorage.getItem("ws_login_email");
+    if (saved && $("loginEmail")) $("loginEmail").value = saved;
+    if (saved && $("loginRemember")) $("loginRemember").checked = true;
+  } catch (_) {}
+
+  if ($("btnForgotPassword")) {
+    $("btnForgotPassword").onclick = () => {
+      if ($("forgotPanel")) $("forgotPanel").classList.remove("hidden");
+      if ($("forgotEmail") && $("loginEmail")) $("forgotEmail").value = $("loginEmail").value;
+    };
+  }
+  if ($("btnBackToLogin")) {
+    $("btnBackToLogin").onclick = () => {
+      if ($("forgotPanel")) $("forgotPanel").classList.add("hidden");
+    };
+  }
+
+  if ($("btnRequestReset")) {
+    $("btnRequestReset").onclick = async () => {
+      const log = $("forgotLog");
+      try {
+        const email = (($("forgotEmail") && $("forgotEmail").value) || "").trim();
+        const res = await api("/auth/forgot-password", {
+          method: "POST",
+          body: JSON.stringify({ email }),
+          skipAuth: true,
+        });
+        if (log) log.textContent = res.message || "If the account exists, instructions were issued.";
+        if (res.reset_token) {
+          if ($("resetTokenWrap")) $("resetTokenWrap").classList.remove("hidden");
+          if ($("resetPasswordWrap")) $("resetPasswordWrap").classList.remove("hidden");
+          if ($("btnDoReset")) $("btnDoReset").classList.remove("hidden");
+          if ($("resetToken")) $("resetToken").value = res.reset_token;
+          if (log) log.textContent += "\n\n[Dev] Reset token filled below. Set a new password.";
+        }
+      } catch (err) {
+        if (log) {
+          log.textContent = err.message;
+          log.classList.add("error");
+        }
+      }
+    };
+  }
+
+  if ($("btnDoReset")) {
+    $("btnDoReset").onclick = async () => {
+      const log = $("forgotLog");
+      try {
+        const res = await api("/auth/reset-password", {
+          method: "POST",
+          body: JSON.stringify({
+            token: ($("resetToken") && $("resetToken").value.trim()) || "",
+            new_password: ($("resetPassword") && $("resetPassword").value) || "",
+          }),
+          skipAuth: true,
+        });
+        if (log) {
+          log.classList.remove("error");
+          log.textContent = res.message || "Password updated.";
+        }
+      } catch (err) {
+        if (log) {
+          log.classList.add("error");
+          log.textContent = err.message;
+        }
+      }
+    };
+  }
+
   if ($("btnCreateCompany")) {
     $("btnCreateCompany").onclick = async () => {
       const log = $("loginLog");
       if (log) {
         log.textContent =
-          "Create company is restricted to platform developers.\n" +
-          "Open /developer → Provision company (platform admin required).";
+          "Create company is restricted to platform developers.\nOpen /developer → Provision company.";
       }
     };
   }
 
   $("btnLogin").onclick = async () => {
     const log = $("loginLog");
+    const btn = $("btnLogin");
     try {
-      const companyId = (($("loginCompanyId") && $("loginCompanyId").value) || ($("companyId") && $("companyId").value) || "").trim();
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "Signing in…";
+      }
+      if (log) {
+        log.classList.remove("error");
+        log.textContent = "";
+      }
+      const email = (($("loginEmail") && $("loginEmail").value) || "").trim();
+      const password = ($("loginPassword") && $("loginPassword").value) || "";
+      if (!email || !password) throw new Error("Email and password are required");
       const body = await api("/auth/login", {
         method: "POST",
-        body: JSON.stringify({
-          company_id: companyId,
-          email: $("loginEmail").value.trim(),
-          password: $("loginPassword").value,
-        }),
+        body: JSON.stringify({ email, password }),
         skipAuth: true,
       });
-      log.textContent = "Signed in as " + (body.email || body.user_id);
+      try {
+        if ($("loginRemember") && $("loginRemember").checked) {
+          localStorage.setItem("ws_login_email", email);
+        } else {
+          localStorage.removeItem("ws_login_email");
+        }
+      } catch (_) {}
+      if (log) log.textContent = "Welcome" + (body.name ? ", " + body.name : "");
       await applyAuthSession(body);
     } catch (err) {
-      log.textContent = "Login failed: " + err.message;
+      if (log) {
+        log.classList.add("error");
+        log.textContent = err.message || "Sign in failed";
+      }
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "Sign in";
+      }
     }
   };
 
-  $("btnRegister").onclick = async () => {
-    const log = $("registerLog") || $("loginLog");
-    try {
-      const companyId = (
-        ($("registerCompanyId") && $("registerCompanyId").value) ||
-        ($("loginCompanyId") && $("loginCompanyId").value) ||
-        ""
-      ).trim();
-      const email = (($("registerEmail") && $("registerEmail").value) || ($("loginEmail") && $("loginEmail").value) || "").trim();
-      const name = (($("registerName") && $("registerName").value) || email.split("@")[0] || "User").trim();
-      const password = (($("registerPassword") && $("registerPassword").value) || ($("loginPassword") && $("loginPassword").value) || "");
-      let role = ($("registerRole") && $("registerRole").value) || "member";
-      // Self-register cannot elevate to owner/ai_admin/manager
-      if (["owner", "ai_admin", "manager"].includes(role)) role = "member";
-      const body = await api("/auth/register", {
-        method: "POST",
-        body: JSON.stringify({
-          company_id: companyId,
-          email,
-          name,
-          password,
-          role,
-        }),
-        skipAuth: true,
+  // Enter key submits login
+  ["loginEmail", "loginPassword"].forEach((id) => {
+    const el = $(id);
+    if (el) {
+      el.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && $("btnLogin")) $("btnLogin").click();
       });
-      if (log) log.textContent = "Registered " + (body.email || body.user_id) + " as " + role + ". You can Sign in.";
-      // Prefill login
-      if ($("loginCompanyId")) $("loginCompanyId").value = companyId;
-      if ($("loginEmail")) $("loginEmail").value = email;
-    } catch (err) {
-      if (log) log.textContent = "Register failed: " + err.message;
     }
-  };
+  });
+
 
   async function loadAgentOptions() {
     if (!state.companyId) return;

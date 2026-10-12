@@ -19,54 +19,50 @@
       </div>
 
       <div class="login-tabs">
-        <button type="button" class="tab active" data-tab="login">Login</button>
-        <button type="button" class="tab" data-tab="register">Register</button>
+        <button type="button" class="tab active" data-tab="login">Sign in</button>
         <button type="button" class="tab developer-only" data-tab="quick">Quick start</button>
         <button type="button" class="tab developer-only" data-tab="connect">Connect IDs</button>
         <button type="button" class="tab developer-only" data-tab="provision">Provision company</button>
       </div>
 
       <div id="tab-login" class="tab-panel active">
-        <p class="muted">Sign in with the company ID and account issued by your company owner or platform developer.</p>
-        <label>Company ID
-          <input id="loginCompanyId" placeholder="Company ID" autocomplete="organization" />
+        <p class="muted">Enter the email and password provided by your company owner.</p>
+        <label for="loginEmail">Email
+          <input id="loginEmail" type="email" placeholder="you@company.com" autocomplete="username" required />
         </label>
-        <label>Email
-          <input id="loginEmail" type="email" placeholder="you@company.com" autocomplete="username" />
+        <label for="loginPassword">Password
+          <div class="password-field">
+            <input id="loginPassword" type="password" placeholder="Password" autocomplete="current-password" required />
+            <button type="button" id="btnToggleLoginPassword" class="password-toggle" aria-label="Show password" title="Show password">Show</button>
+          </div>
         </label>
-        <label>Password
-          <input id="loginPassword" type="password" placeholder="Password" autocomplete="current-password" />
-        </label>
+        <div class="row between login-meta">
+          <label class="remember-me"><input type="checkbox" id="loginRemember" /> Remember email</label>
+          <button type="button" id="btnForgotPassword" class="link-btn">Forgot password?</button>
+        </div>
         <button id="btnLogin" class="primary block">Sign in</button>
-        <pre id="loginLog" class="log"></pre>
-      </div>
+        <p id="loginLog" class="login-message" role="status"></p>
 
-      <div id="tab-register" class="tab-panel">
-        <p class="muted">Join an <strong>existing</strong> company. New companies are created only by platform developers (open <a href="/developer">/developer</a>).</p>
-        <label>Company ID
-          <input id="registerCompanyId" placeholder="Company ID from your owner" />
-        </label>
-        <label>Full name
-          <input id="registerName" placeholder="Your name" />
-        </label>
-        <label>Email
-          <input id="registerEmail" type="email" placeholder="you@company.com" />
-        </label>
-        <label>Password (min 8)
-          <input id="registerPassword" type="password" placeholder="Password" />
-        </label>
-        <label>Job position
-          <select id="registerRole">
-            <option value="member">Member</option>
-            <option value="reservation">Reservation</option>
-            <option value="accounting">Accounting</option>
-            <option value="administration">Administration</option>
-            <option value="contract_manager">Contract manager</option>
-          </select>
-        </label>
-        <p class="muted">Note: elevated roles (owner, ai_admin, manager) are assigned by the company owner under Users &amp; Roles — not self-selected here.</p>
-        <button id="btnRegister" class="secondary block">Register to company</button>
-        <pre id="registerLog" class="log"></pre>
+        <div id="forgotPanel" class="forgot-panel hidden">
+          <h3>Reset password</h3>
+          <p class="muted">Enter your account email. If it exists, a reset token is issued (shown here in development mode).</p>
+          <label>Email
+            <input id="forgotEmail" type="email" placeholder="you@company.com" />
+          </label>
+          <button type="button" id="btnRequestReset" class="secondary block">Send reset link</button>
+          <label class="hidden" id="resetTokenWrap">Reset token
+            <input id="resetToken" placeholder="Paste token" />
+          </label>
+          <label class="hidden" id="resetPasswordWrap">New password
+            <div class="password-field">
+              <input id="resetPassword" type="password" placeholder="New password (min 8)" />
+              <button type="button" id="btnToggleResetPassword" class="password-toggle">Show</button>
+            </div>
+          </label>
+          <button type="button" id="btnDoReset" class="primary block hidden">Update password</button>
+          <p id="forgotLog" class="login-message"></p>
+          <button type="button" id="btnBackToLogin" class="link-btn">← Back to sign in</button>
+        </div>
       </div>
 
       <div id="tab-quick" class="tab-panel developer-only">
@@ -100,6 +96,7 @@
         <div id="adminCompanyDetail" class="list"></div>
       </div>
 
+      <input type="hidden" id="loginCompanyId" value="" />
       <div id="tab-connect" class="tab-panel developer-only">
         <p class="muted">Dev mode: paste existing company + user IDs (X-User-ID).</p>
         <label>API base

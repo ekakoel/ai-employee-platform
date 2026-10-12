@@ -655,3 +655,52 @@ button.primary:disabled, button:disabled {
   margin-bottom: 0.5rem;
   color: #9a3412;
 }
+
+
+/* Job 58 — simplified login */
+.password-field {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+}
+.password-field input {
+  flex: 1;
+}
+.password-toggle {
+  flex-shrink: 0;
+  border: 1px solid var(--border, #e5e7eb);
+  background: #f9fafb;
+  border-radius: 6px;
+  padding: 0.4rem 0.65rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.login-meta {
+  margin: 0.5rem 0 0.75rem;
+  align-items: center;
+}
+.remember-me {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--muted, #6b7280);
+}
+.login-message {
+  margin-top: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--muted, #6b7280);
+  white-space: pre-wrap;
+}
+.login-message.error {
+  color: #b91c1c;
+}
+.forgot-panel {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border, #e5e7eb);
+}
+.forgot-panel.hidden,
+.hidden {
+  display: none !important;
+}

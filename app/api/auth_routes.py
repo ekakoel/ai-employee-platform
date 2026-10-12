@@ -29,9 +29,10 @@ class TokenRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    company_id: str
-    email: str = Field(min_length=3)
+    email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=8, max_length=128)
+    # Optional — legacy clients may still send company_id
+    company_id: str | None = None
 
 
 class RegisterRequest(BaseModel):
@@ -44,6 +45,15 @@ class RegisterRequest(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=10)
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 class TokenResponse(BaseModel):
@@ -103,21 +113,25 @@ def issue_token_legacy(payload: TokenRequest, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    user = db.scalar(
-        select(User).where(
-            User.company_id == payload.company_id,
-            User.email == payload.email,
-        )
-    )
-    if not user or user.status != "active":
+    """Sign in with email + password only (Job 58).
+
+    If the same email exists in multiple companies, the first active account
+    whose password matches is used. Optional company_id narrows the lookup.
+    """
+    email = payload.email.strip().lower()
+    q = select(User).where(User.email == email, User.status == "active")
+    if payload.company_id:
+        q = q.where(User.company_id == payload.company_id)
+    candidates = list(db.scalars(q).all())
+    user = None
+    for candidate in candidates:
+        if verify_password(payload.password, candidate.password_hash):
+            user = candidate
+            break
+    if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials",
-        )
-    if not verify_password(payload.password, user.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials",
+            detail="Invalid email or password",
         )
     sync_platform_admin_flag(db, user)
     record_audit(
@@ -254,3 +268,81 @@ def read_me(
         is_platform_admin=bool(user.is_platform_admin),
         status=user.status,
     )
+
+
+@router.post("/forgot-password")
+def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    """Request a password reset token.
+
+    Always returns a generic success message (no email enumeration).
+    When app debug is on, includes a reset_token for local testing without SMTP.
+    """
+    from app.core.config import settings
+    from datetime import timedelta
+
+    email = payload.email.strip().lower()
+    users = list(
+        db.scalars(select(User).where(User.email == email, User.status == "active")).all()
+    )
+    response: dict = {
+        "message": "If an account exists for that email, password reset instructions were issued.",
+    }
+    if not users:
+        return response
+
+    # Prefer a single user; if multiple companies share email, first match
+    user = users[0]
+    token = create_access_token(
+        subject=user.id,
+        company_id=user.company_id,
+        extra={"purpose": "password_reset", "email": user.email},
+        expires_minutes=30,
+    )
+    record_audit(
+        db,
+        company_id=user.company_id,
+        user_id=user.id,
+        action="auth.forgot_password",
+        resource_type="user",
+        resource_id=user.id,
+        status="success",
+    )
+    db.commit()
+    if settings.debug:
+        response["reset_token"] = token
+        response["debug_hint"] = "Use POST /api/v1/auth/reset-password with this token (debug mode only exposes token)."
+    return response
+
+
+@router.post("/reset-password")
+def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+    """Set a new password using a forgot-password token."""
+    try:
+        data = decode_token(payload.token, expected_type="access")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token") from exc
+
+    if data.get("purpose") != "password_reset":
+        raise HTTPException(status_code=400, detail="Invalid reset token")
+
+    user_id = data.get("sub")
+    user = db.get(User, user_id) if user_id else None
+    if not user or user.status != "active":
+        raise HTTPException(status_code=400, detail="Invalid reset token")
+
+    try:
+        user.password_hash = hash_password(payload.new_password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    record_audit(
+        db,
+        company_id=user.company_id,
+        user_id=user.id,
+        action="auth.reset_password",
+        resource_type="user",
+        resource_id=user.id,
+        status="success",
+    )
+    db.commit()
+    return {"message": "Password updated. You can sign in with your new password."}
