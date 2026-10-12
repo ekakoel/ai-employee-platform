@@ -377,6 +377,7 @@
     if (name === "policies") { loadAgentOptions(); }
     if (name === "policy-management") loadPolicies();
     if (name === "users") loadUsers();
+    if (name === "knowledge") loadKnowledge();
     if (name === "departments") loadDepartments();
     if (name === "teams") { loadAgentOptions(); loadTeams(); }
     if (name === "skills") loadSkills();
@@ -551,6 +552,8 @@
         ["ai_admin", "aiadmin@demo.local"],
         ["reservation", "reservation@demo.local"],
         ["manager", "manager@demo.local"],
+        ["contract_manager", "contracts@demo.local"],
+        ["administration", "admin@demo.local"],
       ]) {
         try {
           await api(`/companies/${co.id}/users`, {
@@ -1473,40 +1476,139 @@
   $("btnListDir").onclick = () => listDirectory();
   $("btnSearchDir").onclick = () => listDirectory($("dirSkill").value.trim());
 
-  // ----- Knowledge -----
-  $("btnAddKnowledge").onclick = async () => {
+  // ----- Knowledge (Job 52: list, filter, extract badge) -----
+  function isExtractedKnowledge(item) {
+    const c = String(item.content || "");
+    const cat = String(item.category || "").toLowerCase();
+    return (
+      cat === "document" ||
+      /not retained/i.test(c) ||
+      /Extracted from /i.test(c) ||
+      /file not retained/i.test(c)
+    );
+  }
+
+  async function loadKnowledge() {
+    if (!state.companyId) return;
+    const listEl = $("knowList");
+    if (!listEl) return;
     try {
-      await api(`/companies/${state.companyId}/knowledge`, {
-        method: "POST",
-        body: JSON.stringify({
-          title: $("knowTitle").value.trim(),
-          content: $("knowContent").value.trim(),
-        }),
-      });
-      $("knowTitle").value = "";
-      $("knowContent").value = "";
-      alert("Knowledge added");
+      const all = await api(`/companies/${state.companyId}/knowledge`);
+      let items = all || [];
+      const f = ($("knowFilter") && $("knowFilter").value) || "all";
+      if (f === "extract") items = items.filter(isExtractedKnowledge);
+      else if (f === "manual") items = items.filter((i) => !isExtractedKnowledge(i));
+      else if (f === "document") {
+        items = items.filter((i) => String(i.category || "").toLowerCase() === "document");
+      }
+      const extractCount = (all || []).filter(isExtractedKnowledge).length;
+      if ($("knowStats")) {
+        $("knowStats").innerHTML =
+          `<div class="stat"><span class="n">${(items || []).length}</span><span class="l">Shown</span></div>` +
+          `<div class="stat"><span class="n">${extractCount}</span><span class="l">Extracts</span></div>`;
+      }
+      listEl.innerHTML =
+        (items || [])
+          .map((k) => {
+            const extracted = isExtractedKnowledge(k);
+            const badge = extracted
+              ? `<span class="tag-extract">from extract</span>`
+              : `<span class="tag-manual">manual</span>`;
+            const preview = escapeHtml(String(k.content || "").slice(0, 180));
+            return `<div class="item" data-know-id="${escapeHtml(k.id)}">
+          <strong>${escapeHtml(k.title || k.id)}</strong>${badge}
+          <div class="meta">${escapeHtml(k.category || "general")} · ${k.is_active === false ? "inactive" : "active"}</div>
+          <div class="meta">${preview}</div>
+        </div>`;
+          })
+          .join("") || `<div class="empty">No knowledge items. Extract a document or add a note.</div>`;
     } catch (err) {
-      alert(err.message);
+      listEl.innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
     }
-  };
-  $("btnSearchKnow").onclick = async () => {
-    try {
-      const hits = await api(`/companies/${state.companyId}/knowledge/search`, {
-        method: "POST",
-        body: JSON.stringify({ query: $("knowQuery").value.trim() }),
-      });
-      $("knowResults").innerHTML =
-        (hits || [])
-          .map(
-            (h) => `<div class="item"><strong>${escapeHtml(h.title || h.id)}</strong>
+  }
+
+  if ($("btnRefreshKnowledge")) $("btnRefreshKnowledge").onclick = loadKnowledge;
+  if ($("knowFilter")) $("knowFilter").onchange = loadKnowledge;
+
+  if ($("btnAddKnowledge"))
+    $("btnAddKnowledge").onclick = async () => {
+      try {
+        await api(`/companies/${state.companyId}/knowledge`, {
+          method: "POST",
+          body: JSON.stringify({
+            title: $("knowTitle").value.trim(),
+            content: $("knowContent").value.trim(),
+            category: "general",
+          }),
+        });
+        $("knowTitle").value = "";
+        $("knowContent").value = "";
+        await loadKnowledge();
+      } catch (err) {
+        alert(err.message);
+      }
+    };
+
+  if ($("btnSearchKnow"))
+    $("btnSearchKnow").onclick = async () => {
+      try {
+        const hits = await api(`/companies/${state.companyId}/knowledge/search`, {
+          method: "POST",
+          body: JSON.stringify({ query: $("knowQuery").value.trim() }),
+        });
+        $("knowResults").innerHTML =
+          (hits || [])
+            .map(
+              (h) => `<div class="item"><strong>${escapeHtml(h.title || h.id)}</strong>
           <div class="meta">${escapeHtml((h.snippet || h.content || "").slice(0, 160))}</div></div>`
-          )
-          .join("") || `<div class="empty">No hits.</div>`;
-    } catch (err) {
-      $("knowResults").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
-    }
-  };
+            )
+            .join("") || `<div class="empty">No hits.</div>`;
+      } catch (err) {
+        $("knowResults").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+      }
+    };
+
+  if ($("btnKnowledgeIngest"))
+    $("btnKnowledgeIngest").onclick = async () => {
+      const log = $("knowledgeIngestLog");
+      const fileInput = $("knowledgeIngestFile");
+      if (!fileInput || !fileInput.files || !fileInput.files[0]) {
+        if (log) log.textContent = "Choose a file first";
+        return;
+      }
+      try {
+        const fd = new FormData();
+        fd.append("file", fileInput.files[0]);
+        const title = ($("knowledgeIngestTitle") && $("knowledgeIngestTitle").value.trim()) || "";
+        if (title) fd.append("title", title);
+        fd.append("category", "document");
+        const base = (state.apiBase || "/api/v1").replace(/\/$/, "");
+        const res = await fetch(base + `/companies/${state.companyId}/knowledge/ingest-extract`, {
+          method: "POST",
+          headers: {
+            ...(state.accessToken ? { Authorization: "Bearer " + state.accessToken } : {}),
+            ...(state.userId ? { "X-User-ID": state.userId } : {}),
+          },
+          body: fd,
+        });
+        const text = await res.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = text;
+        }
+        if (!res.ok) {
+          throw new Error(typeof data === "object" ? data.detail || JSON.stringify(data) : text);
+        }
+        if (log) log.textContent = "Knowledge saved (file not retained): " + (data.title || data.id);
+        if ($("knowFilter")) $("knowFilter").value = "extract";
+        await loadKnowledge();
+      } catch (err) {
+        if (log) log.textContent = err.message;
+      }
+    };
+
 
   // ----- Delegation -----
   async function loadDelegations() {
@@ -2227,37 +2329,3 @@ async function loadDepartments() {
     }
   })();
 })();
-
-  if ($("btnKnowledgeIngest"))
-    $("btnKnowledgeIngest").onclick = async () => {
-      const log = $("knowledgeIngestLog");
-      const fileInput = $("knowledgeIngestFile");
-      if (!fileInput || !fileInput.files || !fileInput.files[0]) {
-        if (log) log.textContent = "Choose a file first";
-        return;
-      }
-      try {
-        const fd = new FormData();
-        fd.append("file", fileInput.files[0]);
-        const title = ($("knowledgeIngestTitle") && $("knowledgeIngestTitle").value.trim()) || "";
-        if (title) fd.append("title", title);
-        const base = (state.apiBase || "/api/v1").replace(/\/$/, "");
-        const res = await fetch(base + `/companies/${state.companyId}/knowledge/ingest-extract`, {
-          method: "POST",
-          headers: {
-            ...(state.accessToken ? { Authorization: "Bearer " + state.accessToken } : {}),
-            ...(state.userId ? { "X-User-ID": state.userId } : {}),
-          },
-          body: fd,
-        });
-        const text = await res.text();
-        let data;
-        try { data = JSON.parse(text); } catch { data = text; }
-        if (!res.ok) throw new Error(typeof data === "object" ? (data.detail || JSON.stringify(data)) : text);
-        if (log) log.textContent = "Knowledge saved (file not retained): " + (data.title || data.id);
-        if (typeof loadKnowledge === "function") loadKnowledge();
-      } catch (err) {
-        if (log) log.textContent = err.message;
-      }
-    };
-

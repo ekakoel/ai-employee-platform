@@ -449,7 +449,44 @@
       <!-- KNOWLEDGE -->
       <section id="view-knowledge" class="view">
         <div class="card">
-          <h2>Knowledge</h2>
+          <div class="row between">
+            <div>
+              <h2>Knowledge</h2>
+              <p class="muted">Company memory used by AI employees. Extracted documents are stored as text only (original file discarded).</p>
+            </div>
+            <button id="btnRefreshKnowledge" class="secondary">Refresh</button>
+          </div>
+          <div class="row" style="margin:.5rem 0; gap:.75rem; flex-wrap:wrap">
+            <label>Filter
+              <select id="knowFilter">
+                <option value="all">All items</option>
+                <option value="extract">From document extract</option>
+                <option value="manual">Manual notes</option>
+                <option value="document">Category: document</option>
+              </select>
+            </label>
+            <div id="knowStats" class="stats"></div>
+          </div>
+          <div id="knowList" class="list"></div>
+        </div>
+
+        <div class="card">
+          <h3>Upload document → knowledge (file not stored)</h3>
+          <p class="muted">PDF, Word, Excel, text are extracted into company knowledge. Original file is discarded after extract.</p>
+          <div class="grid-2">
+            <label class="full">File
+              <input type="file" id="knowledgeIngestFile" accept=".pdf,.docx,.xlsx,.txt,application/pdf" />
+            </label>
+            <label class="full">Title (optional)
+              <input id="knowledgeIngestTitle" placeholder="e.g. Alila 2026 contract" />
+            </label>
+          </div>
+          <button id="btnKnowledgeIngest" class="primary">Extract to knowledge</button>
+          <pre id="knowledgeIngestLog" class="log"></pre>
+        </div>
+
+        <div class="card">
+          <h3>Add note manually</h3>
           <div class="grid-2">
             <label class="full">Title
               <input id="knowTitle" />
@@ -466,16 +503,7 @@
           </div>
           <div id="knowResults" class="list"></div>
         </div>
-      
-        <div class="card">
-          <h3>Upload document → knowledge (file not stored)</h3>
-          <p class="muted">PDF, Word, Excel, text are extracted into company knowledge. Original file is discarded after extract.</p>
-          <input type="file" id="knowledgeIngestFile" accept=".pdf,.docx,.xlsx,.txt,application/pdf" />
-          <input id="knowledgeIngestTitle" placeholder="Title (optional)" />
-          <button id="btnKnowledgeIngest" class="primary">Extract to knowledge</button>
-          <pre id="knowledgeIngestLog" class="log"></pre>
-        </div>
-</section>
+      </section>
 
       <!-- DELEGATION -->
       <section id="view-delegation" class="view">
