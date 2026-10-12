@@ -228,7 +228,10 @@
     if (task.result) resultLibrary.select(task);
   }
 
+  let sessionVersion = 0;
+
   function clearSession() {
+    sessionVersion++;
     chatWorkspace.reset();
     inboxDashboard.reset();
     contextualSidebar.reset();
@@ -244,7 +247,14 @@
     ["ws_companyId", "ws_userId", "ws_accessToken", "ws_refreshToken", "ws_userName", "ws_role", "ws_permissions", "ws_isPlatformAdmin"].forEach((k) =>
       localStorage.removeItem(k)
     );
-    showGate(true);
+    focusedTaskId = "";
+    ["companyId", "userId", "loginCompanyId"].forEach((id) => {
+      if ($(id)) $(id).value = "";
+    });
+    setInboxBadge(0);
+    setNotifBadge(0);
+    applyNavGating();
+    setConnected(false);
   }
 
   function headers(json = true, skipAuth = false) {
@@ -276,7 +286,9 @@
         data && typeof data === "object"
           ? data.detail || JSON.stringify(data)
           : text || res.statusText;
-      throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+      const error = new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+      error.status = res.status;
+      throw error;
     }
     if (opts.method && opts.method.toUpperCase() !== "GET" && !path.endsWith("/result-pin") && !opts.skipSidebarRefresh) contextualSidebar?.refresh();
     return data;
@@ -412,18 +424,38 @@
   });
 
   async function loadMeProfile() {
+    const version = sessionVersion;
+    const token = state.accessToken;
     try {
       const me = await api("/auth/me");
-      state.role = me.role || state.role || "";
+      if (version !== sessionVersion || token !== state.accessToken) return false;
+      state.companyId = me.company_id;
+      state.userId = me.user_id;
+      state.role = me.role || "";
       state.permissions = me.permissions || [];
       state.isPlatformAdmin = !!me.is_platform_admin;
-      state.userName = me.name || me.email || state.userName;
+      state.userName = me.name || me.email || "";
+      localStorage.setItem("ws_companyId", state.companyId);
+      localStorage.setItem("ws_userId", state.userId);
+      if ($("companyId")) $("companyId").value = state.companyId;
+      if ($("userId")) $("userId").value = state.userId;
+      if ($("loginCompanyId")) $("loginCompanyId").value = state.companyId;
       localStorage.setItem("ws_role", state.role);
       localStorage.setItem("ws_permissions", JSON.stringify(state.permissions));
       localStorage.setItem("ws_isPlatformAdmin", state.isPlatformAdmin ? "1" : "0");
       localStorage.setItem("ws_userName", state.userName);
+      return true;
     } catch (err) {
-      console.warn("loadMeProfile", err);
+      if (version !== sessionVersion || token !== state.accessToken) return false;
+      if (err.status === 401) clearSession();
+      else setConnected(false);
+      if ($("loginLog")) {
+        $("loginLog").classList.add("error");
+        $("loginLog").textContent = err.status === 401
+          ? "Session expired. Please sign in again."
+          : "Unable to verify session. Please try again later.";
+      }
+      return false;
     }
   }
 
@@ -443,6 +475,7 @@
   }
 
   async function applyAuthSession(body) {
+    const version = sessionVersion;
     state.companyId = body.company_id;
     state.userId = body.user_id;
     state.accessToken = body.access_token || "";
@@ -461,11 +494,13 @@
     if ($("companyId")) $("companyId").value = state.companyId;
     if ($("userId")) $("userId").value = state.userId;
     if ($("loginCompanyId")) $("loginCompanyId").value = state.companyId;
-    if (!state.permissions.length) await loadMeProfile();
+    if (!state.permissions.length && !await loadMeProfile()) return;
     applyNavGating();
     setConnected(true);
     await bootstrapSessionEnvironment();
+    if (version !== sessionVersion) return;
     await refreshInboxBadge();
+    if (version !== sessionVersion) return;
     showView(defaultLandingView());
   }
 
@@ -537,11 +572,8 @@
       if ($("companyId")) $("companyId").value = co.id;
       if ($("userId")) $("userId").value = user.id;
 
-      if (state.accessToken) await loadMeProfile();
-      else {
-        state.role = "owner";
-        state.permissions = [];
-      }
+      if (!state.accessToken) throw new Error("Password authentication required");
+      if (!await loadMeProfile()) return;
       applyNavGating();
       setConnected(true);
       await bootstrapSessionEnvironment();
@@ -589,7 +621,7 @@
       localStorage.setItem("ws_companyId", state.companyId);
       localStorage.setItem("ws_userId", state.userId);
       await api(`/companies/${state.companyId}`);
-      await loadMeProfile();
+      if (!await loadMeProfile()) throw new Error("Session verification failed");
       applyNavGating();
       setConnected(true);
       await bootstrapSessionEnvironment();
@@ -721,6 +753,8 @@
   $("btnLogin").onclick = async () => {
     const log = $("loginLog");
     const btn = $("btnLogin");
+    clearSession();
+    const version = sessionVersion;
     try {
       if (btn) {
         btn.disabled = true;
@@ -738,6 +772,7 @@
         body: JSON.stringify({ email, password }),
         skipAuth: true,
       });
+      if (version !== sessionVersion) return;
       try {
         if ($("loginRemember") && $("loginRemember").checked) {
           localStorage.setItem("ws_login_email", email);
@@ -2515,18 +2550,20 @@ async function loadDepartments() {
   if ($("loginCompanyId")) $("loginCompanyId").value = state.companyId;
 
   (async function bootSession() {
+    const version = sessionVersion;
+    setConnected(false);
     applyNavGating();
-    if (state.companyId && state.userId) {
-      if (state.accessToken || state.userId) {
-        try { await loadMeProfile(); } catch (_) {}
-      }
+    if (state.accessToken) {
+      if (!await loadMeProfile()) return;
       applyNavGating();
       setConnected(true);
       await bootstrapSessionEnvironment();
+      if (version !== sessionVersion) return;
       await refreshInboxBadge();
+      if (version !== sessionVersion) return;
       showView(defaultLandingView());
     } else {
-      setConnected(false);
+      clearSession();
     }
   })();
 })();

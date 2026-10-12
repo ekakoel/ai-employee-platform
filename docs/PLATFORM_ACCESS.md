@@ -78,8 +78,13 @@ Password login, refresh, and authenticated company/admin APIs retain their
 response shapes. Bearer-only clients work without header injection middleware.
 Connect IDs, anonymous Quick start, legacy token requests, and public
 registration no longer work. Provisioning requires an explicit owner password.
-The existing frontend JavaScript syntax error is outside Phase 2A and still
-blocks browser login until repaired in P1.
+The Phase 2A report originally recorded a frontend JavaScript syntax blocker.
+AUTH-011 has since corrected the three invalid assignments. AUTH-014 changes
+in the current working tree distinguish `/auth/me` 401 from network/server
+failures and prevent optimistic session restoration after failed verification.
+See [Project Status](PROJECT_STATUS.md) for the dated verification evidence and
+review/commit status. These isolated frontend tests do not establish browser
+E2E or real backend login success.
 
 `tests/test_auth_p0_isolated.py` uses real routers on a separate FastAPI instance
 without the production lifespan, SQLite in-memory databases, and a guard that

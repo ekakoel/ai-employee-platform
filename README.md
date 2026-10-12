@@ -1,85 +1,73 @@
-# AI Employee Platform — Local MVP 0.1
+# AI Employee Platform
 
 [![CI](https://github.com/ekakoel/ai-employee-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/ekakoel/ai-employee-platform/actions/workflows/ci.yml)
 
 
-Vertical slice awal untuk membuktikan model:
+Workspace multi-company untuk kolaborasi manusia dan AI employee: agent catalog,
+hiring, chat, knowledge, task execution, tools, policy, approval, dan audit.
 
-**Company → Agent Catalog → Hire Agent → Agent Instance → Knowledge → Task**
-
-## Prinsip MVP
-
-1. Company hanya dapat membuat Task menggunakan Agent Instance yang dimilikinya.
-2. Agent Instance berasal dari Agent Catalog yang tersedia.
-3. Skill dan allowed tools diwariskan dari Agent Catalog ke instance.
-4. Knowledge dimiliki oleh Company dan dapat di-scope ke Agent Instance.
-5. Knowledge dapat dibuat, dibaca, diubah, dan dihapus oleh API company-scoped.
-6. Belum ada LLM, CRM, authentication, vector database, OCR, billing, atau background worker pada slice ini.
-
-## Menjalankan di Windows PowerShell
-
-```powershell
-cd ai_employee_platform_v0_1
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-Copy-Item .env.example .env
-uvicorn app.main:app --reload
+```text
+Company -> Hire Agent -> Agent Instance -> Knowledge / Chat -> Task
+Task -> Runtime -> Tool / Policy / Approval -> Hasil dan Audit
 ```
 
-Buka:
-- API: http://127.0.0.1:8000
-- Swagger: http://127.0.0.1:8000/docs
-- Health: http://127.0.0.1:8000/health
-- **Workspace UI (Phase 8 / Job 12):** http://127.0.0.1:8000/workspace
-- **Developer console:** http://127.0.0.1:8000/developer
+Backend memakai Python/FastAPI/SQLAlchemy. Frontend memakai HTML/CSS/JavaScript.
+SQLite tersedia untuk lokal dan PostgreSQL untuk deployment Compose. Runtime
+memiliki provider Ollama dan worker automation terpisah.
+Keberadaan fitur tidak berarti seluruh alur sudah terverifikasi atau siap produksi.
 
-The user workspace opens with password login and company work features. The
-developer console provides demo setup, ID connection, tool diagnostics, policy
-simulation, and scope checks. Both interfaces share the existing session and API
-authorization; the separate console is a UI boundary, not an additional role.
+## Dokumentasi: Mulai di Sini
 
-The right sidebar lists persisted task results with search, agent/type/date
-filters, and personal server-side pins. Previews open in the main area. Downloads
-export the stored result as text or JSON; revision requests prefill a new task
-with the original instruction and result. Dates refer to task creation. This
-library does not yet track document approval states, file artifacts, or versions
-of results overwritten by rerunning the same task.
+| Panduan | Isi |
+| --- | --- |
+| [Project Guide](docs/PROJECT_GUIDE.md) | Pemahaman produk, domain, arsitektur, peta kode, dan alur utama |
+| [Development Guide](docs/DEVELOPMENT_GUIDE.md) | Setup, sandbox terpisah, konfigurasi, pengujian aman, dan aturan kerja |
+| [Project Status](docs/PROJECT_STATUS.md) | Baseline keamanan, hasil tes terakhir, batasan, dan checklist pilot company |
+| [Platform Access](docs/PLATFORM_ACCESS.md) | Login, onboarding, hak admin, dan kontrak akses P0 |
+| [Master Index](docs/00_MASTER_INDEX.md) | Blueprint, roadmap, acceptance criteria, dan governance dokumentasi |
 
-## Test
+Panduan implementasi di atas dipetakan pada 2026-10-12. Source code dan tes
+aktual mengungguli blueprint atau handoff historis jika terjadi perbedaan.
+
+## Akses dan Onboarding
+
+- Login menggunakan email/password melalui `/api/v1/auth/login`.
+- Identitas API berasal dari Bearer token; `X-User-ID` bukan kredensial.
+- Platform admin sah membuat company dan owner melalui `/api/v1/admin/companies`.
+- Owner company bukan otomatis platform admin.
+- Registrasi publik, token tanpa password, dan anonymous first-user bootstrap ditutup.
+- Quick start anonim dan Connect IDs lama bukan jalur onboarding yang didukung.
+- Database baru tidak otomatis memiliki platform admin yang sah. Bootstrap
+  operator membutuhkan proses yang direview terpisah, bukan bypass development.
+
+Halaman tersedia pada `/workspace`, `/developer`, `/forgot-password`, dan
+`/reset-password`. Developer UI tidak menggantikan permission check backend.
+
+## Menjalankan dengan Aman
+
+Entrypoint yang benar adalah `app.main:app`, bukan `src.main`.
+Baca [langkah sandbox development](docs/DEVELOPMENT_GUIDE.md#4-menjalankan-sandbox-development)
+sebelum menjalankan Uvicorn.
+
+**Startup dapat membuat tabel, menyesuaikan schema SQLite, dan menulis seed.**
+Default database menunjuk `./ai_employee.db`. Jangan menjalankan aplikasi,
+worker, Docker Compose, migration, atau full pytest terhadap data workspace
+hanya untuk mencoba project.
+
+## Verifikasi Frontend Tanpa Database
 
 ```powershell
-pytest -q
+node --check app/static/workspace/app.js
+node --test tests/workspace_auth.test.cjs
+git diff --check
 ```
 
-## Contoh alur API
+Tes auth memakai mock dan tidak membuktikan browser E2E atau integrasi backend.
+Baseline terakhir: 21 tes auth lulus; seluruh tes frontend 55/57 lulus dengan
+dua kegagalan lama Home/sidebar. Detail dan batas bukti ada di
+[Project Status](docs/PROJECT_STATUS.md). Hasil ini bukan eksekusi ulang pada
+sesi dokumentasi.
 
-1. `POST /api/v1/companies`
-2. `GET /api/v1/agent-catalog`
-3. `POST /api/v1/companies/{company_id}/agents/{catalog_agent_id}/hire`
-4. `POST /api/v1/companies/{company_id}/knowledge`
-5. `POST /api/v1/companies/{company_id}/tasks`
-
-## Phase 0.3 yang sudah diimplementasikan
-
-- Agent Subscription sebagai entitas terpisah dari Agent Catalog dan Agent Instance.
-- Company dapat melihat subscription Agent yang dimilikinya.
-- Subscription dapat dibatalkan oleh user berpermission `agent.hire`.
-- Cancelled subscription otomatis menonaktifkan Agent Instance terkait.
-- Agent inactive/cancelled tidak dapat menerima Task baru.
-- Audit log untuk hiring dan cancellation.
-
-## Next
-
-- Authentication + user/company roles
-- PostgreSQL + Alembic migrations
-- File upload/object storage
-- Document extraction
-- Knowledge chunks + pgvector
-- Policy/permission engine
-- Task runtime
-- LLM provider abstraction
-- Approval workflow
-- Audit log
-- Frontend Company Control Center
+Untuk backend, baca isolasi fixture dan perintah suite P0 khusus dalam
+[Development Guide](docs/DEVELOPMENT_GUIDE.md#7-tes-backend-p0-yang-terisolasi).
+Jangan menganggap `pytest -q` atau collection seluruh tes aman untuk database.

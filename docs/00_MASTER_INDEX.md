@@ -5,6 +5,18 @@
 **Primary branch:** `development`  
 **Document baseline:** 2026-10-06
 
+## Panduan Implementasi Saat Ini
+
+Untuk memahami source code dan cara bekerja dengan aman, mulai dari:
+
+- [Project Guide](PROJECT_GUIDE.md): produk, domain, arsitektur, peta source, dan alur utama.
+- [Development Guide](DEVELOPMENT_GUIDE.md): setup sandbox, konfigurasi, dan isolasi pengujian.
+- [Project Status](PROJECT_STATUS.md): snapshot 2026-10-12, hasil tes terakhir, dan risiko terbuka.
+- [Platform Access](PLATFORM_ACCESS.md): kontrak autentikasi/onboarding P0.
+
+Dokumen bernomor di bawah terutama menjadi referensi blueprint dan arah produk.
+Angka hasil tes dalam baseline lama adalah catatan historis, bukan hasil terbaru.
+
 ## Purpose
 
 This documentation set is the long-term product and engineering reference for the AI Employee Platform.
