@@ -265,6 +265,13 @@ def run_reservation_playbook(
         db.add(agent)
         db.flush()
         hired_now = True
+        try:
+            from app.services.access import grant_operational_access_for_agent
+            grant_operational_access_for_agent(
+                db, company_id=company_id, agent_instance_id=agent.id
+            )
+        except Exception:
+            pass
         # Ensure supervisor can use the agent (Job 37 access model)
         if user_id:
             try:

@@ -66,6 +66,163 @@ def require_agent_use(
     )
 
 
+# Roles that may chat/consult any company agent for shared knowledge (advisory).
+OPERATIONAL_CHAT_ROLES = frozenset({
+    "member",
+    "reservation",
+    "contract_manager",
+    "administration",
+    "manager",
+    "ai_admin",
+    "owner",
+})
+
+
+def can_chat_with_agent(
+    db: Session,
+    user: User,
+    *,
+    company_id: str,
+    agent_instance_id: str,
+) -> bool:
+    """Advisory chat: company admins, explicit can_use, or any active employee with agent.read."""
+    if user.company_id != company_id or user.status != "active":
+        return False
+    if is_company_admin(user):
+        return True
+    access = get_agent_access(
+        db,
+        company_id=company_id,
+        agent_instance_id=agent_instance_id,
+        user_id=user.id,
+    )
+    if access and access.can_use:
+        return True
+    keys = user_permission_keys(user)
+    # Company knowledge Q&A: employees with agent.read may open advisory chat
+    if "agent.read" in keys:
+        return True
+    role_name = user.role.name if user.role else ""
+    return role_name in OPERATIONAL_CHAT_ROLES
+
+
+def require_agent_chat(
+    db: Session,
+    user: User,
+    *,
+    company_id: str,
+    agent_instance_id: str,
+) -> None:
+    """Allow advisory conversation for company employees (knowledge Q&A).
+
+    Execute/tools still use require_agent_use (stricter).
+    """
+    if user.company_id != company_id or user.status != "active" or user.company is None or not user.company.is_active:
+        raise HTTPException(status_code=403, detail="User is not active in this company")
+    if can_chat_with_agent(
+        db, user, company_id=company_id, agent_instance_id=agent_instance_id
+    ):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "You are not allowed to chat with this AI Employee. "
+            "Ask an owner or AI admin to grant access, or use an agent shared with your role."
+        ),
+    )
+
+
+def grant_operational_access_for_agent(
+    db: Session,
+    *,
+    company_id: str,
+    agent_instance_id: str,
+) -> int:
+    """Grant can_use to all active operational company users for one agent."""
+    from app.models.entities import Role
+
+    users = list(
+        db.scalars(
+            select(User).where(
+                User.company_id == company_id,
+                User.status == "active",
+            )
+        ).all()
+    )
+    granted = 0
+    for u in users:
+        role_name = u.role.name if u.role else ""
+        keys = user_permission_keys(u)
+        if role_name in {"owner", "ai_admin"}:
+            continue  # admin bypass
+        if role_name not in OPERATIONAL_CHAT_ROLES and "agent.read" not in keys:
+            continue
+        existing = get_agent_access(
+            db,
+            company_id=company_id,
+            agent_instance_id=agent_instance_id,
+            user_id=u.id,
+        )
+        if existing and existing.can_use:
+            continue
+        grant_access(
+            db,
+            company_id=company_id,
+            agent_instance_id=agent_instance_id,
+            user_id=u.id,
+            can_use=True,
+            can_manage=False,
+            can_approve=False,
+            is_supervisor=False,
+        )
+        granted += 1
+    return granted
+
+
+def grant_all_agents_to_user(
+    db: Session,
+    *,
+    company_id: str,
+    user_id: str,
+) -> int:
+    """When a new employee joins, grant can_use on every active hired agent."""
+    from app.models.entities import AgentInstance
+
+    user = db.get(User, user_id)
+    if not user or user.company_id != company_id:
+        return 0
+    agents = list(
+        db.scalars(
+            select(AgentInstance).where(
+                AgentInstance.company_id == company_id,
+                AgentInstance.status == "active",
+            )
+        ).all()
+    )
+    n = 0
+    for agent in agents:
+        existing = get_agent_access(
+            db,
+            company_id=company_id,
+            agent_instance_id=agent.id,
+            user_id=user_id,
+        )
+        if existing and existing.can_use:
+            continue
+        grant_access(
+            db,
+            company_id=company_id,
+            agent_instance_id=agent.id,
+            user_id=user_id,
+            can_use=True,
+            can_manage=False,
+            can_approve=False,
+            is_supervisor=False,
+        )
+        n += 1
+    return n
+
+
 def require_agent_manage(
     db: Session,
     user: User,

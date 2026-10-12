@@ -134,6 +134,9 @@ from app.services.access import (
     require_agent_approve,
     require_agent_manage,
     require_agent_use,
+    require_agent_chat,
+    grant_operational_access_for_agent,
+    grant_all_agents_to_user,
 )
 from app.services.approval import ApprovalService
 from app.services.consultation import run_consultation
@@ -455,6 +458,11 @@ def create_user(
         status="success",
     )
 
+    # Job 56: new employee can chat with existing AI employees
+    try:
+        grant_all_agents_to_user(db, company_id=company_id, user_id=user.id)
+    except Exception:
+        pass
     db.commit()
     db.refresh(user)
     _ = user.role
@@ -680,6 +688,14 @@ def hire_agent(
                 agent_instance_id=instance.id,
                 skill_id=skill.id,
             )
+
+    # Job 56: every company employee can advisory-chat with hired agents
+    try:
+        grant_operational_access_for_agent(
+            db, company_id=company_id, agent_instance_id=instance.id
+        )
+    except Exception:
+        pass
 
     record_audit(
         db,
@@ -2724,12 +2740,14 @@ def list_conversations_api(
         user_id=None,
         agent_instance_id=agent_instance_id,
     )
-    from app.services.access import get_agent_access, is_company_admin
-    if not is_company_admin(user):
-        conversations = [item for item in conversations if (
-            (access := get_agent_access(db, company_id=company_id, agent_instance_id=item.agent_instance_id, user_id=user.id))
-            and access.can_use
-        )]
+    # Job 56: employees with agent.read may see company conversations they can chat with
+    from app.services.access import can_chat_with_agent
+    conversations = [
+        item for item in conversations
+        if can_chat_with_agent(
+            db, user, company_id=company_id, agent_instance_id=item.agent_instance_id
+        )
+    ]
     return conversation_reads(db, company_id=company_id, conversations=conversations)
 
 
@@ -2749,7 +2767,7 @@ def create_conversation_api(
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "task.create")
     agent = get_owned_agent_or_404(db, company_id, payload.agent_instance_id)
-    require_agent_use(
+    require_agent_chat(
         db, user, company_id=company_id, agent_instance_id=agent.id
     )
     try:
@@ -2786,7 +2804,7 @@ def list_messages_api(
     )
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    require_agent_use(db, user, company_id=company_id, agent_instance_id=conv.agent_instance_id)
+    require_agent_chat(db, user, company_id=company_id, agent_instance_id=conv.agent_instance_id)
     messages = list_messages(
         db, company_id=company_id, conversation_id=conversation_id
     )
@@ -2818,7 +2836,7 @@ def post_message_api(
     )
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    require_agent_use(
+    require_agent_chat(
         db, user, company_id=company_id, agent_instance_id=conv.agent_instance_id
     )
     get_owned_agent_or_404(db, company_id, conv.agent_instance_id)
