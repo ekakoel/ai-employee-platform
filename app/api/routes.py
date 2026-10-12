@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status, Request
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile, status, Request
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -4421,9 +4421,9 @@ def list_audit_logs(
 async def ingest_knowledge_extract(
     company_id: str,
     file: UploadFile = File(...),
-    title: str | None = None,
-    category: str = "document",
-    agent_instance_id: str | None = None,
+    title: str | None = Form(default=None),
+    category: str = Form(default="document"),
+    agent_instance_id: str | None = Form(default=None),
     db: Session = Depends(get_db),
     x_user_id: str | None = Header(default=None),
 ):
