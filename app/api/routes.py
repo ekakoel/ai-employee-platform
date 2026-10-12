@@ -393,76 +393,7 @@ def create_user(
     db: Session = Depends(get_db),
     x_user_id: str = Depends(get_authenticated_user_id),
 ):
-    company = get_company_or_404(
-        db,
-        company_id,
-    )
-
-    current = require_company_user(db, company_id, x_user_id)
-    require_permission(current, "team.manage")
-    from app.services.seed import VALID_COMPANY_ROLES
-    if payload.role not in VALID_COMPANY_ROLES:
-        raise HTTPException(status_code=400, detail="Invalid company role")
-    if payload.role == "owner":
-        raise HTTPException(status_code=403, detail="Owners are created through platform onboarding")
-
-    role = get_or_create_role(
-        db,
-        payload.role,
-    )
-
-    password_hash = None
-    if getattr(payload, "password", None):
-        from app.core.passwords import hash_password
-
-        try:
-            password_hash = hash_password(payload.password)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    department_id = getattr(payload, "department_id", None)
-    if department_id:
-        dept = db.scalar(
-            select(Department).where(
-                Department.id == department_id,
-                Department.company_id == company.id,
-            )
-        )
-        if not dept:
-            raise HTTPException(status_code=400, detail="Department not found in company")
-
-    user = User(
-        company_id=company.id,
-        name=payload.name,
-        email=payload.email,
-        role_id=role.id,
-        password_hash=password_hash,
-        department_id=department_id,
-    )
-
-    db.add(user)
-    db.flush()
-
-    record_audit(
-        db,
-        company_id=company.id,
-        user_id=x_user_id,
-        action="user.create",
-        resource_type="user",
-        resource_id=user.id,
-        status="success",
-    )
-
-    # Job 56: new employee can chat with existing AI employees
-    try:
-        grant_all_agents_to_user(db, company_id=company_id, user_id=user.id)
-    except Exception:
-        pass
-    db.commit()
-    db.refresh(user)
-    _ = user.role
-
-    return user_to_read(user)
+    raise HTTPException(status_code=410, detail="Create employees through company invitations")
 
 
 
@@ -505,7 +436,9 @@ def update_company_user_role(
     from app.services.seed import VALID_COMPANY_ROLES
 
     actor = require_company_user(db, company_id, x_user_id)
-    require_permission(actor, "team.manage")
+    company = get_company_or_404(db, company_id)
+    if company.owner_user_id != actor.id or actor.role.name != "owner":
+        raise HTTPException(status_code=403, detail="Only the company owner can change roles")
     target = db.scalar(
         select(User).where(User.id == user_id, User.company_id == company_id)
     )
@@ -516,10 +449,15 @@ def update_company_user_role(
         raise HTTPException(status_code=400, detail=f"Invalid role: {payload.role}")
     if role_name == "owner":
         raise HTTPException(status_code=403, detail="Owner assignment is restricted to platform onboarding")
+    if target.id == company.owner_user_id or target.role.name == "owner":
+        raise HTTPException(status_code=403, detail="Owner role cannot be changed")
     if target.role and target.role.name == "owner" and actor.role.name != "owner":
         raise HTTPException(status_code=403, detail="Only an owner may change another owner's role")
     role = get_or_create_role(db, role_name)
     target.role_id = role.id
+    target.auth_version += 1
+    from app.services.auth_sessions import revoke_all
+    revoke_all(db, target, "role_change")
     db.flush()
     record_audit(
         db,

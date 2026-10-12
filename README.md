@@ -24,6 +24,7 @@ Keberadaan fitur tidak berarti seluruh alur sudah terverifikasi atau siap produk
 | [Development Guide](docs/DEVELOPMENT_GUIDE.md) | Setup, sandbox terpisah, konfigurasi, pengujian aman, dan aturan kerja |
 | [Project Status](docs/PROJECT_STATUS.md) | Baseline keamanan, hasil tes terakhir, batasan, dan checklist pilot company |
 | [Platform Access](docs/PLATFORM_ACCESS.md) | Login, onboarding, hak admin, dan kontrak akses P0 |
+| [Company Onboarding](docs/COMPANY_ONBOARDING.md) | Registrasi, verifikasi email, profil, undangan, dan admin company |
 | [Master Index](docs/00_MASTER_INDEX.md) | Blueprint, roadmap, acceptance criteria, dan governance dokumentasi |
 
 Panduan implementasi di atas dipetakan pada 2026-10-12. Source code dan tes
@@ -33,9 +34,12 @@ aktual mengungguli blueprint atau handoff historis jika terjadi perbedaan.
 
 - Login menggunakan email/password melalui `/api/v1/auth/login`.
 - Identitas API berasal dari Bearer token; `X-User-ID` bukan kredensial.
-- Platform admin sah membuat company dan owner melalui `/api/v1/admin/companies`.
+- Pemilik dapat mendaftarkan company melalui `/api/v1/auth/register`, lalu
+  memverifikasi email dan melengkapi profil company sebelum beroperasi.
+- Platform admin sah juga dapat membuat company dan owner melalui `/api/v1/admin/companies`.
 - Owner company bukan otomatis platform admin.
-- Registrasi publik, token tanpa password, dan anonymous first-user bootstrap ditutup.
+- Karyawan bergabung melalui undangan owner, bukan pemilihan company/role bebas.
+- Token tanpa password dan anonymous first-user bootstrap tetap ditutup.
 - Quick start anonim dan Connect IDs lama bukan jalur onboarding yang didukung.
 - Database baru tidak otomatis memiliki platform admin yang sah. Bootstrap
   operator membutuhkan proses yang direview terpisah, bukan bypass development.
@@ -63,7 +67,7 @@ git diff --check
 ```
 
 Tes auth memakai mock dan tidak membuktikan browser E2E atau integrasi backend.
-Validasi lanjutan: 30 tes auth frontend lulus dan seluruh 66 tes frontend lulus.
+Validasi terbaru: 33 tes auth frontend lulus dan seluruh 69 tes frontend lulus.
 Detail dan batas bukti ada di [Project Status](docs/PROJECT_STATUS.md). Hasil
 ini dieksekusi pada kelanjutan Phase 2D;
 lihat [Auth Session Lifecycle](docs/AUTH_SESSION_LIFECYCLE.md) untuk batas bukti.

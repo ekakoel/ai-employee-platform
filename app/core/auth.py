@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.services.auth_sessions import AuthError, validate_access
-from app.models import User
+from app.models import Company, User
 
 
 def _load_user(db: Session, user_id: str) -> User:
@@ -52,6 +52,10 @@ def get_current_user(
     return _load_user(db, user_id)
 
 
-def get_authenticated_user_id(user: User = Depends(get_current_user)) -> str:
+def get_authenticated_user_id(request: Request, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> str:
     """Supply a verified ID to existing company handlers and their audit calls."""
+    if request.url.path.startswith("/api/v1/companies/"):
+        company = db.get(Company, user.company_id)
+        if company and company.onboarding_status != "complete":
+            raise HTTPException(status_code=403, detail="Complete company profile before using the workspace")
     return user.id

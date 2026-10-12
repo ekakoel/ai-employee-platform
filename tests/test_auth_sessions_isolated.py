@@ -386,7 +386,7 @@ def test_failed_rotation_rolls_back_consumption_and_success_audit(isolated, monk
     assert refresh(client, old).status_code == 200
 
 
-def test_public_reset_response_consistent_and_ambiguous_email_requires_context(isolated, monkeypatch):
+def test_public_reset_response_consistent_and_ambiguous_email_fails_closed(isolated, monkeypatch):
     client, sessions, ids = isolated
     monkeypatch.setattr(settings, "debug", False)
     known = client.post("/api/v1/auth/forgot-password", json={"email": "owner@session.test"})
@@ -396,7 +396,8 @@ def test_public_reset_response_consistent_and_ambiguous_email_requires_context(i
         db.get(User, ids["other"]).email = "owner@session.test"
         db.commit()
     assert client.post("/api/v1/auth/login", json={"email": "owner@session.test", "password": PASSWORD}).status_code == 409
-    assert login(client, company_id=ids["company"])["user_id"] == ids["user"]
+    assert client.post("/api/v1/auth/login", json={"email": "owner@session.test",
+        "password": PASSWORD, "company_id": ids["company"]}).status_code == 409
     assert client.post("/api/v1/auth/forgot-password", json={"email": "owner@session.test"}).json() == unknown.json()
 
 
@@ -441,6 +442,25 @@ def test_additive_migration_preserves_old_user_and_blocks_security_downgrade(iso
         assert {"auth_sessions", "refresh_token_records", "password_reset_records"} <= set(inspect(connection).get_table_names())
         with pytest.raises(RuntimeError):
             migration.downgrade()
+    engine.dispose()
+
+
+def test_company_onboarding_migration_preserves_legacy_identity_without_owner_guess():
+    spec = importlib.util.spec_from_file_location("company_migration", "alembic/versions/0005_company_onboarding.py")
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    engine = create_engine("sqlite://")
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE companies (id VARCHAR(36) PRIMARY KEY, name VARCHAR(200), created_at DATETIME)"))
+        connection.execute(text("CREATE TABLE users (id VARCHAR(36) PRIMARY KEY, company_id VARCHAR(36), email VARCHAR(320))"))
+        connection.execute(text("INSERT INTO companies (id, name, created_at) VALUES ('old-co', 'Legacy', CURRENT_TIMESTAMP)"))
+        connection.execute(text("INSERT INTO users (id, company_id, email) VALUES ('old-user', 'old-co', 'Legacy@Example.test')"))
+        operations = Operations(MigrationContext.configure(connection))
+        with operations.context(operations.get_context()):
+            migration.upgrade()
+        assert connection.execute(text("SELECT owner_user_id, onboarding_status FROM companies WHERE id='old-co'")).one() == (None, "complete")
+        assert connection.execute(text("SELECT email, email_verified FROM users WHERE id='old-user'")).one() == ("Legacy@Example.test", 1)
+        assert connection.execute(text("SELECT email FROM email_claims")).scalar_one() == "legacy@example.test"
     engine.dispose()
 
 
@@ -517,9 +537,12 @@ def test_full_alembic_chain_on_disposable_sqlite(isolated, tmp_path, monkeypatch
     command.upgrade(config, "head")
     engine = create_engine(settings.database_url)
     with engine.connect() as connection:
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0004_auth_sessions"
-        assert {"auth_sessions", "refresh_token_records", "password_reset_records"} <= set(inspect(connection).get_table_names())
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0005_company_onboarding"
+        assert {"auth_sessions", "refresh_token_records", "password_reset_records",
+                "email_claims", "email_verifications", "company_invitations"} <= set(inspect(connection).get_table_names())
         assert "auth_version" in {column["name"] for column in inspect(connection).get_columns("users")}
+        assert "email_verified" in {column["name"] for column in inspect(connection).get_columns("users")}
+        assert "owner_user_id" in {column["name"] for column in inspect(connection).get_columns("companies")}
     engine.dispose()
 
 

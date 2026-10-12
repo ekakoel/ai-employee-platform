@@ -6,6 +6,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.auth_routes import router as auth_router
+from app.api.company_onboarding_routes import router as company_onboarding_router
 from app.api.admin_routes import router as admin_router
 from app.api.routes import router
 from app.api.result_routes import router as result_router
@@ -45,6 +46,7 @@ app = FastAPI(
 
 app.add_middleware(RequestIdMiddleware)
 app.include_router(auth_router)
+app.include_router(company_onboarding_router)
 app.include_router(admin_router)
 app.include_router(router)
 app.include_router(result_router)

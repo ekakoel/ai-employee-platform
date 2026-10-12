@@ -11,6 +11,7 @@ from app.core.database import get_db
 from app.models.entities import AuditLog, Company, User
 from app.services.audit import record_audit
 from app.services.platform_admin import grant_platform_admin, require_platform_admin
+from app.services.company_onboarding import claim_email, normalized_email
 from app.services.quotas import usage_summary
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
@@ -41,6 +42,15 @@ def admin_create_company(
     if existing:
         raise HTTPException(status_code=409, detail=f"Company '{payload.name}' already exists.")
 
+    try:
+        owner_email = normalized_email(payload.owner_email)
+        claim_email(db, owner_email)
+    except Exception as exc:
+        db.rollback()
+        if hasattr(exc, "status"):
+            raise HTTPException(status_code=exc.status, detail=str(exc)) from None
+        raise HTTPException(status_code=409, detail="Owner email is already registered") from None
+
     company = Company(name=payload.name)
     db.add(company)
     db.flush()
@@ -62,12 +72,13 @@ def admin_create_company(
     owner = User(
         company_id=company.id,
         name=payload.owner_name,
-        email=payload.owner_email.strip().lower(),
+        email=owner_email,
         role_id=role.id,
         password_hash=password_hash,
     )
     db.add(owner)
     db.flush()
+    company.owner_user_id = owner.id
 
     record_audit(
         db,

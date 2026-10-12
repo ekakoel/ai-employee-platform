@@ -71,6 +71,9 @@ def migrate_sqlite_schema() -> None:
 
     if "users" in table_names:
         user_cols = {c["name"] for c in inspector.get_columns("users")}
+        if "email_verified" not in user_cols:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE users ADD COLUMN email_verified BOOLEAN NOT NULL DEFAULT 1"))
         if "auth_version" not in user_cols:
             with engine.begin() as connection:
                 connection.execute(text("ALTER TABLE users ADD COLUMN auth_version INTEGER NOT NULL DEFAULT 0"))
@@ -113,6 +116,16 @@ def migrate_sqlite_schema() -> None:
 
     if "companies" in table_names:
         co_cols = {c["name"] for c in inspector.get_columns("companies")}
+        for column, definition in (
+            ("owner_user_id", "VARCHAR(36)"),
+            ("contact_email", "VARCHAR(320)"),
+            ("industry", "VARCHAR(120)"),
+            ("profile_completed_at", "DATETIME"),
+            ("onboarding_status", "VARCHAR(20) NOT NULL DEFAULT 'complete'"),
+        ):
+            if column not in co_cols:
+                with engine.begin() as connection:
+                    connection.execute(text(f"ALTER TABLE companies ADD COLUMN {column} {definition}"))
         if "is_active" not in co_cols:
             with engine.begin() as connection:
                 connection.execute(

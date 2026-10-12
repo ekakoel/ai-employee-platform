@@ -20,6 +20,7 @@
     accessToken: localStorage.getItem("ws_accessToken") || "",
     userName: localStorage.getItem("ws_userName") || "",
     role: localStorage.getItem("ws_role") || "",
+    onboardingStatus: "complete",
     permissions: [],
     isPlatformAdmin: localStorage.getItem("ws_isPlatformAdmin") === "1",
   };
@@ -82,6 +83,7 @@
 
   function canAccessView(view) {
     if (developerMode) return consoleViews.has(view);
+    if (state.onboardingStatus !== "complete") return view === "company";
     if (developerViews.has(view)) return !!state.isPlatformAdmin;
     const need = VIEW_PERMISSIONS[view];
     if (!need || need.length === 0) return true;
@@ -90,6 +92,7 @@
 
   function defaultLandingView() {
     if (developerMode) return "tools";
+    if (state.onboardingStatus !== "complete") return "company";
     const byRole = ROLE_DEFAULT_VIEW[state.role] || "home";
     if (canAccessView(byRole)) return byRole;
     return canAccessView("home") ? "home" : "chat";
@@ -132,6 +135,7 @@
   const getMainText = () => document.querySelector(".view.active")?.textContent || "";
 
   const titles = {
+    company: ["Company profile", "Organization details"],
     home: ["Home", "Your work and AI team at a glance"],
     inbox: ["Inbox", "Needs your attention"],
     chat: ["Chat", "Talk with AI employees"],
@@ -242,13 +246,14 @@
     state.accessToken = "";
     state.userName = "";
     state.role = "";
+    state.onboardingStatus = "complete";
     state.permissions = [];
     state.isPlatformAdmin = false;
     ["ws_companyId", "ws_userId", "ws_accessToken", "ws_refreshToken", "ws_userName", "ws_role", "ws_permissions", "ws_isPlatformAdmin"].forEach((k) =>
       localStorage.removeItem(k)
     );
     focusedTaskId = "";
-    ["companyId", "userId", "loginCompanyId"].forEach((id) => {
+    ["companyId", "userId"].forEach((id) => {
       if ($(id)) $(id).value = "";
     });
     setInboxBadge(0);
@@ -396,6 +401,7 @@
     contextualSidebar.show(name);
 
     if (name === "home") loadHome();
+    if (name === "company") loadCompanyProfile();
     if (name === "inbox") loadInbox();
     if (name === "agents") loadAgents();
     if (name === "inventory") loadInventory();
@@ -439,6 +445,49 @@
     btn.addEventListener("click", () => showView(btn.dataset.view));
   });
 
+  async function loadCompanyProfile() {
+    if (!state.companyId || developerMode) return true;
+    const version = sessionVersion;
+    const token = state.accessToken;
+    const log = $("companyProfileLog");
+    try {
+      const company = await api(`/companies/${state.companyId}/profile`, { skipSidebarRefresh: true });
+      if (version !== sessionVersion || token !== state.accessToken) return false;
+      state.onboardingStatus = company.onboarding_status;
+      if ($("companyProfileName")) $("companyProfileName").textContent = company.name;
+      if ($("companyOnboardingStatus")) $("companyOnboardingStatus").textContent =
+        company.onboarding_status === "complete" ? "Profile complete" : "Complete this profile to open your workspace.";
+      if ($("companyProfileNameInput")) $("companyProfileNameInput").value = company.name || "";
+      if ($("companyContactEmail")) $("companyContactEmail").value = company.contact_email || "";
+      if ($("companyIndustry")) $("companyIndustry").value = company.industry || "";
+      if ($("btnSaveCompanyProfile")) $("btnSaveCompanyProfile").classList.toggle("hidden", company.owner_user_id !== state.userId);
+      applyNavGating();
+      if (log) log.textContent = "";
+      return true;
+    } catch (err) {
+      if (version !== sessionVersion || token !== state.accessToken) return false;
+      state.onboardingStatus = "unknown";
+      applyNavGating();
+      if (log) log.textContent = err.message || "Company profile unavailable";
+      return false;
+    }
+  }
+
+  if ($("btnSaveCompanyProfile")) $("btnSaveCompanyProfile").onclick = async () => {
+    const log = $("companyProfileLog");
+    try {
+      await api(`/companies/${state.companyId}/profile`, { method: "PUT", body: JSON.stringify({
+        name: $("companyProfileNameInput").value.trim(),
+        contact_email: $("companyContactEmail").value.trim(),
+        industry: $("companyIndustry").value.trim(),
+      }) });
+      await loadCompanyProfile();
+      if (log) log.textContent = "Company profile saved.";
+    } catch (err) {
+      if (log) log.textContent = err.message || "Unable to save profile";
+    }
+  };
+
   document.querySelectorAll("[data-jump]").forEach((btn) => {
     btn.addEventListener("click", () => showView(btn.dataset.jump));
   });
@@ -453,6 +502,94 @@
       if (panel) panel.classList.add("active");
     });
   });
+
+  function openLoginTab(name) {
+    document.querySelector(`.login-tabs .tab[data-tab="${name}"]`)?.click();
+  }
+
+  if ($("btnRegisterCompany")) $("btnRegisterCompany").onclick = async () => {
+    const button = $("btnRegisterCompany");
+    const log = $("registrationLog");
+    button.disabled = true;
+    try {
+      const email = $("registrationEmail").value.trim();
+      const result = await api("/auth/register", { method: "POST", skipAuth: true,
+        body: JSON.stringify({ company_name: $("registrationCompany").value.trim(),
+          owner_name: $("registrationName").value.trim(), email,
+          password: $("registrationPassword").value }) });
+      $("registrationPassword").value = "";
+      log.textContent = result.message;
+      $("verificationPanel").classList.remove("hidden");
+      if (result.verification_token) $("verificationToken").value = result.verification_token;
+      $("loginEmail").value = email;
+    } catch (err) {
+      log.textContent = err.message || "Registration failed";
+    } finally {
+      button.disabled = false;
+    }
+  };
+
+  if ($("btnVerifyEmail")) $("btnVerifyEmail").onclick = async () => {
+    const log = $("registrationLog");
+    try {
+      const result = await api("/auth/verify-email", { method: "POST", skipAuth: true,
+        body: JSON.stringify({ token: $("verificationToken").value.trim() }) });
+      $("verificationToken").value = "";
+      log.textContent = result.message;
+      openLoginTab("login");
+      $("loginLog").textContent = result.message;
+    } catch (err) {
+      log.textContent = err.message || "Verification failed";
+    }
+  };
+
+  if ($("btnResendVerification")) $("btnResendVerification").onclick = async () => {
+    const log = $("registrationLog");
+    try {
+      const result = await api("/auth/request-verification", { method: "POST", skipAuth: true,
+        body: JSON.stringify({ email: $("registrationEmail").value.trim() }) });
+      log.textContent = result.message;
+      $("verificationPanel").classList.remove("hidden");
+      if (result.verification_token) $("verificationToken").value = result.verification_token;
+    } catch (err) {
+      log.textContent = err.message || "Unable to request verification";
+    }
+  };
+
+  if ($("btnAcceptInvite")) $("btnAcceptInvite").onclick = async () => {
+    const button = $("btnAcceptInvite");
+    const log = $("inviteLog");
+    button.disabled = true;
+    try {
+      const result = await api("/auth/accept-invitation", { method: "POST", skipAuth: true,
+        body: JSON.stringify({ token: $("inviteToken").value.trim(),
+          name: $("inviteName").value.trim(), password: $("invitePassword").value }) });
+      $("invitePassword").value = "";
+      $("inviteToken").value = "";
+      log.textContent = result.message;
+      openLoginTab("login");
+      $("loginLog").textContent = result.message;
+    } catch (err) {
+      log.textContent = err.message || "Invitation could not be accepted";
+    } finally {
+      button.disabled = false;
+    }
+  };
+
+  const incoming = typeof URLSearchParams === "undefined"
+    ? { has: () => false }
+    : new URLSearchParams(typeof location === "undefined" ? "" : location.search);
+  if (incoming.has("verify")) {
+    openLoginTab("register");
+    $("verificationPanel").classList.remove("hidden");
+    $("verificationToken").value = incoming.get("verify") || "";
+  } else if (incoming.has("invite")) {
+    openLoginTab("invite");
+    $("inviteToken").value = incoming.get("invite") || "";
+  }
+  if ((incoming.has("verify") || incoming.has("invite")) && typeof history !== "undefined") {
+    history.replaceState(null, "", location.pathname);
+  }
 
   async function loadMeProfile() {
     const version = sessionVersion;
@@ -470,7 +607,6 @@
       localStorage.setItem("ws_userId", state.userId);
       if ($("companyId")) $("companyId").value = state.companyId;
       if ($("userId")) $("userId").value = state.userId;
-      if ($("loginCompanyId")) $("loginCompanyId").value = state.companyId;
       localStorage.setItem("ws_role", state.role);
       localStorage.setItem("ws_permissions", JSON.stringify(state.permissions));
       localStorage.setItem("ws_isPlatformAdmin", state.isPlatformAdmin ? "1" : "0");
@@ -524,10 +660,15 @@
     if (body.refresh_token) localStorage.setItem("ws_refreshToken", body.refresh_token);
     if ($("companyId")) $("companyId").value = state.companyId;
     if ($("userId")) $("userId").value = state.userId;
-    if ($("loginCompanyId")) $("loginCompanyId").value = state.companyId;
     if (!state.permissions.length && !await loadMeProfile()) return;
+    if (version !== sessionVersion) return;
+    if (!await loadCompanyProfile() || version !== sessionVersion) return;
     applyNavGating();
     setConnected(true);
+    if (state.onboardingStatus !== "complete") {
+      showView("company");
+      return;
+    }
     await bootstrapSessionEnvironment();
     if (version !== sessionVersion) return;
     await refreshInboxBadge();
@@ -597,7 +738,6 @@
         log.textContent += "\nHire: " + e.message;
       }
 
-      if ($("loginCompanyId")) $("loginCompanyId").value = co.id;
       if ($("loginEmail")) $("loginEmail").value = "owner@demo.local";
       if ($("loginPassword")) $("loginPassword").value = "demo12345";
       if ($("companyId")) $("companyId").value = co.id;
@@ -605,6 +745,7 @@
 
       if (!state.accessToken) throw new Error("Password authentication required");
       if (!await loadMeProfile()) return;
+      if (!await loadCompanyProfile()) return;
       applyNavGating();
       setConnected(true);
       await bootstrapSessionEnvironment();
@@ -784,7 +925,6 @@
   $("btnLogin").onclick = async () => {
     const log = $("loginLog");
     const btn = $("btnLogin");
-    const companyId = (($("loginCompanyId") && $("loginCompanyId").value) || "").trim();
     clearSession();
     const version = sessionVersion;
     try {
@@ -801,7 +941,7 @@
       if (!email || !password) throw new Error("Email and password are required");
       const body = await api("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ email, password, ...(companyId ? { company_id: companyId } : {}) }),
+        body: JSON.stringify({ email, password }),
         skipAuth: true,
       });
       if (version !== sessionVersion) return;
@@ -828,7 +968,7 @@
   };
 
   // Enter key submits login
-  ["loginEmail", "loginPassword", "loginCompanyId"].forEach((id) => {
+  ["loginEmail", "loginPassword"].forEach((id) => {
     const el = $(id);
     if (el) {
       el.addEventListener("keydown", (e) => {
@@ -2022,24 +2162,16 @@
             (u) => `<div class="item">
           <strong>${escapeHtml(u.name)}</strong>
           <div class="meta">${escapeHtml(u.email)} · role: <code>${escapeHtml(u.role || u.role_id)}</code> · ${escapeHtml(u.status || "")}</div>
-          <div class="row" style="margin-top:.35rem">
-            <select data-user-role="${escapeHtml(u.id)}">
-              ${["owner","ai_admin","manager","reservation","contract_manager","administration","accounting","member"].map((r) =>
-                `<option value="${r}" ${u.role === r ? "selected" : ""}>${r}</option>`
-              ).join("")}
-            </select>
-            <button class="secondary btn-set-role" data-id="${escapeHtml(u.id)}">Update role</button>
-          </div>
+          ${state.role === "owner" && u.role !== "owner" ? `<button class="secondary btn-set-role" data-id="${escapeHtml(u.id)}" data-admin="${u.role === "ai_admin" ? "1" : "0"}">${u.role === "ai_admin" ? "Remove administrator" : "Make administrator"}</button>` : ""}
         </div>`
           )
           .join("") || `<div class="empty">No users.</div>`;
       document.querySelectorAll(".btn-set-role").forEach((b) => {
         b.onclick = async () => {
-          const sel = document.querySelector(`select[data-user-role="${b.dataset.id}"]`);
           try {
-            await api(`/companies/${state.companyId}/users/${b.dataset.id}`, {
-              method: "PATCH",
-              body: JSON.stringify({ role: sel.value }),
+            await api(`/companies/${state.companyId}/administrators/${b.dataset.id}`, {
+              method: "PUT",
+              body: JSON.stringify({ administrator: b.dataset.admin !== "1" }),
             });
             loadUsers();
           } catch (err) {
@@ -2047,6 +2179,23 @@
           }
         };
       });
+      if (state.role === "owner" && $("invitationsList")) {
+        const invitations = await api(`/companies/${state.companyId}/invitations`);
+        $("invitationsList").innerHTML = invitations.map((invitation) =>
+          `<div class="item"><strong>${escapeHtml(invitation.email)}</strong> <span class="meta">${escapeHtml(invitation.status)}</span>
+           ${invitation.status === "pending" ? `<button class="secondary btn-revoke-invite" data-id="${escapeHtml(invitation.id)}">Revoke</button>` : ""}</div>`
+        ).join("") || `<div class="empty">No invitations.</div>`;
+        document.querySelectorAll(".btn-revoke-invite").forEach((button) => {
+          button.onclick = async () => {
+            try {
+              await api(`/companies/${state.companyId}/invitations/${button.dataset.id}/revoke`, { method: "POST" });
+              loadUsers();
+            } catch (err) {
+              $("userAdminLog").textContent = err.message;
+            }
+          };
+        });
+      }
     } catch (err) {
       $("usersList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
     }
@@ -2056,19 +2205,18 @@
     $("btnCreateUser").onclick = async () => {
       const log = $("userAdminLog");
       try {
-        const body = await api(`/companies/${state.companyId}/users`, {
+        const body = await api(`/companies/${state.companyId}/invitations`, {
           method: "POST",
           body: JSON.stringify({
-            name: ($("userNameInput").value || "").trim() || "New User",
             email: ($("userEmailInput").value || "").trim(),
-            role: $("userRoleInput").value || "member",
-            password: ($("userPasswordInput").value || "demo12345"),
           }),
         });
         if (log) {
           log.classList.remove("hidden-log");
-          log.textContent = "Created " + body.email + " as " + (body.role || "");
+          log.textContent = body.message;
         }
+        if ($("inviteDebugTokenWrap")) $("inviteDebugTokenWrap").classList.toggle("hidden", !body.invitation_token);
+        if ($("inviteDebugToken")) $("inviteDebugToken").value = body.invitation_token || "";
         $("userEmailInput").value = "";
         loadUsers();
       } catch (err) {
@@ -2579,7 +2727,6 @@ async function loadDepartments() {
   if ($("apiBase")) $("apiBase").value = state.apiBase;
   if ($("companyId")) $("companyId").value = state.companyId;
   if ($("userId")) $("userId").value = state.userId;
-  if ($("loginCompanyId")) $("loginCompanyId").value = state.companyId;
 
   (async function bootSession() {
     const version = sessionVersion;
@@ -2587,8 +2734,13 @@ async function loadDepartments() {
     applyNavGating();
     if (state.accessToken) {
       if (!await loadMeProfile()) return;
+      if (!await loadCompanyProfile()) return;
       applyNavGating();
       setConnected(true);
+      if (state.onboardingStatus !== "complete") {
+        showView("company");
+        return;
+      }
       await bootstrapSessionEnvironment();
       if (version !== sessionVersion) return;
       await refreshInboxBadge();

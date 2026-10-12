@@ -27,7 +27,7 @@ def memory_only_sqlite(event_name, arguments):
 
 sys.addaudithook(memory_only_sqlite)
 
-from app.api import admin_routes, auth_routes, inbox_routes, result_routes, routes
+from app.api import admin_routes, auth_routes, company_onboarding_routes, inbox_routes, result_routes, routes
 from app.core.config import Settings, settings
 from app.core.database import Base, engine as application_engine, get_db
 from app.core.passwords import hash_password
@@ -88,12 +88,14 @@ def isolated():
             token = create_access_token(subject=user.id, company_id=company.id,
                                         session_id=session.id, auth_version=user.auth_version)
             identities[key] = {"id": user.id, "company_id": company.id, "email": user.email, "token": token}
+        companies[0].owner_user_id = identities["owner_a"]["id"]
+        companies[1].owner_user_id = identities["owner_b"]["id"]
         db.commit()
         empty_company_id = companies[2].id
 
     # This app mounts real routers, but has no migration/seed/storage lifespan.
     app = FastAPI()
-    for router in [auth_routes.router, admin_routes.router, routes.router, result_routes.router, inbox_routes.router]:
+    for router in [auth_routes.router, company_onboarding_routes.router, admin_routes.router, routes.router, result_routes.router, inbox_routes.router]:
         app.include_router(router)
 
     def memory_db():
@@ -134,10 +136,10 @@ def test_public_registration_cannot_select_tenant_or_role(isolated, role):
     client, users, sessions, _, _ = isolated
     response = client.post("/api/v1/auth/register", json={
         "company_id": users["owner_b"]["company_id"], "email": "outsider@p0.example",
-        "name": "Outsider", "password": "outsider-password-123", "role": role,
+        "company_name": "Outsider Company", "owner_name": "Outsider", "password": "outsider-password-123", "role": role,
         "is_platform_admin": True,
     })
-    assert response.status_code == 403
+    assert response.status_code == 422
     with sessions() as db:
         assert db.scalar(select(User.id).where(User.email == "outsider@p0.example")) is None
 
@@ -293,23 +295,161 @@ def test_owner_assignment_and_administration_escalation_are_denied(isolated):
                         headers=headers, json={"role": "owner"}).status_code == 403
     assert client.post(f"/api/v1/companies/{company}/users", headers=headers, json={
         "name": "Extra owner", "email": "extra@p0.example", "role": "owner",
-    }).status_code == 403
+    }).status_code == 410
     assert client.patch(f"/api/v1/companies/{company}/users/{users['owner_a']['id']}",
                         headers=headers, json={"role": "member"}).status_code == 403
 
 
-def test_authorized_member_creation_records_verified_actor(isolated):
+def test_authorized_invitation_records_verified_actor(isolated, monkeypatch):
     client, users, sessions, _, _ = isolated
+    monkeypatch.setattr(settings, "debug", True)
+    monkeypatch.setattr(settings, "app_env", "test")
     company = users["owner_a"]["company_id"]
     headers = {**bearer(users, "owner_a"), "X-User-ID": users["owner_b"]["id"]}
-    response = client.post(f"/api/v1/companies/{company}/users", headers=headers, json={
-        "name": "New employee", "email": "employee@p0.example", "password": "employee-password-123", "role": "member",
+    response = client.post(f"/api/v1/companies/{company}/invitations", headers=headers, json={
+        "email": "employee@p0.example",
     })
     assert response.status_code == 201
+    token = response.json()["invitation_token"]
+    accepted = client.post("/api/v1/auth/accept-invitation", json={
+        "token": token, "name": "New employee", "password": "employee-password-123",
+    })
+    assert accepted.status_code == 201
     with sessions() as db:
-        audit = db.scalar(select(AuditLog).where(AuditLog.action == "user.create"))
+        audit = db.scalar(select(AuditLog).where(AuditLog.action == "company.invitation.create"))
         assert audit.user_id == users["owner_a"]["id"]
     assert client.post("/api/v1/auth/login", json={"email": "employee@p0.example", "password": "employee-password-123"}).status_code == 200
+
+
+def test_public_company_onboarding_and_owner_controls(isolated, monkeypatch):
+    client, users, sessions, _, _ = isolated
+    monkeypatch.setattr(settings, "debug", True)
+    monkeypatch.setattr(settings, "app_env", "test")
+    monkeypatch.setattr(settings, "smtp_host", "")
+    response = client.post("/api/v1/auth/register", json={
+        "company_name": "New Company", "owner_name": "New Owner",
+        "email": "new.owner@example.test", "password": "strong-password-123",
+    })
+    assert response.status_code == 201
+    company_id = response.json()["company_id"]
+    token = response.json()["verification_token"]
+    assert token
+    assert client.post("/api/v1/auth/login", json={
+        "email": "new.owner@example.test", "password": "strong-password-123",
+    }).status_code == 401
+    assert client.post("/api/v1/auth/verify-email", json={"token": token}).status_code == 200
+    assert client.post("/api/v1/auth/verify-email", json={"token": token}).status_code == 400
+    login = client.post("/api/v1/auth/login", json={
+        "email": "new.owner@example.test", "password": "strong-password-123",
+        "company_id": users["owner_b"]["company_id"],
+    })
+    assert login.status_code == 200
+    pair = login.json()
+    assert pair["company_id"] == company_id
+    headers = {"Authorization": f"Bearer {pair['access_token']}", "X-User-ID": users["admin"]["id"]}
+    assert client.get(f"/api/v1/companies/{company_id}/users", headers=headers).status_code == 403
+    assert client.get(f"/api/v1/companies/{company_id}/profile", headers=headers).status_code == 200
+    assert client.put(f"/api/v1/companies/{company_id}/profile", headers=headers, json={
+        "name": "New Company", "contact_email": "contact@example.test", "industry": "Travel",
+    }).status_code == 200
+    assert client.get(f"/api/v1/companies/{company_id}/users", headers=headers).status_code == 200
+    assert client.get(f"/api/v1/companies/{users['owner_b']['company_id']}/profile", headers=headers).status_code == 403
+    with sessions() as db:
+        company = db.get(Company, company_id)
+        owner = db.get(User, pair["user_id"])
+        assert company.owner_user_id == owner.id
+        assert owner.role.name == "owner" and not owner.is_platform_admin
+
+
+def test_invitation_single_use_admin_grant_and_session_revocation(isolated, monkeypatch):
+    client, users, sessions, _, _ = isolated
+    monkeypatch.setattr(settings, "debug", True)
+    monkeypatch.setattr(settings, "app_env", "test")
+    monkeypatch.setattr(settings, "smtp_host", "")
+    company = users["owner_a"]["company_id"]
+    owner_headers = bearer(users, "owner_a")
+    assert client.post(f"/api/v1/companies/{company}/invitations", headers=bearer(users, "member_a"),
+                       json={"email": "staff@example.test"}).status_code == 403
+    invite = client.post(f"/api/v1/companies/{company}/invitations", headers=owner_headers,
+                         json={"email": "staff@example.test"})
+    assert invite.status_code == 201
+    token = invite.json()["invitation_token"]
+    payload = {"token": token, "name": "Staff", "password": "staff-password-123"}
+    assert client.post("/api/v1/auth/accept-invitation", json=payload).status_code == 201
+    assert client.post("/api/v1/auth/accept-invitation", json=payload).status_code == 400
+    pair = client.post("/api/v1/auth/login", json={
+        "email": "staff@example.test", "password": "staff-password-123",
+    }).json()
+    staff_headers = {"Authorization": f"Bearer {pair['access_token']}"}
+    endpoint = f"/api/v1/companies/{company}/administrators/{pair['user_id']}"
+    assert client.put(endpoint, headers=staff_headers, json={"administrator": True}).status_code == 403
+    assert client.put(endpoint, headers=owner_headers, json={"administrator": True}).status_code == 200
+    assert client.get("/api/v1/auth/me", headers=staff_headers).status_code == 401
+    updated = client.post("/api/v1/auth/login", json={
+        "email": "staff@example.test", "password": "staff-password-123",
+    }).json()
+    assert updated["role"] == "ai_admin" and "agent.manage" in updated["permissions"]
+    assert client.put(endpoint, headers=owner_headers, json={"administrator": False}).status_code == 200
+    with sessions() as db:
+        assert db.get(User, pair["user_id"]).role.name == "member"
+
+
+def test_public_registration_duplicate_email_and_missing_delivery(isolated, monkeypatch):
+    client, users, sessions, _, _ = isolated
+    payload = {"company_name": "Duplicate Email Company", "owner_name": "Owner",
+               "email": users["owner_a"]["email"], "password": "strong-password-123"}
+    monkeypatch.setattr(settings, "debug", True)
+    monkeypatch.setattr(settings, "app_env", "test")
+    monkeypatch.setattr(settings, "smtp_host", "")
+    assert client.post("/api/v1/auth/register", json=payload).status_code == 409
+    monkeypatch.setattr(settings, "debug", False)
+    monkeypatch.setattr(settings, "app_env", "production")
+    assert client.post("/api/v1/auth/register", json={**payload, "email": "fresh@example.test"}).status_code == 503
+    with sessions() as db:
+        assert db.scalar(select(Company.id).where(Company.name == "Duplicate Email Company")) is None
+
+
+def test_registration_retry_does_not_create_second_company(isolated, monkeypatch):
+    client, _, sessions, _, _ = isolated
+    monkeypatch.setattr(settings, "debug", True)
+    monkeypatch.setattr(settings, "app_env", "test")
+    monkeypatch.setattr(settings, "smtp_host", "")
+    payload = {"company_name": "Retry Company", "owner_name": "Owner",
+               "email": "retry@example.test", "password": "strong-password-123"}
+    assert client.post("/api/v1/auth/register", json=payload).status_code == 201
+    assert client.post("/api/v1/auth/register", json=payload).status_code == 409
+    with sessions() as db:
+        assert len(db.scalars(select(Company).where(Company.name == "Retry Company")).all()) == 1
+
+
+def test_invitation_revocation_and_expiration_are_audited(isolated, monkeypatch):
+    client, users, sessions, _, _ = isolated
+    monkeypatch.setattr(settings, "debug", True)
+    monkeypatch.setattr(settings, "app_env", "test")
+    monkeypatch.setattr(settings, "smtp_host", "")
+    company = users["owner_a"]["company_id"]
+    headers = bearer(users, "owner_a")
+    first = client.post(f"/api/v1/companies/{company}/invitations", headers=headers,
+                        json={"email": "revoked@example.test"}).json()
+    invitation = client.get(f"/api/v1/companies/{company}/invitations", headers=headers).json()[0]
+    assert client.post(f"/api/v1/companies/{company}/invitations/{invitation['id']}/revoke",
+                       headers=headers).status_code == 204
+    assert client.post("/api/v1/auth/accept-invitation", json={
+        "token": first["invitation_token"], "name": "Revoked", "password": "strong-password-123",
+    }).status_code == 400
+    second = client.post(f"/api/v1/companies/{company}/invitations", headers=headers,
+                         json={"email": "expired@example.test"}).json()
+    from app.models.entities import CompanyInvitation
+    with sessions() as db:
+        row = db.scalar(select(CompanyInvitation).where(CompanyInvitation.email == "expired@example.test"))
+        row.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        db.commit()
+    assert client.post("/api/v1/auth/accept-invitation", json={
+        "token": second["invitation_token"], "name": "Expired", "password": "strong-password-123",
+    }).status_code == 400
+    with sessions() as db:
+        actions = set(db.scalars(select(AuditLog.action).where(AuditLog.company_id == company)).all())
+        assert {"company.invitation.revoke", "company.invitation.expired"} <= actions
 
 
 def test_login_and_refresh_still_require_valid_credentials(isolated):

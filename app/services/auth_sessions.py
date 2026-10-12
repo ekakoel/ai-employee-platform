@@ -7,7 +7,7 @@ import hmac
 import logging
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import settings
@@ -85,7 +85,7 @@ def lock_user(db, user_id):
 
 
 def active_user(db, user):
-    if not user or user.status != "active":
+    if not user or user.status != "active" or not user.email_verified:
         raise AuthError()
     company = db.get(Company, user.company_id, populate_existing=True)
     if not company or not company.is_active:
@@ -133,14 +133,12 @@ def issue_pair(db, user, session):
 
 def login(db, email, password, company_id=None, request_id=None):
     with transaction(db):
-        query = select(User).join(Company).where(User.email == email.strip().lower(), User.status == "active", Company.is_active.is_(True))
-        if company_id:
-            query = query.where(User.company_id == company_id)
+        query = select(User).join(Company, User.company_id == Company.id).where(func.lower(User.email) == email.strip().lower(), User.status == "active", Company.is_active.is_(True))
         candidates = list(db.scalars(query).all())
         if len(candidates) > 1:
             if any(verify_password(password, user.password_hash) for user in candidates):
                 security_failure("login.ambiguous_company")
-                raise AuthError("Company context required for this account", 409)
+                raise AuthError("Account requires administrator reconciliation", 409)
             candidates = []
         if not candidates:
             security_failure("login.invalid_credentials")
@@ -221,7 +219,7 @@ def logout(db, token, all_sessions=False, request_id=None):
 def request_reset(db, email, company_id=None, request_id=None):
     token = None
     with transaction(db):
-        query = select(User).join(Company).where(User.email == email.strip().lower(), User.status == "active", Company.is_active.is_(True))
+        query = select(User).join(Company, User.company_id == Company.id).where(func.lower(User.email) == email.strip().lower(), User.status == "active", Company.is_active.is_(True))
         if company_id:
             query = query.where(User.company_id == company_id)
         users = list(db.scalars(query).all())

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.database import get_db
 from app.core.config import settings
 from app.services import auth_sessions
+from app.services import company_onboarding
 from app.models.entities import User
 from app.services.access import user_permission_keys
 
@@ -19,7 +20,7 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 class LoginRequest(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=8, max_length=128)
-    # Optional — legacy clients may still send company_id
+    # Legacy company_id is intentionally ignored; tenant comes from the account.
     company_id: str | None = None
 
 
@@ -84,15 +85,52 @@ def issue_token_legacy():
 
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
-    """Password login; duplicate active email memberships require company context."""
+    """Password login with server-resolved single active company."""
     return _run(lambda: auth_sessions.login(db, payload.email, payload.password,
-                                            payload.company_id, _request_id(request)))
+                                            None, _request_id(request)))
 
 
-@router.post("/register")
-def register():
-    """Company membership is provisioned by an authorized administrator."""
-    raise HTTPException(status_code=403, detail="Public registration is disabled; contact your company administrator")
+class CompanyRegistration(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    company_name: str = Field(min_length=2, max_length=200)
+    owner_name: str = Field(min_length=1, max_length=200)
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class VerificationRequest(BaseModel):
+    token: str = Field(min_length=20)
+
+
+class VerificationResend(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+
+
+class InvitationAcceptance(BaseModel):
+    token: str = Field(min_length=20)
+    name: str = Field(min_length=1, max_length=200)
+    password: str = Field(min_length=8, max_length=128)
+
+
+@router.post("/register", status_code=201)
+def register(payload: CompanyRegistration, db: Session = Depends(get_db)):
+    return _run(lambda: company_onboarding.register(db, company_name=payload.company_name,
+        owner_name=payload.owner_name, email=payload.email, password=payload.password))
+
+
+@router.post("/verify-email")
+def verify_email(payload: VerificationRequest, db: Session = Depends(get_db)):
+    return _run(lambda: company_onboarding.verify_email(db, payload.token))
+
+
+@router.post("/request-verification")
+def request_verification(payload: VerificationResend, db: Session = Depends(get_db)):
+    return _run(lambda: company_onboarding.request_verification(db, payload.email))
+
+
+@router.post("/accept-invitation", status_code=201)
+def accept_invitation(payload: InvitationAcceptance, db: Session = Depends(get_db)):
+    return _run(lambda: company_onboarding.accept_invitation(db, payload.token, payload.name, payload.password))
 
 
 @router.post("/refresh", response_model=TokenResponse)

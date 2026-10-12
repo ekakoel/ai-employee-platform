@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="referrer" content="no-referrer" />
   <title>AI Employee Workspace</title>
   <link rel="stylesheet" href="/workspace/assets/styles.css" />
 </head>
@@ -20,18 +21,17 @@
 
       <div class="login-tabs">
         <button type="button" class="tab active" data-tab="login">Sign in</button>
+        <button type="button" class="tab user-only" data-tab="register">Register company</button>
+        <button type="button" class="tab user-only" data-tab="invite">Accept invitation</button>
         <button type="button" class="tab developer-only" data-tab="quick">Quick start</button>
         <button type="button" class="tab developer-only" data-tab="connect">Connect IDs</button>
         <button type="button" class="tab developer-only" data-tab="provision">Provision company</button>
       </div>
 
       <div id="tab-login" class="tab-panel active">
-        <p class="muted">Enter the email and password provided by your company owner.</p>
+        <p class="muted">Sign in to your company workspace.</p>
         <label for="loginEmail">Email
           <input id="loginEmail" type="email" placeholder="you@company.com" autocomplete="username" required />
-        </label>
-        <label for="loginCompanyId">Company ID (optional)
-          <input id="loginCompanyId" placeholder="Company ID" autocomplete="off" />
         </label>
         <label for="loginPassword">Password
           <div class="password-field">
@@ -66,6 +66,28 @@
           <p id="forgotLog" class="login-message"></p>
           <button type="button" id="btnBackToLogin" class="link-btn">← Back to sign in</button>
         </div>
+      </div>
+
+      <div id="tab-register" class="tab-panel user-only">
+        <label>Company name<input id="registrationCompany" maxlength="200" required /></label>
+        <label>Your name<input id="registrationName" maxlength="200" required /></label>
+        <label>Email<input id="registrationEmail" type="email" autocomplete="email" required /></label>
+        <label>Password<input id="registrationPassword" type="password" minlength="8" autocomplete="new-password" required /></label>
+        <button id="btnRegisterCompany" class="primary block">Create company</button>
+        <p id="registrationLog" class="login-message" role="status"></p>
+        <div id="verificationPanel" class="hidden">
+          <label>Verification token<input id="verificationToken" autocomplete="off" /></label>
+          <button id="btnVerifyEmail" class="secondary block">Verify email</button>
+        </div>
+        <button id="btnResendVerification" class="link-btn" type="button">Request verification again</button>
+      </div>
+
+      <div id="tab-invite" class="tab-panel user-only">
+        <label>Invitation token<input id="inviteToken" autocomplete="off" /></label>
+        <label>Your name<input id="inviteName" maxlength="200" /></label>
+        <label>Password<input id="invitePassword" type="password" minlength="8" autocomplete="new-password" /></label>
+        <button id="btnAcceptInvite" class="primary block">Join company</button>
+        <p id="inviteLog" class="login-message" role="status"></p>
       </div>
 
       <div id="tab-quick" class="tab-panel developer-only">
@@ -131,6 +153,8 @@
       </div>
 
       <nav id="nav">
+        <div class="nav-group">Company</div>
+        <button data-view="company" class="nav-btn">Company profile</button>
         <div class="nav-group">Work</div>
         <button data-view="home" class="nav-btn active">Home</button>
         <button data-view="inbox" class="nav-btn">Inbox <span id="navInboxCount" class="nav-count hidden">0</span></button>
@@ -191,6 +215,18 @@
           <span id="statusPill" class="pill ok">Online</span>
         </div>
       </header>
+
+      <section id="view-company" class="view">
+        <h2 id="companyProfileName">Company profile</h2>
+        <p id="companyOnboardingStatus" class="muted" role="status"></p>
+        <div class="grid-2">
+          <label>Company name<input id="companyProfileNameInput" maxlength="200" /></label>
+          <label>Contact email<input id="companyContactEmail" type="email" maxlength="320" /></label>
+          <label>Industry<input id="companyIndustry" maxlength="120" /></label>
+        </div>
+        <button id="btnSaveCompanyProfile" class="primary">Save company profile</button>
+        <p id="companyProfileLog" class="login-message" role="status"></p>
+      </section>
 
       <!-- HOME -->
       <section id="view-home" class="view active">
@@ -722,33 +758,23 @@
       <section id="view-users" class="view">
         <div class="card">
           <h2>Users &amp; roles</h2>
-          <p class="muted">Invite company members and assign roles (owner, ai_admin, manager, reservation, contract_manager, administration, member). Platform developers use /developer — not a company role.</p>
+          <p class="muted">Invite employees by email. Only the company owner can appoint AI administrators.</p>
           <div class="grid-2">
-            <label>Name
-              <input id="userNameInput" placeholder="Full name" />
-            </label>
             <label>Email
-              <input id="userEmailInput" placeholder="user@company.com" />
-            </label>
-            <label>Role
-              <select id="userRoleInput">
-                <option value="reservation">reservation</option>
-                <option value="member">member</option>
-                <option value="manager">manager</option>
-                <option value="ai_admin">ai_admin</option>
-                <option value="owner">owner</option>
-              </select>
-            </label>
-            <label>Password
-              <input id="userPasswordInput" type="password" placeholder="min 8 characters" value="demo12345" />
+              <input id="userEmailInput" type="email" placeholder="user@company.com" />
             </label>
           </div>
           <div class="row">
-            <button id="btnCreateUser" class="primary">Create user</button>
+            <button id="btnCreateUser" class="primary">Send invitation</button>
             <button id="btnRefreshUsers" class="secondary">Refresh</button>
           </div>
           <pre id="userAdminLog" class="log hidden-log"></pre>
+          <label id="inviteDebugTokenWrap" class="hidden">Development invitation token
+            <input id="inviteDebugToken" readonly autocomplete="off" />
+          </label>
           <div id="usersList" class="list"></div>
+          <h3>Invitations</h3>
+          <div id="invitationsList" class="list"></div>
         </div>
       </section>
 

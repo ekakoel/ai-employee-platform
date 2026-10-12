@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 15
     jwt_refresh_expire_minutes: int = 60 * 24 * 14
+    smtp_host: str = ""
+    smtp_port: int = 465
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    public_base_url: str = ""
 
     storage_backend: str = "local"
     storage_local_path: str = "./storage"
@@ -99,6 +105,8 @@ class Settings(BaseSettings):
             raise ValueError("Deployed environments require a non-development JWT signing secret of at least 32 characters")
         if self.jwt_algorithm not in {"HS256", "HS384", "HS512"}:
             raise ValueError("Unsupported deployed JWT signing algorithm")
+        if self.smtp_host and not self.public_base_url.startswith("https://"):
+            raise ValueError("Deployed email links require HTTPS PUBLIC_BASE_URL")
 
     @field_validator("debug", mode="before")
     @classmethod

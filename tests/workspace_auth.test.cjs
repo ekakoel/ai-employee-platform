@@ -53,7 +53,9 @@ function fixture({ saved = {}, respond, mode = 'user' } = {}) {
     },
     fetch: async (url, options) => {
       calls.push({ url, options });
-      const response = await respond?.(url, options) || { status: 200, body: [] };
+      const response = await respond?.(url, options) || (url.endsWith('/profile')
+        ? { status: 200, body: { id: 'tenant-a', name: 'Test Company', onboarding_status: 'complete', owner_user_id: 'user-a' } }
+        : { status: 200, body: [] });
       return { status: response.status, ok: response.status < 400, text: async () => JSON.stringify(response.body) };
     },
     WorkspaceResults: dashboard, WorkspaceHome: dashboard, WorkspaceInbox: dashboard,
@@ -129,23 +131,72 @@ test('late resource 401 cannot clear a newer login', async () => {
   assert.ok(f.storage.get('ws_accessToken') === next.access_token);
 });
 
-test('login sends explicit company context without treating it as authority', async () => {
+test('login sends email and password without company context', async () => {
   const f = fixture({ respond: url => url.endsWith('/auth/login') ? { status: 200, body: profile } : undefined });
   f.get('loginEmail').value = 'user@example.test';
   f.get('loginPassword').value = 'mock-password';
-  f.get('loginCompanyId').value = ' tenant-a ';
   await f.get('btnLogin').onclick();
   const call = f.calls.find(item => item.url.endsWith('/auth/login'));
-  assert.equal(JSON.parse(call.options.body).company_id, 'tenant-a');
+  assert.equal(Object.keys(JSON.parse(call.options.body)).sort().join(','), 'email,password');
   assert.equal(call.options.headers.Authorization, undefined);
   assert.equal(call.options.headers['X-User-ID'], undefined);
+});
+
+test('registration sends owner details without tenant or role authority', async () => {
+  const f = fixture({ respond: url => url.endsWith('/auth/register')
+    ? { status: 201, body: { message: 'Verify email', company_id: 'tenant-new', verification_token: 'dev-token' } }
+    : undefined });
+  f.get('registrationCompany').value = 'New Company';
+  f.get('registrationName').value = 'Owner';
+  f.get('registrationEmail').value = 'owner@example.test';
+  f.get('registrationPassword').value = 'safe-password';
+  await f.get('btnRegisterCompany').onclick();
+  const call = f.calls.find(item => item.url.endsWith('/auth/register'));
+  assert.equal(Object.keys(JSON.parse(call.options.body)).sort().join(','), 'company_name,email,owner_name,password');
+  assert.equal(f.get('verificationToken').value, 'dev-token');
+  assert.equal(f.get('registrationPassword').value, '');
+});
+
+test('invitation acceptance submits token and personal credentials only', async () => {
+  const f = fixture({ respond: url => url.endsWith('/auth/accept-invitation')
+    ? { status: 201, body: { message: 'Account created' } } : undefined });
+  f.get('inviteToken').value = 'invitation-token';
+  f.get('inviteName').value = 'Employee';
+  f.get('invitePassword').value = 'safe-password';
+  await f.get('btnAcceptInvite').onclick();
+  const call = f.calls.find(item => item.url.endsWith('/auth/accept-invitation'));
+  assert.equal(Object.keys(JSON.parse(call.options.body)).sort().join(','), 'name,password,token');
+  assert.equal(f.get('invitePassword').value, '');
+});
+
+test('pending company profile opens onboarding and unlocks after save', async () => {
+  let complete = false;
+  const f = fixture({ respond: (url, options) => {
+    if (url.endsWith('/auth/login')) return { status: 200, body: profile };
+    if (url.endsWith('/profile') && options.method === 'PUT') {
+      complete = true;
+      return { status: 200, body: { onboarding_status: 'complete' } };
+    }
+    if (url.endsWith('/profile')) return { status: 200, body: { id: 'tenant-a', name: 'Test Company',
+      owner_user_id: 'user-a', onboarding_status: complete ? 'complete' : 'pending' } };
+    return undefined;
+  } });
+  f.get('loginEmail').value = 'owner@example.test';
+  f.get('loginPassword').value = 'safe-password';
+  await f.get('btnLogin').onclick();
+  assert.equal(f.session().onboardingStatus, 'pending');
+  assert.equal(f.get('view-company').classList.contains('active'), true);
+  f.get('companyContactEmail').value = 'contact@example.test';
+  f.get('companyIndustry').value = 'Travel';
+  await f.get('btnSaveCompanyProfile').onclick();
+  assert.equal(f.session().onboardingStatus, 'complete');
 });
 
 test('workspace initializes the login gate and registers login/logout/Enter handlers', async () => {
   const f = fixture();
   await settle();
   assert.equal(f.get('registerCompanyId'), null);
-  assert.equal(f.get('loginCompanyId').value, '');
+  assert.equal(f.get('loginCompanyId'), null);
   assert.equal(f.get('loginGate').classList.contains('hidden'), false);
   assert.equal(f.get('app').classList.contains('hidden'), true);
   for (const id of ['btnLogin', 'btnLogout', 'btnClearSession', 'btnQuickStart']) {
@@ -173,7 +224,7 @@ test('successful login uses existing credentials contract and updates company/se
   assert.ok(payload.email === 'user@example.test' && payload.password === 'mock-password');
   assert.equal(login.options.headers.Authorization, undefined);
   assert.equal(login.options.headers['X-User-ID'], undefined);
-  assert.equal(f.get('loginCompanyId').value, profile.company_id);
+  assert.equal(f.get('loginCompanyId'), null);
   assert.equal(f.get('companyId').value, profile.company_id);
   assert.equal(f.get('userId').value, profile.user_id);
   assert.ok(f.storage.get('ws_accessToken') === profile.access_token);
@@ -208,7 +259,7 @@ test('boot restores the company field and verifies profile using Bearer; logout 
   const f = fixture({ saved: savedSession,
     respond: url => url.endsWith('/auth/me') ? { status: 200, body: profile } : undefined });
   await settle();
-  assert.equal(f.get('loginCompanyId').value, profile.company_id);
+  assert.equal(f.get('loginCompanyId'), null);
   const me = f.calls.find(call => call.url.endsWith('/auth/me'));
   assert.ok(me.options.headers.Authorization === `Bearer ${profile.access_token}`);
   assert.equal(f.get('loginGate').classList.contains('hidden'), true);
@@ -239,7 +290,7 @@ function assertUnauthenticated(f) {
   assert.equal(f.session().isPlatformAdmin, false);
   for (const key of ['ws_companyId', 'ws_userId', 'ws_accessToken', 'ws_refreshToken',
     'ws_userName', 'ws_role', 'ws_permissions', 'ws_isPlatformAdmin']) assert.equal(f.storage.has(key), false);
-  for (const id of ['companyId', 'userId', 'loginCompanyId']) assert.equal(f.get(id).value, '');
+  for (const id of ['companyId', 'userId']) assert.equal(f.get(id).value, '');
   assert.equal(f.get('loginGate').classList.contains('hidden'), false);
   assert.equal(f.get('app').classList.contains('hidden'), true);
   assert.equal(f.get('statusPill').textContent, 'Offline');
@@ -276,7 +327,7 @@ test('profile identity overrides cached tenant/user IDs, not the other way aroun
   await settle();
   assert.equal(f.session().companyId, profile.company_id);
   assert.equal(f.session().userId, profile.user_id);
-  assert.equal(f.get('loginCompanyId').value, profile.company_id);
+  assert.equal(f.get('loginCompanyId'), null);
   assert.equal(f.calls.some(call => call.url.includes('/companies/old-tenant')), false);
 });
 

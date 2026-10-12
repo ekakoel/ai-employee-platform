@@ -38,11 +38,12 @@ persisted `is_platform_admin` grant. A company owner is not a platform admin.
    target company. Client requests cannot assign the owner role through this
    endpoint or the company role-update endpoint.
 
-There is no invitation model yet. Public `/auth/register` returns 403;
-passwordless `/auth/token` returns 410. These paths cannot be re-enabled by
-development or production configuration. Anonymous first-user bootstrap is
-closed. `/companies` now requires platform authentication; prefer the atomic
-`/admin/companies` endpoint for onboarding.
+Company self-registration and email invitations are now available through the
+verified flows in [Company Onboarding](COMPANY_ONBOARDING.md). Registration
+does not accept a tenant or role selector and does not issue a token.
+Passwordless `/auth/token` still returns 410. The old direct-user-creation
+route returns 410; platform provisioning remains available to authenticated
+platform administrators. `/companies` still requires platform authentication.
 
 Existing persisted administrator grants are retained. `PLATFORM_ADMIN_EMAILS`
 is deprecated and does not grant privileges on login, profile reads, or admin
@@ -60,7 +61,7 @@ and a non-development JWT signing secret of at least 32 characters. Unsafe
 settings fail during Settings construction and are rechecked before application
 startup touches the database. Environment aliases are normalized; unknown
 environments are rejected. Legacy auth/public-create flags do not restore
-header authentication or public onboarding in development either.
+header authentication or the old unsafe public-create path in development either.
 
 Compose requires external `JWT_SECRET`, `POSTGRES_PASSWORD`, and `DATABASE_URL`.
 The database URL must contain correctly encoded matching credentials and target
@@ -80,8 +81,10 @@ for API contracts, migration/cutover, concurrency, and verification limits.
 
 Password login, refresh, and authenticated company/admin APIs retain their
 response shapes. Bearer-only clients work without header injection middleware.
-Connect IDs, anonymous Quick start, legacy token requests, and public
-registration no longer work. Provisioning requires an explicit owner password.
+Connect IDs, anonymous Quick start, and legacy token requests no longer work.
+Public company registration now follows verified owner onboarding; direct
+employee creation is replaced by invitation. Platform provisioning still
+requires an explicit owner password.
 The Phase 2A report originally recorded a frontend JavaScript syntax blocker.
 AUTH-011 has since corrected the three invalid assignments. AUTH-014 changes
 in the baseline distinguish `/auth/me` 401 from network/server

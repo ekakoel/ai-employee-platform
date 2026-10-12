@@ -90,8 +90,13 @@ class Company(Base):
     name: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    owner_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", use_alter=True, name="fk_company_owner_user"), nullable=True)
+    contact_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    industry: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    profile_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    onboarding_status: Mapped[str] = mapped_column(String(20), default="complete", server_default="complete", nullable=False)
 
-    users: Mapped[list["User"]] = relationship(back_populates="company", cascade="all, delete-orphan")
+    users: Mapped[list["User"]] = relationship(back_populates="company", cascade="all, delete-orphan", foreign_keys="User.company_id")
     agent_instances: Mapped[list["AgentInstance"]] = relationship(back_populates="company")
     knowledge_items: Mapped[list["KnowledgeItem"]] = relationship(back_populates="company")
     tasks: Mapped[list["Task"]] = relationship(back_populates="company")
@@ -235,6 +240,7 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     auth_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", nullable=False)
     role_id: Mapped[str] = mapped_column(ForeignKey("roles.id"), nullable=False)
     department_id: Mapped[str | None] = mapped_column(
         ForeignKey("departments.id", ondelete="SET NULL"),
@@ -245,9 +251,41 @@ class User(Base):
     is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
-    company: Mapped[Company] = relationship(back_populates="users")
+    company: Mapped[Company] = relationship(back_populates="users", foreign_keys=[company_id])
     role: Mapped[Role] = relationship()
     department: Mapped["Department | None"] = relationship(back_populates="users")
+
+
+class EmailClaim(Base):
+    __tablename__ = "email_claims"
+
+    email: Mapped[str] = mapped_column(String(320), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class EmailVerification(Base):
+    __tablename__ = "email_verifications"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_digest: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class CompanyInvitation(Base):
+    __tablename__ = "company_invitations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    invited_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    role_name: Mapped[str] = mapped_column(String(100), nullable=False, default="member")
+    token_digest: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
 class AuthSession(Base):
