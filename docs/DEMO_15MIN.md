@@ -1,5 +1,8 @@
 # AI Employee Platform — 15-minute demo script
 
+> **Official product path (no Quick start):** see [features/00_PRODUCT_WALKTHROUGH.md](features/00_PRODUCT_WALKTHROUGH.md).
+> This script prioritizes a fast stakeholder demo via bootstrap.
+
 **Audience:** stakeholders / first-time testers  
 **Password for all demo users:** `demo12345`
 
