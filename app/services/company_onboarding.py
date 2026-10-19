@@ -148,27 +148,48 @@ def verify_email(db, token):
     return {"message": "Email verified. You can sign in."}
 
 
-def invite(db, actor, email):
+def invite(db, actor, email, role_name: str = "member"):
+    """Owner invites an employee with a company job role (not owner/platform)."""
     require_delivery()
     email = normalized_email(email)
     company = db.get(Company, actor.company_id)
     if company.owner_user_id != actor.id or company.onboarding_status != "complete":
         raise auth_sessions.AuthError("Only the company owner can invite employees after onboarding", 403)
+    from app.services.seed import ROLE_PERMISSIONS, get_or_create_role
+    role_name = (role_name or "member").strip().lower()
+    if role_name in {"owner"} or role_name not in ROLE_PERMISSIONS:
+        raise auth_sessions.AuthError("Invalid job role for invitation", 400)
     # Do not expose whether an arbitrary email already belongs to another tenant.
     if db.scalar(select(User.id).where(func.lower(User.email) == email).limit(1)):
         return {"message": "If eligible, an invitation has been created."}
     token = secrets.token_urlsafe(32)
     with auth_sessions.transaction(db):
-        invitation = CompanyInvitation(company_id=company.id, invited_by_user_id=actor.id,
-            email=email, role_name="member", token_digest=auth_sessions.digest(token),
-            expires_at=auth_sessions.now() + timedelta(days=2))
+        invitation = CompanyInvitation(
+            company_id=company.id,
+            invited_by_user_id=actor.id,
+            email=email,
+            role_name=role_name,
+            token_digest=auth_sessions.digest(token),
+            expires_at=auth_sessions.now() + timedelta(days=2),
+        )
         db.add(invitation)
         db.flush()
-        record_audit(db, company_id=company.id, user_id=actor.id, action="company.invitation.create",
-                     resource_type="company_invitation", resource_id=invitation.id, status="success")
+        record_audit(
+            db,
+            company_id=company.id,
+            user_id=actor.id,
+            action="company.invitation.create",
+            resource_type="company_invitation",
+            resource_id=invitation.id,
+            status="success",
+            details={"role_name": role_name},
+        )
     deliver(email, "Invitation to your company workspace", "/workspace?invite=", token)
-    return {"message": "If eligible, an invitation has been created.",
-            "invitation_token": development_token(token)}
+    return {
+        "message": "If eligible, an invitation has been created.",
+        "invitation_token": development_token(token),
+        "role_name": role_name,
+    }
 
 
 def accept_invitation(db, token, name, password):
@@ -187,7 +208,11 @@ def accept_invitation(db, token, name, password):
         if not company or not company.is_active or company.onboarding_status != "complete":
             raise auth_sessions.AuthError("Invitation is unavailable", 403)
         claim_email(db, invitation.email)
-        role = get_or_create_role(db, "member")
+        from app.services.seed import ROLE_PERMISSIONS, get_or_create_role
+        assigned = (invitation.role_name or "member").strip().lower()
+        if assigned not in ROLE_PERMISSIONS or assigned == "owner":
+            assigned = "member"
+        role = get_or_create_role(db, assigned)
         user = User(company_id=company.id, name=name.strip(), email=invitation.email,
                     password_hash=hash_password(password), role_id=role.id,
                     email_verified=True, is_platform_admin=False)
@@ -202,3 +227,34 @@ def accept_invitation(db, token, name, password):
         record_audit(db, company_id=company.id, user_id=user.id, action="company.invitation.accept",
                      resource_type="company_invitation", resource_id=invitation.id, status="success")
     return {"message": "Account created. You can sign in."}
+
+
+def set_job_role(db, actor, target_user_id: str, role_name: str) -> dict:
+    """Owner sets an employee's job role/position. Cannot change owner."""
+    from app.services.seed import ROLE_PERMISSIONS, get_or_create_role
+    company = db.get(Company, actor.company_id)
+    if company.owner_user_id != actor.id or actor.role.name != "owner":
+        raise auth_sessions.AuthError("Only the company owner can change job roles", 403)
+    role_name = (role_name or "").strip().lower()
+    if role_name == "owner" or role_name not in ROLE_PERMISSIONS:
+        raise auth_sessions.AuthError("Invalid job role", 400)
+    target = db.scalar(select(User).where(User.id == target_user_id, User.company_id == company.id))
+    if not target or target.status != "active":
+        raise auth_sessions.AuthError("Employee not found", 404)
+    if target.id == company.owner_user_id or target.role.name == "owner":
+        raise auth_sessions.AuthError("Owner role cannot be changed", 403)
+    target.role_id = get_or_create_role(db, role_name).id
+    target.auth_version += 1
+    auth_sessions.revoke_all(db, target, "role_change")
+    record_audit(
+        db,
+        company_id=company.id,
+        user_id=actor.id,
+        action="company.user.role_update",
+        resource_type="user",
+        resource_id=target.id,
+        status="success",
+        details={"role": role_name},
+    )
+    db.commit()
+    return {"user_id": target.id, "role": role_name}

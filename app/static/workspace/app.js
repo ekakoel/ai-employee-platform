@@ -2098,18 +2098,62 @@
   
   async function loadUsers() {
     if (!state.companyId) return;
+    const roleOptions = [
+      ["member", "Member"],
+      ["reservation", "Reservation"],
+      ["manager", "Manager"],
+      ["ai_admin", "AI Administrator"],
+      ["contract_manager", "Contract Manager"],
+      ["administration", "Administration"],
+      ["accounting", "Accounting"],
+    ];
     try {
+      // refresh job-role select from API when available
+      try {
+        const rolesBody = await api(`/companies/${state.companyId}/job-roles`);
+        const sel = $("userRoleInput");
+        if (sel && rolesBody.roles && rolesBody.roles.length) {
+          const current = sel.value;
+          sel.innerHTML = rolesBody.roles
+            .map((r) => `<option value="${escapeHtml(r.name)}">${escapeHtml(r.label || r.name)}</option>`)
+            .join("");
+          if ([...sel.options].some((o) => o.value === current)) sel.value = current;
+        }
+      } catch (_) {}
+
       const list = await api(`/companies/${state.companyId}/users`);
       $("usersList").innerHTML =
         (list || [])
-          .map(
-            (u) => `<div class="item">
+          .map((u) => {
+            const isOwner = u.role === "owner";
+            const roleSelect =
+              state.role === "owner" && !isOwner
+                ? `<label class="inline-role">Position
+                    <select class="user-role-select" data-id="${escapeHtml(u.id)}">
+                      ${roleOptions
+                        .map(
+                          ([v, lab]) =>
+                            `<option value="${v}" ${u.role === v ? "selected" : ""}>${lab}</option>`
+                        )
+                        .join("")}
+                    </select>
+                  </label>
+                  <button class="secondary btn-save-role" data-id="${escapeHtml(u.id)}">Save position</button>`
+                : "";
+            const adminBtn =
+              state.role === "owner" && !isOwner
+                ? `<button class="secondary btn-set-role" data-id="${escapeHtml(u.id)}" data-admin="${
+                    u.role === "ai_admin" ? "1" : "0"
+                  }">${u.role === "ai_admin" ? "Remove AI admin" : "Make AI administrator"}</button>`
+                : "";
+            return `<div class="item">
           <strong>${escapeHtml(u.name)}</strong>
           <div class="meta">${escapeHtml(u.email)} · role: <code>${escapeHtml(u.role || u.role_id)}</code> · ${escapeHtml(u.status || "")}</div>
-          ${state.role === "owner" && u.role !== "owner" ? `<button class="secondary btn-set-role" data-id="${escapeHtml(u.id)}" data-admin="${u.role === "ai_admin" ? "1" : "0"}">${u.role === "ai_admin" ? "Remove administrator" : "Make administrator"}</button>` : ""}
-        </div>`
-          )
-          .join("") || `<div class="empty">No users.</div>`;
+          <div class="row" style="margin-top:.35rem;gap:.5rem;flex-wrap:wrap">${roleSelect}${adminBtn}</div>
+        </div>`;
+          })
+          .join("") || `<div class="empty">No employees yet. Send an invitation above.</div>`;
+
       document.querySelectorAll(".btn-set-role").forEach((b) => {
         b.onclick = async () => {
           try {
@@ -2123,16 +2167,53 @@
           }
         };
       });
+      document.querySelectorAll(".btn-save-role").forEach((b) => {
+        b.onclick = async () => {
+          const select = document.querySelector(`.user-role-select[data-id="${b.dataset.id}"]`);
+          if (!select) return;
+          try {
+            await api(`/companies/${state.companyId}/users/${b.dataset.id}/role`, {
+              method: "PUT",
+              body: JSON.stringify({ role_name: select.value }),
+            });
+            if ($("userAdminLog")) {
+              $("userAdminLog").classList.remove("hidden-log");
+              $("userAdminLog").textContent = "Job position updated. Employee must sign in again.";
+            }
+            loadUsers();
+          } catch (err) {
+            if ($("userAdminLog")) {
+              $("userAdminLog").classList.remove("hidden-log");
+              $("userAdminLog").textContent = err.message;
+            }
+          }
+        };
+      });
       if (state.role === "owner" && $("invitationsList")) {
         const invitations = await api(`/companies/${state.companyId}/invitations`);
-        $("invitationsList").innerHTML = invitations.map((invitation) =>
-          `<div class="item"><strong>${escapeHtml(invitation.email)}</strong> <span class="meta">${escapeHtml(invitation.status)}</span>
-           ${invitation.status === "pending" ? `<button class="secondary btn-revoke-invite" data-id="${escapeHtml(invitation.id)}">Revoke</button>` : ""}</div>`
-        ).join("") || `<div class="empty">No invitations.</div>`;
+        $("invitationsList").innerHTML =
+          invitations
+            .map(
+              (invitation) =>
+                `<div class="item"><strong>${escapeHtml(invitation.email)}</strong>
+           <span class="meta">${escapeHtml(invitation.status)} · position: <code>${escapeHtml(
+                  invitation.role_name || "member"
+                )}</code></span>
+           ${
+             invitation.status === "pending"
+               ? `<button class="secondary btn-revoke-invite" data-id="${escapeHtml(
+                   invitation.id
+                 )}">Revoke</button>`
+               : ""
+           }</div>`
+            )
+            .join("") || `<div class="empty">No invitations.</div>`;
         document.querySelectorAll(".btn-revoke-invite").forEach((button) => {
           button.onclick = async () => {
             try {
-              await api(`/companies/${state.companyId}/invitations/${button.dataset.id}/revoke`, { method: "POST" });
+              await api(`/companies/${state.companyId}/invitations/${button.dataset.id}/revoke`, {
+                method: "POST",
+              });
               loadUsers();
             } catch (err) {
               $("userAdminLog").textContent = err.message;
@@ -2144,7 +2225,7 @@
       $("usersList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
     }
   }
-  if ($("btnRefreshUsers")) $("btnRefreshUsers").onclick = loadUsers;
+  if ($("btnRefreshUsers") $("btnRefreshUsers").onclick = loadUsers;
   if ($("btnCreateUser"))
     $("btnCreateUser").onclick = async () => {
       const log = $("userAdminLog");
@@ -2153,6 +2234,7 @@
           method: "POST",
           body: JSON.stringify({
             email: ($("userEmailInput").value || "").trim(),
+            role_name: ($("userRoleInput") && $("userRoleInput").value) || "member",
           }),
         });
         if (log) {

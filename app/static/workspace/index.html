@@ -69,9 +69,16 @@
       </div>
 
       <div id="tab-register" class="tab-panel user-only">
+        <p class="muted">Step 1 — Register your business. You become the <strong>Owner</strong>. After email verification, complete the company profile, then invite employees.</p>
+        <ol class="muted" style="margin:0 0 1rem 1.1rem;padding:0;font-size:.85rem;line-height:1.45">
+          <li>Create company + owner account</li>
+          <li>Verify email</li>
+          <li>Sign in → Company profile (industry &amp; contact)</li>
+          <li>Users &amp; Roles → invite staff and set job positions</li>
+        </ol>
         <label>Company name<input id="registrationCompany" maxlength="200" required /></label>
-        <label>Your name<input id="registrationName" maxlength="200" required /></label>
-        <label>Email<input id="registrationEmail" type="email" autocomplete="email" required /></label>
+        <label>Owner name<input id="registrationName" maxlength="200" required /></label>
+        <label>Owner email<input id="registrationEmail" type="email" autocomplete="email" required /></label>
         <label>Password<input id="registrationPassword" type="password" minlength="8" autocomplete="new-password" required /></label>
         <button id="btnRegisterCompany" class="primary block">Create company</button>
         <p id="registrationLog" class="login-message" role="status"></p>
@@ -218,6 +225,7 @@
 
       <section id="view-company" class="view">
         <h2 id="companyProfileName">Company profile</h2>
+        <p class="muted">Step 2 — Owner completes organization details to unlock the workspace. Then open <strong>Users &amp; Roles</strong> to invite staff.</p>
         <p id="companyOnboardingStatus" class="muted" role="status"></p>
         <div class="grid-2">
           <label>Company name<input id="companyProfileNameInput" maxlength="200" /></label>
@@ -757,11 +765,22 @@
       
       <section id="view-users" class="view">
         <div class="card">
-          <h2>Users &amp; roles</h2>
-          <p class="muted">Invite employees by email. Only the company owner can appoint AI administrators.</p>
+          <h2>Users &amp; job positions</h2>
+          <p class="muted">Owner invites employees by email and assigns a job position (role). AI Administrator can manage agents, skills, and knowledge. Owner role cannot be assigned by invitation.</p>
           <div class="grid-2">
-            <label>Email
+            <label>Employee email
               <input id="userEmailInput" type="email" placeholder="user@company.com" />
+            </label>
+            <label>Job position
+              <select id="userRoleInput">
+                <option value="member">Member (general)</option>
+                <option value="reservation">Reservation</option>
+                <option value="manager">Manager / Supervisor</option>
+                <option value="ai_admin">AI Administrator</option>
+                <option value="contract_manager">Contract Manager</option>
+                <option value="administration">Administration</option>
+                <option value="accounting">Accounting</option>
+              </select>
             </label>
           </div>
           <div class="row">
@@ -769,11 +788,12 @@
             <button id="btnRefreshUsers" class="secondary">Refresh</button>
           </div>
           <pre id="userAdminLog" class="log hidden-log"></pre>
-          <label id="inviteDebugTokenWrap" class="hidden">Development invitation token
+          <label id="inviteDebugTokenWrap" class="hidden">Development invitation token (paste on Accept invitation tab)
             <input id="inviteDebugToken" readonly autocomplete="off" />
           </label>
+          <h3>Employees</h3>
           <div id="usersList" class="list"></div>
-          <h3>Invitations</h3>
+          <h3>Pending invitations</h3>
           <div id="invitationsList" class="list"></div>
         </div>
       </section>

@@ -67,6 +67,7 @@ def update_profile(company_id: str, payload: ProfileUpdate, db: Session = Depend
 
 class InviteRequest(BaseModel):
     email: str = Field(min_length=3, max_length=320)
+    role_name: str = Field(default="member", min_length=2, max_length=100)
 
 
 @router.post("/{company_id}/invitations", status_code=201)
@@ -75,7 +76,49 @@ def invite(company_id: str, payload: InviteRequest, db: Session = Depends(get_db
     company = own_company(db, user, company_id)
     owner_only(company, user)
     try:
-        return company_onboarding.invite(db, user, payload.email)
+        return company_onboarding.invite(db, user, payload.email, role_name=payload.role_name)
+    except auth_sessions.AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from None
+
+
+@router.get("/{company_id}/job-roles")
+def list_job_roles(company_id: str, db: Session = Depends(get_db),
+                   user: User = Depends(get_current_user)):
+    """Company job positions available for invites and role assignment."""
+    own_company(db, user, company_id)
+    from app.services.seed import ROLE_PERMISSIONS
+    labels = {
+        "member": "Member (general employee)",
+        "reservation": "Reservation",
+        "manager": "Manager / Supervisor",
+        "ai_admin": "AI Administrator",
+        "contract_manager": "Contract Manager",
+        "administration": "Administration",
+        "accounting": "Accounting",
+    }
+    roles = []
+    for name in sorted(ROLE_PERMISSIONS.keys()):
+        if name == "owner":
+            continue
+        roles.append({
+            "name": name,
+            "label": labels.get(name, name.replace("_", " ").title()),
+            "is_administrator": name == "ai_admin",
+        })
+    return {"roles": roles}
+
+
+class JobRoleUpdate(BaseModel):
+    role_name: str = Field(min_length=2, max_length=100)
+
+
+@router.put("/{company_id}/users/{target_id}/role")
+def update_job_role(company_id: str, target_id: str, payload: JobRoleUpdate,
+                    db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    company = own_company(db, user, company_id)
+    owner_only(company, user)
+    try:
+        return company_onboarding.set_job_role(db, user, target_id, payload.role_name)
     except auth_sessions.AuthError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from None
 
@@ -88,7 +131,7 @@ def list_invitations(company_id: str, db: Session = Depends(get_db), user: User 
                       .order_by(CompanyInvitation.created_at.desc()).limit(100)).all()
     return [{"id": row.id, "email": row.email, "status": "revoked" if row.revoked_at else
              "accepted" if row.consumed_at else "expired" if auth_sessions.utc(row.expires_at) <= auth_sessions.now()
-             else "pending", "expires_at": row.expires_at.isoformat()} for row in rows]
+             else "pending", "role_name": row.role_name, "expires_at": row.expires_at.isoformat()} for row in rows]
 
 
 @router.post("/{company_id}/invitations/{invitation_id}/revoke", status_code=204)
