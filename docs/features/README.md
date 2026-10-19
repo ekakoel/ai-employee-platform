@@ -26,3 +26,5 @@ Register → profile → users → hire AI → knowledge → inventory
 
 | 14 | Marketplace & Skills | [14](14_marketplace_skills.md) |
 | 15 | Policies (AI Admin) | [15](15_policies_ai_admin.md) |
+| 16 | Results, Governance & Usage | [16](16_results_governance.md) |
+| 17 | MVP QA checklist | [17](17_MVP_QA_CHECKLIST.md) |

@@ -1002,6 +1002,10 @@
 
       <!-- USAGE -->
       <section id="view-usage" class="view">
+        <p class="home-notice" role="status">
+          <strong>Plan &amp; usage</strong> shows quota and consumption for this company.
+          Visible to Owner and roles with <code>usage.read</code> (e.g. Administration, Accounting).
+        </p>
         <div class="card">
           <div class="row between">
             <h2>Plan & usage</h2>
@@ -1126,9 +1130,13 @@
 
       <!-- GOVERNANCE -->
       <section id="view-governance" class="view">
+        <p class="home-notice" role="status">
+          <strong>Governance</strong> is the Owner/manager overview: AI workforce health, recent audit events, and control signals.
+          For day-to-day approvals use <strong>Inbox</strong> / <strong>Approvals</strong>. Full event history is under <strong>Audit log</strong>.
+        </p>
         <div class="card">
           <div class="row between">
-            <h2>Governance</h2>
+            <h2>Governance overview</h2>
             <button id="btnRefreshGov" class="secondary">Refresh</button>
           </div>
           <div id="govStats" class="stats"></div>
@@ -1149,7 +1157,8 @@
       </section>
     </main>
 
-    <aside id="outputCenter" class="output-center">
+    <!-- Results / Output center: quotations, availability, task artifacts (Job 73) -->
+    <aside id="outputCenter" class="output-center" aria-label="Work results">
       <div class="output-header">
         <div>
           <span class="output-eyebrow" id="sidebarEyebrow">HOME</span>

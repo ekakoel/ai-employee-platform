@@ -140,7 +140,7 @@
             ${tags ? `<span class="result-tags">${tags}</span>` : ""}
           </button>
         </article>`;
-        }).join("") + (!shown.length ? '<div class="empty">No matching results.</div>' : "");
+        }).join("") + (!shown.length ? '<div class="empty">No matching results. Run a Task (execute) to produce quotations, availability, or reservations. Run a Task (execute) to produce quotations, availability, or reservations.</div>' : "");
       $("btnAllResults")?.addEventListener("click", () => { context = ""; render(); });
       $("outputContent").querySelectorAll("[data-result-id]").forEach((button) => {
         button.onclick = () => preview(items.find((item) => item.id === button.dataset.resultId));
@@ -252,7 +252,7 @@
       $("resultPreview").textContent = "";
       $("btnRefreshResults").disabled = false;
       $("resultCount").textContent = "";
-      message("No results loaded.");
+      message("No results loaded. Complete a task with tools, then open Results from Home or the output panel.");
       document.querySelectorAll("[data-result-tab]").forEach((button) => {
         button.classList.toggle("active", button.dataset.resultTab === tab);
         button.setAttribute("aria-selected", String(button.dataset.resultTab === tab));
