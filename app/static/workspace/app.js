@@ -456,7 +456,9 @@
       state.onboardingStatus = company.onboarding_status;
       if ($("companyProfileName")) $("companyProfileName").textContent = company.name;
       if ($("companyOnboardingStatus")) $("companyOnboardingStatus").textContent =
-        company.onboarding_status === "complete" ? "Profile complete" : "Complete this profile to open your workspace.";
+        company.onboarding_status === "complete"
+          ? "Profile complete — Users & positions is in the left sidebar."
+          : "Status: pending. Fill name, contact email, and industry, then Save. Other menus (including Users) stay hidden until this is complete.";
       if ($("companyProfileNameInput")) $("companyProfileNameInput").value = company.name || "";
       if ($("companyContactEmail")) $("companyContactEmail").value = company.contact_email || "";
       if ($("companyIndustry")) $("companyIndustry").value = company.industry || "";
@@ -482,7 +484,17 @@
         industry: $("companyIndustry").value.trim(),
       }) });
       await loadCompanyProfile();
-      if (log) log.textContent = "Company profile saved.";
+      applyNavGating();
+      if (log) {
+        log.textContent =
+          state.onboardingStatus === "complete"
+            ? "Profile complete. Sidebar unlocked — open Users & positions to invite employees."
+            : "Company profile saved.";
+      }
+      if (state.onboardingStatus === "complete" && canAccessView("users")) {
+        // Soft highlight: land on users after first complete
+        try { showView("users"); } catch (_) {}
+      }
     } catch (err) {
       if (log) log.textContent = err.message || "Unable to save profile";
     }
