@@ -2225,7 +2225,7 @@
       $("usersList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
     }
   }
-  if ($("btnRefreshUsers") $("btnRefreshUsers").onclick = loadUsers;
+  if ($("btnRefreshUsers")) $("btnRefreshUsers").onclick = loadUsers;
   if ($("btnCreateUser"))
     $("btnCreateUser").onclick = async () => {
       const log = $("userAdminLog");

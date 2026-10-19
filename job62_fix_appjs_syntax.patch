@@ -1,0 +1,13 @@
+diff --git a/app/static/workspace/app.js b/app/static/workspace/app.js
+index 86058c4..65b018b 100644
+--- a/app/static/workspace/app.js
++++ b/app/static/workspace/app.js
+@@ -2225,7 +2225,7 @@
+       $("usersList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+     }
+   }
+-  if ($("btnRefreshUsers") $("btnRefreshUsers").onclick = loadUsers;
++  if ($("btnRefreshUsers")) $("btnRefreshUsers").onclick = loadUsers;
+   if ($("btnCreateUser"))
+     $("btnCreateUser").onclick = async () => {
+       const log = $("userAdminLog");

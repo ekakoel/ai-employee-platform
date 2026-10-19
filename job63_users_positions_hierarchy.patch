@@ -1,0 +1,292 @@
+diff --git a/app/services/company_onboarding.py b/app/services/company_onboarding.py
+index 12f2a40..7b179a0 100644
+--- a/app/services/company_onboarding.py
++++ b/app/services/company_onboarding.py
+@@ -256,5 +256,15 @@ def set_job_role(db, actor, target_user_id: str, role_name: str) -> dict:
+         status="success",
+         details={"role": role_name},
+     )
++    # Operational roles need can_use on hired agents
++    if role_name in {
++        "reservation", "member", "manager", "contract_manager",
++        "administration", "accounting", "ai_admin",
++    }:
++        try:
++            from app.services.access import grant_all_agents_to_user
++            grant_all_agents_to_user(db, company_id=company.id, user_id=target.id)
++        except Exception:
++            pass
+     db.commit()
+     return {"user_id": target.id, "role": role_name}
+diff --git a/app/static/workspace/app.js b/app/static/workspace/app.js
+index 86058c4..90f516a 100644
+--- a/app/static/workspace/app.js
++++ b/app/static/workspace/app.js
+@@ -2222,10 +2222,14 @@
+         });
+       }
+     } catch (err) {
+-      $("usersList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
++      if ($("usersList")) $("usersList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
++      if ($("userAdminLog")) {
++        $("userAdminLog").classList.remove("hidden-log");
++        $("userAdminLog").textContent = err.message;
++      }
+     }
+   }
+-  if ($("btnRefreshUsers") $("btnRefreshUsers").onclick = loadUsers;
++  if ($("btnRefreshUsers")) $("btnRefreshUsers").onclick = loadUsers;
+   if ($("btnCreateUser"))
+     $("btnCreateUser").onclick = async () => {
+       const log = $("userAdminLog");
+@@ -2239,7 +2243,13 @@
+         });
+         if (log) {
+           log.classList.remove("hidden-log");
+-          log.textContent = body.message;
++          const role = body.role_name || ($("userRoleInput") && $("userRoleInput").value) || "member";
++          log.textContent =
++            (body.message || "Invitation created.") +
++            " Position: " + role +
++            (body.invitation_token
++              ? "\nDev token (Accept invitation tab): " + body.invitation_token
++              : "\nEmployee will receive an email when SMTP is configured.");
+         }
+         if ($("inviteDebugTokenWrap")) $("inviteDebugTokenWrap").classList.toggle("hidden", !body.invitation_token);
+         if ($("inviteDebugToken")) $("inviteDebugToken").value = body.invitation_token || "";
+diff --git a/app/static/workspace/index.html b/app/static/workspace/index.html
+index 0aacefa..6e9545e 100644
+--- a/app/static/workspace/index.html
++++ b/app/static/workspace/index.html
+@@ -185,7 +185,7 @@
+         <button data-view="notifications" class="nav-btn">Notifications</button>
+         <button data-view="governance" class="nav-btn">Governance</button>
+         <button data-view="policy-management" class="nav-btn">Policies</button>
+-        <button data-view="users" class="nav-btn">Users & Roles</button>
++        <button data-view="users" class="nav-btn">Users &amp; positions</button>
+         <button data-view="departments" class="nav-btn">Departments</button>
+         <button data-view="teams" class="nav-btn">Teams</button>
+         <button data-view="skills" class="nav-btn">Skills</button>
+@@ -766,13 +766,22 @@
+       <section id="view-users" class="view">
+         <div class="card">
+           <h2>Users &amp; job positions</h2>
+-          <p class="muted">Owner invites employees by email and assigns a job position (role). AI Administrator can manage agents, skills, and knowledge. Owner role cannot be assigned by invitation.</p>
++          <p class="muted"><strong>Owner only:</strong> invite employees and change their job position. The Owner account cannot be invited or demoted here.</p>
++          <div class="role-legend muted" style="font-size:.85rem;line-height:1.5;margin-bottom:1rem;padding:.75rem 1rem;border:1px solid var(--border, #e2e8f0);border-radius:8px;background:var(--surface-2, #f8fafc)">
++            <strong>Hierarchy</strong>
++            <ul style="margin:.35rem 0 0 1.1rem;padding:0">
++              <li><strong>Owner</strong> — full company control; invites users; manages AI Employees</li>
++              <li><strong>AI Administrator</strong> — manages agents, skills, knowledge, policies (not company ownership)</li>
++              <li><strong>Manager / Supervisor</strong> — approvals and day-to-day AI ops</li>
++              <li><strong>Reservation / Contract / Accounting / Administration / Member</strong> — operational access by job</li>
++            </ul>
++          </div>
+           <div class="grid-2">
+             <label>Employee email
+-              <input id="userEmailInput" type="email" placeholder="user@company.com" />
++              <input id="userEmailInput" type="email" placeholder="user@company.com" autocomplete="off" />
+             </label>
+             <label>Job position
+-              <select id="userRoleInput">
++              <select id="userRoleInput" aria-label="Job position for invitation">
+                 <option value="member">Member (general)</option>
+                 <option value="reservation">Reservation</option>
+                 <option value="manager">Manager / Supervisor</option>
+@@ -788,7 +797,7 @@
+             <button id="btnRefreshUsers" class="secondary">Refresh</button>
+           </div>
+           <pre id="userAdminLog" class="log hidden-log"></pre>
+-          <label id="inviteDebugTokenWrap" class="hidden">Development invitation token (paste on Accept invitation tab)
++          <label id="inviteDebugTokenWrap" class="hidden">Development invitation token — open login gate → Accept invitation
+             <input id="inviteDebugToken" readonly autocomplete="off" />
+           </label>
+           <h3>Employees</h3>
+diff --git a/docs/features/04_users_roles_employees.md b/docs/features/04_users_roles_employees.md
+index 211bcb0..c56854e 100644
+--- a/docs/features/04_users_roles_employees.md
++++ b/docs/features/04_users_roles_employees.md
+@@ -1,39 +1,45 @@
+ # Feature: Users, invitations & job positions
+ 
+ ## Purpose
+-Owner adds employees and assigns a **job position** (company role).
++Owner adds employees and assigns a **job position** (company role). Only the company **Owner** can invite or change positions.
+ 
+ ## Frontend
+-- Nav: **Users & Roles**
+-- Invite: email + **Job position** dropdown
+-- List employees with position selector + **Save position**
+-- Pending invitations with role and revoke
++- Nav: **Users & positions**
++- Invite: email + **Job position**
++- Employee list: change position → **Save position**
++- Shortcut: **Make AI administrator**
++- Pending invitations with role + revoke
++- Debug: invitation token shown when `DEBUG=true` (use **Accept invitation** on login gate)
+ 
+-## Job positions (company roles)
+-| Role | Typical use |
+-|------|-------------|
+-| `member` | General employee |
+-| `reservation` | Reservation staff |
++## Hierarchy
++```
++Owner
++ ├── AI Administrator (ai_admin) — agents, skills, knowledge, policy
++ ├── Manager / Supervisor (manager) — approvals & ops
++ ├── Administration — back-office read/usage
++ ├── Reservation | Contract Manager | Accounting | Member — operational
++```
++
++| Role | Who |
++|------|-----|
++| `owner` | Business owner (not invitable) |
++| `ai_admin` | AI Administrator under owner |
+ | `manager` | Supervisor |
+-| `ai_admin` | AI Administrator (agents, skills, knowledge) |
+-| `contract_manager` | Contracts / documents |
+-| `administration` | Admin staff |
+-| `accounting` | Accounting |
+-| `owner` | Company owner — **not** assignable via invite |
++| `reservation` | Reservation desk |
++| `contract_manager` | Contracts & knowledge write |
++| `administration` | Office admin |
++| `accounting` | Finance-oriented read |
++| `member` | General staff |
+ 
+ ## Backend
+ - `GET /api/v1/companies/{id}/job-roles`
+-- `POST /api/v1/companies/{id}/invitations` `{ email, role_name }`
+-- `GET /api/v1/companies/{id}/invitations`
+-- `POST /api/v1/companies/{id}/invitations/{id}/revoke`
+-- `PUT /api/v1/companies/{id}/users/{user_id}/role` `{ role_name }`
+-- Accept invite: `POST /api/v1/auth/accept-invitation`
+-
+-## Accept invitation (frontend)
+-- Tab: **Accept invitation**
+-- Token (from email or debug field) + name + password
++- `POST /api/v1/companies/{id}/invitations` `{ "email", "role_name" }`
++- `PUT /api/v1/companies/{id}/users/{id}/role` `{ "role_name" }`
++- `PUT /api/v1/companies/{id}/administrators/{id}` `{ "administrator": true|false }`
++- `POST /api/v1/auth/accept-invitation`
+ 
+ ## Rules
+-- Only owner invites after onboarding is complete
+-- Changing role revokes that user’s sessions (re-login required)
+-- Direct `POST .../users` create is disabled (410)
++- Invite only after company profile is **complete**
++- Role change revokes that user’s sessions (must sign in again)
++- Direct `POST .../users` is disabled (410)
++- Platform developer is **not** a company role
+diff --git a/docs/features/README.md b/docs/features/README.md
+index 76cb701..69450b8 100644
+--- a/docs/features/README.md
++++ b/docs/features/README.md
+@@ -1,29 +1,20 @@
+ # Feature documentation index
+ 
+-Human-facing documentation for product features. Start here for the **company setup** path (frontend first).
+-
+-## Company setup (priority path)
++## Company setup (frontend path)
+ 
+ | # | Feature | Doc |
+ |---|---------|-----|
+-| 1 | Register business (company) | [01_company_registration.md](01_company_registration.md) |
++| 1 | Register business | [01_company_registration.md](01_company_registration.md) |
+ | 2 | Email verification | [02_email_verification.md](02_email_verification.md) |
+-| 3 | Company profile / complete onboarding | [03_company_profile.md](03_company_profile.md) |
+-| 4 | Users, invitations & job positions | [04_users_roles_employees.md](04_users_roles_employees.md) |
++| 3 | Company profile | [03_company_profile.md](03_company_profile.md) |
++| 4 | Users & job positions | [04_users_roles_employees.md](04_users_roles_employees.md) |
+ | 5 | AI Administrator | [05_ai_administrator.md](05_ai_administrator.md) |
+ 
+-## Core workspace (later docs)
++## How to add employees (Owner)
+ 
+-| Feature | Status |
+-|---------|--------|
+-| Login / logout / session | See PLATFORM_ACCESS.md |
+-| Chat (advisory) | Planned feature page |
+-| Tasks / execute / approve | Planned |
+-| Knowledge / document extract | Planned |
+-| Inventory / reservation demo | Planned |
+-| Agents / marketplace | Planned |
+-| Policies / departments / teams | Planned |
+-| Developer console | Planned |
++1. Complete **Company profile**
++2. Open **Users & positions**
++3. Email + job position → **Send invitation**
++4. Employee: login gate → **Accept invitation** → sign in
+ 
+-Official access contract: [PLATFORM_ACCESS.md](../PLATFORM_ACCESS.md)  
+-Onboarding rules: [COMPANY_ONBOARDING.md](../COMPANY_ONBOARDING.md)
++See also: [PLATFORM_ACCESS.md](../PLATFORM_ACCESS.md), [COMPANY_ONBOARDING.md](../COMPANY_ONBOARDING.md)
+diff --git a/tests/test_users_positions_job63.py b/tests/test_users_positions_job63.py
+new file mode 100644
+index 0000000..b82fb75
+--- /dev/null
++++ b/tests/test_users_positions_job63.py
+@@ -0,0 +1,61 @@
++"""Job 63 — users & job positions UI + role update."""
++
++from pathlib import Path
++
++from fastapi.testclient import TestClient
++
++from app.main import app
++
++client = TestClient(app)
++
++
++def _owner():
++    demo = client.post("/api/v1/demo/bootstrap")
++    assert demo.status_code == 200, demo.text
++    body = demo.json()
++    login = client.post(
++        "/api/v1/auth/login",
++        json={"email": body["owner_email"], "password": "demo12345"},
++    )
++    assert login.status_code == 200, login.text
++    tok = login.json()
++    headers = {
++        "Authorization": f"Bearer {tok['access_token']}",
++        "X-User-ID": tok["user_id"],
++    }
++    return body, headers
++
++
++def test_app_js_syntax_btn_refresh_users():
++    js = Path("app/static/workspace/app.js").read_text(encoding="utf-8")
++    assert 'if ($("btnRefreshUsers")) $("btnRefreshUsers").onclick = loadUsers;' in js
++    assert 'if ($("btnRefreshUsers") $("btnRefreshUsers")' not in js
++
++
++def test_invite_and_change_position():
++    body, headers = _owner()
++    company_id = body["company_id"]
++    # pick a non-owner user from bootstrap
++    target = next(u for u in body["users"] if u["role"] == "reservation")
++    res = client.put(
++        f"/api/v1/companies/{company_id}/users/{target['id']}/role",
++        headers=headers,
++        json={"role_name": "contract_manager"},
++    )
++    assert res.status_code == 200, res.text
++    assert res.json()["role"] == "contract_manager"
++
++    inv = client.post(
++        f"/api/v1/companies/{company_id}/invitations",
++        headers=headers,
++        json={"email": "desk@example.test", "role_name": "ai_admin"},
++    )
++    assert inv.status_code == 201, inv.text
++    assert inv.json().get("role_name") == "ai_admin"
++
++
++def test_users_view_hierarchy_copy():
++    html = client.get("/workspace").text
++    assert "Users &amp; job positions" in html or "Users & job positions" in html
++    assert "AI Administrator" in html
++    assert "userRoleInput" in html
