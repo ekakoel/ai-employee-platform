@@ -245,7 +245,11 @@
       <!-- HOME -->
       <section id="view-home" class="view active">
         <div class="home-heading">
-          <div><h2 id="homeGreeting">Workspace overview</h2><p id="homeUpdated" class="muted" aria-live="polite"></p></div>
+          <div>
+            <h2 id="homeGreeting">Workspace overview</h2>
+            <p id="homeUpdated" class="muted" aria-live="polite"></p>
+            <p class="muted" style="font-size:.85rem;margin-top:.35rem">Setup path: Users → Hire AI → Knowledge → Inventory → Chat/Tasks → Approvals</p>
+          </div>
           <div class="row">
             <button data-jump="tasks" class="primary">Create task</button>
             <button data-jump="chat" class="secondary">Chat with AI</button>
@@ -300,6 +304,10 @@
 
       <!-- INBOX -->
       <section id="view-inbox" class="view">
+        <p class="home-notice" role="status">
+          <strong>Inbox</strong> consolidates approvals, open tasks, and handoffs that need human attention.
+          Approve restricted actions here, then return to <strong>Tasks</strong> or <strong>Results</strong>.
+        </p>
           <div class="row between inbox-heading">
             <h2>AI Inbox</h2>
             <button id="btnRefreshInbox" class="icon-btn" title="Refresh inbox" aria-label="Refresh inbox">&#8635;</button>

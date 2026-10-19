@@ -35,48 +35,85 @@
   const ROLE_LABELS = {
     owner: "Owner",
     ai_admin: "AI Administrator",
-    manager: "Manager",
+    manager: "Manager / Supervisor",
     reservation: "Reservation",
+    contract_manager: "Contract Manager",
+    administration: "Administration",
+    accounting: "Accounting",
     member: "Member",
   };
 
   function roleQuickActions(role) {
     const common = [
-      { id: "chat", title: "Chat with AI", desc: "Advisory conversation" },
-      { id: "tasks", title: "Create task", desc: "Run tools with policy" },
-      { id: "inbox", title: "Inbox", desc: "Approvals & handoffs" },
+      { id: "chat", title: "Chat with AI", desc: "Advisory answers from knowledge" },
+      { id: "tasks", title: "Create task", desc: "Tools under policy" },
+      { id: "inbox", title: "Inbox", desc: "Approvals & open work" },
+      { id: "knowledge", title: "Knowledge", desc: "Company memory" },
     ];
     if (role === "reservation") {
       return [
         { id: "chat", title: "Ask availability", desc: "Advisory chat first" },
         { id: "tasks", title: "Run reservation task", desc: "Search / quote / book" },
-        { id: "__playbook__", title: "Demo playbook", desc: "Seed + create Alila task" },
-        { id: "results", title: "Quotations & results", desc: "Find drafts & rates" },
-        { id: "inventory", title: "Inventory", desc: "See room rates" },
-        { id: "inbox", title: "Approvals", desc: "Pending bookings" },
+        { id: "inventory", title: "Inventory", desc: "Room rates & products" },
+        { id: "inbox", title: "Approvals queue", desc: "Pending bookings" },
+        { id: "knowledge", title: "Knowledge", desc: "Contracts & policies" },
       ];
     }
     if (role === "ai_admin") {
       return [
-        { id: "agents", title: "AI Employees", desc: "Hire & access" },
-        { id: "inventory", title: "Inventory", desc: "Rates & rooms" },
+        { id: "agents", title: "Hire AI Employees", desc: "Catalog & access" },
+        { id: "users", title: "Users & positions", desc: "Invite staff" },
+        { id: "knowledge", title: "Knowledge", desc: "Extract documents" },
+        { id: "inventory", title: "Inventory", desc: "Seed availability" },
         { id: "policy-management", title: "Policies", desc: "Allow / approve tools" },
-        { id: "users", title: "Users & roles", desc: "Team access" },
         { id: "tasks", title: "Tasks", desc: "Operational work" },
       ];
     }
-    if (role === "owner" || role === "manager") {
+    if (role === "owner") {
       return [
-        { id: "home", title: "Overview", desc: "Command center" },
+        { id: "users", title: "Users & positions", desc: "Invite admin & staff" },
+        { id: "agents", title: "AI Employees", desc: "Hire workforce" },
+        { id: "knowledge", title: "Knowledge", desc: "Upload contracts" },
+        { id: "inventory", title: "Inventory", desc: "Seed rates" },
+        { id: "tasks", title: "Tasks", desc: "Execute work" },
+        { id: "approvals", title: "Approvals", desc: "Human gates" },
+      ];
+    }
+    if (role === "manager") {
+      return [
+        { id: "inbox", title: "Inbox", desc: "Needs action" },
+        { id: "approvals", title: "Approvals", desc: "Approve or reject" },
+        { id: "tasks", title: "Tasks", desc: "Supervise work" },
         { id: "agents", title: "AI team", desc: "Workforce" },
-        { id: "governance", title: "Governance", desc: "Controls & metrics" },
-        { id: "users", title: "Users", desc: "Roles & access" },
-        { id: "results", title: "Results", desc: "Work outputs" },
+        { id: "governance", title: "Governance", desc: "Metrics" },
+      ];
+    }
+    if (role === "contract_manager") {
+      return [
+        { id: "knowledge", title: "Upload contracts", desc: "Extract to knowledge" },
+        { id: "chat", title: "Ask about contracts", desc: "Advisory" },
+        { id: "tasks", title: "Contract tasks", desc: "Policy-gated work" },
+        { id: "inbox", title: "Inbox", desc: "Open items" },
+      ];
+    }
+    if (role === "administration") {
+      return [
+        { id: "users", title: "Users", desc: "Invite & positions" },
+        { id: "usage", title: "Plan & usage", desc: "Quotas" },
+        { id: "audit", title: "Audit log", desc: "Activity" },
+        { id: "inbox", title: "Inbox", desc: "Open work" },
+      ];
+    }
+    if (role === "accounting") {
+      return [
+        { id: "usage", title: "Usage", desc: "Plan consumption" },
+        { id: "governance", title: "Governance", desc: "Cost signals" },
+        { id: "tasks", title: "Tasks", desc: "Read operational work" },
+        { id: "knowledge", title: "Knowledge", desc: "Company facts" },
       ];
     }
     return common;
   }
-
 
   function buildDemoChecklist({ agents, tasks, inventoryCount, knowledgeCount, approvals }) {
     const activeAgents = (agents || []).filter((a) => a.status === "active" || !a.status);
@@ -191,13 +228,26 @@
         const roleName = ROLE_LABELS[role] || role;
         $("homeGreeting").textContent = session.userName ? `Hello, ${session.userName}` : `Welcome · ${roleName}`;
         if ($("homeRoleLabel")) $("homeRoleLabel").textContent = roleName;
-        const actions = roleQuickActions(role);
+        let actions = roleQuickActions(role);
+        const perms = session.permissions || [];
+        const viewNeed = {
+          users: ["team.manage"], agents: ["agent.read"], knowledge: ["knowledge.read"],
+          inventory: ["task.read", "knowledge.read"], tasks: ["task.read"], approvals: ["approval.read"],
+          chat: ["agent.read"], inbox: ["task.read", "approval.read"], governance: ["governance.read"],
+          usage: ["usage.read"], audit: ["audit.read"], "policy-management": ["policy.read", "policy.manage"],
+        };
+        actions = actions.filter((a) => {
+          if (a.id === "__playbook__") return perms.includes("agent.manage") || role === "owner";
+          const need = viewNeed[a.id];
+          if (!need || !need.length) return true;
+          return need.some((p) => perms.includes(p));
+        });
         if ($("homeQuickActions")) {
           $("homeQuickActions").innerHTML = actions.map((a) =>
             a.id === "__playbook__"
               ? `<button type="button" data-home-playbook="1"><span class="hq-title">${esc(a.title)}</span><span class="hq-desc">${esc(a.desc)}</span></button>`
               : `<button type="button" data-home-view="${esc(a.id)}"><span class="hq-title">${esc(a.title)}</span><span class="hq-desc">${esc(a.desc)}</span></button>`
-          ).join("");
+          ).join("") || `<div class="muted">No quick actions for this role.</div>`;
         }
         const showInv = ["owner", "ai_admin", "manager", "reservation"].includes(role);
         // Job 53 — demo readiness checklist
@@ -219,6 +269,9 @@
           knowledgeCount,
           approvals: data.approvals || [],
         });
+        const canDemo = role === "owner" || role === "ai_admin" || role === "manager" || perms.includes("agent.manage");
+        if ($("homeDemoSection")) $("homeDemoSection").classList.toggle("hidden", !canDemo);
+        if ($("homeInventorySection")) $("homeInventorySection").classList.toggle("hidden", !showInv);
         if ($("homeDemoScore")) {
           $("homeDemoScore").textContent = demo.ready
             ? "Ready"
