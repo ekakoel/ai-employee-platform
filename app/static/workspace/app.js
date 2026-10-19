@@ -404,7 +404,7 @@
     if (name === "company") loadCompanyProfile();
     if (name === "inbox") loadInbox();
     if (name === "agents") { applyAgentActionGating(); loadAgents(); }
-    if (name === "inventory") loadInventory();
+    if (name === "inventory") { applyInventoryGating(); loadInventory(); }
     if (name === "tasks") {
       loadAgentOptions();
       loadTasks();
@@ -1124,8 +1124,14 @@
   if ($("btnDemoPlaybook")) $("btnDemoPlaybook").onclick = runDemoPlaybook;
   if ($("btnInvPlaybook")) $("btnInvPlaybook").onclick = runDemoPlaybook;
 
+  function applyInventoryGating() {
+    const canManage = hasPermission("agent.manage") || hasPermission("knowledge.write");
+    if ($("inventoryActionsCard")) $("inventoryActionsCard").classList.toggle("hidden", !canManage);
+  }
+
   async function loadInventory() {
     if (!state.companyId) return;
+    applyInventoryGating();
     const log = $("inventoryLog");
     try {
       const data = await api(`/companies/${state.companyId}/inventory`);
@@ -1156,7 +1162,12 @@
           method: "POST",
           body: "{}",
         });
-        if (log) log.textContent = JSON.stringify(res, null, 2);
+        if (log) {
+          log.textContent =
+            "Seeded availability.\n" +
+            JSON.stringify(res, null, 2) +
+            "\nNext: create an execute Task asking the agent to search availability, or use Chat + Also create Task.";
+        }
         loadInventory();
       } catch (err) {
         if (log) log.textContent = err.message;
