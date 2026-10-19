@@ -4667,6 +4667,21 @@ def marketplace_list_installations(
 
 
 
+@router.get("/demo/bootstrap/status")
+def demo_bootstrap_status():
+    """Whether Quick start bootstrap is allowed (no auth)."""
+    from app.core.config import settings
+    env = (settings.app_env or "").strip().lower()
+    allowed = bool(settings.debug or env in {"development", "dev", "test", "local"})
+    return {
+        "allowed": allowed,
+        "debug": bool(settings.debug),
+        "app_env": settings.app_env,
+        "endpoint": "POST /api/v1/demo/bootstrap",
+        "auth_required": False,
+    }
+
+
 @router.post("/demo/bootstrap")
 def demo_bootstrap(
     db: Session = Depends(get_db),

@@ -719,9 +719,9 @@
       if (log) {
         log.textContent =
           "Quick start failed: " + err.message +
-          "\n\nNote: Demo bootstrap requires DEBUG=true." +
-          "\nProduction path: Register company → verify email → complete profile." +
-          "\nOr use /developer Provision (platform admin).";
+          "\n\nChecklist: hard-refresh app.js; DEBUG=true or APP_ENV=development; restart uvicorn; use /developer." +
+          "\nAPI must be POST /api/v1/demo/bootstrap without Bearer token." +
+          "\nIf still 401, app.js cache is stale — Ctrl+F5.";
       }
     }
   };

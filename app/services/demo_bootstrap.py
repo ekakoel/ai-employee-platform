@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 import uuid
 
 from fastapi import HTTPException
@@ -29,11 +28,17 @@ PERSONAS = [
 
 
 def require_debug_bootstrap() -> None:
-    if not settings.debug:
-        raise HTTPException(
-            status_code=403,
-            detail="Demo bootstrap is only available when DEBUG=true (local development).",
-        )
+    """Allow in local/dev/test. Block only in production-like environments."""
+    env = (getattr(settings, "app_env", None) or "").strip().lower()
+    if settings.debug or env in {"development", "dev", "test", "local"}:
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "Demo bootstrap is only available when DEBUG=true "
+            "or APP_ENV=development/test (not production)."
+        ),
+    )
 
 
 def bootstrap_demo_workspace(db: Session, *, hire_agents: bool = True) -> dict:
