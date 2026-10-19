@@ -533,11 +533,16 @@
 
       <!-- MARKETPLACE -->
       <section id="view-marketplace" class="view">
+        <p class="home-notice" role="status">
+          <strong>Marketplace</strong> lists public AI Employee templates.
+          <strong>Install</strong> copies template skills into your company (does not hire an instance by itself).
+          After install, open <strong>AI Employees</strong> to hire from the catalog.
+        </p>
         <div class="card">
           <div class="row between">
             <div>
-              <h2>Marketplace</h2>
-              <p class="muted">Public agent templates. Install copies skills into your company catalog.</p>
+              <h2>Public templates</h2>
+              <p class="muted">Install requires <code>agent.hire</code> or <code>agent.manage</code> (Owner / AI Admin).</p>
             </div>
             <button id="btnRefreshMarket" class="secondary">Refresh</button>
           </div>
@@ -787,11 +792,17 @@
 
       <!-- POLICY MANAGEMENT -->
       <section id="view-policy-management" class="view">
-        <div class="card">
+        <p class="home-notice" role="status">
+          <strong>Policies</strong> control whether tools may run: <code>allow</code>, <code>require_approval</code>, or <code>deny</code>.
+          AI Administrators and Owners configure these. Unmatched tools are denied by default.
+          After changing policies, test with Task <strong>execute</strong> or the developer Policy Simulator.
+        </p>
+        <div class="card" id="policyCreateCard">
           <h2>Create policy</h2>
+          <p class="muted">Requires <code>policy.manage</code>. Example tools: <code>search_availability</code>, <code>send_quotation</code>, <code>create_reservation</code>.</p>
           <div class="grid-2">
             <label>Name
-              <input id="policyName" placeholder="Require approval for quotes" />
+              <input id="policyName" placeholder="Require approval for bookings" />
             </label>
             <label>Effect
               <select id="policyEffect">
@@ -801,7 +812,12 @@
               </select>
             </label>
             <label>Tool / action
-              <input id="policyTool" placeholder="send_quotation" />
+              <input id="policyTool" placeholder="create_reservation" list="policyToolHints" />
+              <datalist id="policyToolHints">
+                <option value="search_availability"></option>
+                <option value="send_quotation"></option>
+                <option value="create_reservation"></option>
+              </datalist>
             </label>
             <label>Description
               <input id="policyDescription" placeholder="Optional note" />
@@ -902,18 +918,24 @@
 
       <!-- SKILLS -->
       <section id="view-skills" class="view">
+        <p class="home-notice" role="status">
+          <strong>Skills</strong> are capabilities agents can use (platform catalog + company-specific).
+          Company skills can be created by Owner / AI Admin.
+          <em>Platform skill catalog upgrades</em> are done only by platform developers — not company users.
+        </p>
         <div class="card">
           <div class="row between">
             <div>
-              <h2>Skills</h2>
-              <p class="muted">Platform + company-scoped skills available to agents.</p>
+              <h2>Skill catalog</h2>
+              <p class="muted">Platform and company skills visible to your tenant.</p>
             </div>
             <button id="btnRefreshSkills" class="secondary">Refresh</button>
           </div>
           <div id="skillsList" class="cards"></div>
         </div>
-        <div class="card">
+        <div class="card" id="skillCreateCard">
           <h3>Create company skill</h3>
+          <p class="muted">Requires <code>agent.manage</code>. For advanced platform catalog changes, use the developer console.</p>
           <div class="grid-2">
             <label>Slug
               <input id="skillSlug" placeholder="sales_followup" />

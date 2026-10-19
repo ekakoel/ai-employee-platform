@@ -23,3 +23,6 @@
 Register → profile → users → hire AI → knowledge → inventory
   → home → chat → tasks → approvals → notifications
 ```
+
+| 14 | Marketplace & Skills | [14](14_marketplace_skills.md) |
+| 15 | Policies (AI Admin) | [15](15_policies_ai_admin.md) |

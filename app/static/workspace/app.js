@@ -1405,6 +1405,7 @@
         api(`/companies/${state.companyId}/marketplace/installations`),
       ]);
       const installed = new Set((installs || []).map((i) => i.catalog_agent_id));
+      const canInstall = hasPermission("agent.hire") || hasPermission("agent.manage");
       $("marketList").innerHTML =
         (templates || [])
           .map(
@@ -1416,7 +1417,9 @@
           <div class="row">
             ${installed.has(t.id)
                 ? `<span class="pill ok">Installed</span>`
-                : `<button class="primary btn-install" data-id="${t.id}">Install</button>`
+                : canInstall
+                  ? `<button class="primary btn-install" data-id="${t.id}">Install</button>`
+                  : `<span class="meta">Install requires Owner/AI Admin</span>`
               }
           </div>
         </div>`
@@ -2132,6 +2135,12 @@
   // ----- Policy management -----
   async function loadPolicies() {
     if (!state.companyId) return;
+    if ($("policyCreateCard")) {
+      $("policyCreateCard").classList.toggle(
+        "hidden",
+        !(hasPermission("policy.manage") || hasPermission("agent.manage"))
+      );
+    }
     try {
       const list = await api(`/companies/${state.companyId}/policies`);
       $("policyList").innerHTML =
@@ -2165,7 +2174,8 @@
             is_active: true,
           }),
         });
-        log.textContent = "Policy created.";
+        log.textContent =
+          "Policy created. Unmatched tools remain denied by default. Run a Task execute or Policy Simulator to verify.";
         loadPolicies();
       } catch (err) {
         log.textContent = err.message;
@@ -2416,6 +2426,9 @@ async function loadDepartments() {
   // ----- Skills -----
   async function loadSkills() {
     if (!state.companyId) return;
+    if ($("skillCreateCard")) {
+      $("skillCreateCard").classList.toggle("hidden", !hasPermission("agent.manage"));
+    }
     try {
       const list = await api(`/companies/${state.companyId}/skills`);
       $("skillsList").innerHTML =
