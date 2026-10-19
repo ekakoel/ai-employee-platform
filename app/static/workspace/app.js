@@ -2239,7 +2239,13 @@
         });
         if (log) {
           log.classList.remove("hidden-log");
-          log.textContent = body.message;
+          const role = body.role_name || ($("userRoleInput") && $("userRoleInput").value) || "member";
+          log.textContent =
+            (body.message || "Invitation created.") +
+            " Position: " + role +
+            (body.invitation_token
+              ? "\nDev token (Accept invitation tab): " + body.invitation_token
+              : "\nEmployee will receive an email when SMTP is configured.");
         }
         if ($("inviteDebugTokenWrap")) $("inviteDebugTokenWrap").classList.toggle("hidden", !body.invitation_token);
         if ($("inviteDebugToken")) $("inviteDebugToken").value = body.invitation_token || "";

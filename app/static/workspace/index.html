@@ -185,7 +185,7 @@
         <button data-view="notifications" class="nav-btn">Notifications</button>
         <button data-view="governance" class="nav-btn">Governance</button>
         <button data-view="policy-management" class="nav-btn">Policies</button>
-        <button data-view="users" class="nav-btn">Users & Roles</button>
+        <button data-view="users" class="nav-btn">Users &amp; positions</button>
         <button data-view="departments" class="nav-btn">Departments</button>
         <button data-view="teams" class="nav-btn">Teams</button>
         <button data-view="skills" class="nav-btn">Skills</button>
@@ -766,7 +766,16 @@
       <section id="view-users" class="view">
         <div class="card">
           <h2>Users &amp; job positions</h2>
-          <p class="muted">Owner invites employees by email and assigns a job position (role). AI Administrator can manage agents, skills, and knowledge. Owner role cannot be assigned by invitation.</p>
+          <p class="muted"><strong>Owner only:</strong> invite employees and change their job position. The Owner account cannot be invited or demoted here.</p>
+          <div class="role-legend muted" style="font-size:.85rem;line-height:1.5;margin-bottom:1rem;padding:.75rem 1rem;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc">
+            <strong>Hierarchy</strong>
+            <ul style="margin:.35rem 0 0 1.1rem;padding:0">
+              <li><strong>Owner</strong> — full company control; invites users; manages AI Employees</li>
+              <li><strong>AI Administrator</strong> — agents, skills, knowledge, policies (not ownership)</li>
+              <li><strong>Manager / Supervisor</strong> — approvals and day-to-day ops</li>
+              <li><strong>Reservation / Contract / Accounting / Administration / Member</strong> — by job</li>
+            </ul>
+          </div>
           <div class="grid-2">
             <label>Employee email
               <input id="userEmailInput" type="email" placeholder="user@company.com" />

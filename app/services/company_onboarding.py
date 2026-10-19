@@ -256,5 +256,14 @@ def set_job_role(db, actor, target_user_id: str, role_name: str) -> dict:
         status="success",
         details={"role": role_name},
     )
+    if role_name in {
+        "reservation", "member", "manager", "contract_manager",
+        "administration", "accounting", "ai_admin",
+    }:
+        try:
+            from app.services.access import grant_all_agents_to_user
+            grant_all_agents_to_user(db, company_id=company.id, user_id=target.id)
+        except Exception:
+            pass
     db.commit()
     return {"user_id": target.id, "role": role_name}
