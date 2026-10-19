@@ -565,8 +565,8 @@
         <div class="card">
           <div class="row between">
             <div>
-              <h2>Knowledge</h2>
-              <p class="muted">Company memory used by AI employees. Extracted documents are stored as text only (original file discarded).</p>
+              <h2>Company knowledge</h2>
+              <p class="muted">Shared memory for AI Employees and staff chat. Document uploads are <strong>extracted to text only</strong> — original files are not kept on the server.</p>
             </div>
             <button id="btnRefreshKnowledge" class="secondary">Refresh</button>
           </div>
@@ -577,6 +577,7 @@
                 <option value="extract">From document extract</option>
                 <option value="manual">Manual notes</option>
                 <option value="document">Category: document</option>
+                <option value="policy">Category: policy</option>
               </select>
             </label>
             <div id="knowStats" class="stats"></div>
@@ -584,33 +585,52 @@
           <div id="knowList" class="list"></div>
         </div>
 
-        <div class="card">
-          <h3>Upload document → knowledge (file not stored)</h3>
-          <p class="muted">PDF, Word, Excel, text are extracted into company knowledge. Original file is discarded after extract.</p>
+        <div class="card" id="knowledgeWriteCard">
+          <h3>Upload document → extract</h3>
+          <p class="muted">Requires <code>knowledge.write</code> (Owner, AI Admin, Contract Manager, Manager). Formats: PDF, Word, Excel, TXT.</p>
           <div class="grid-2">
             <label class="full">File
-              <input type="file" id="knowledgeIngestFile" accept=".pdf,.docx,.xlsx,.txt,application/pdf" />
+              <input type="file" id="knowledgeIngestFile" accept=".pdf,.docx,.xlsx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain" />
             </label>
-            <label class="full">Title (optional)
+            <label>Title (optional)
               <input id="knowledgeIngestTitle" placeholder="e.g. Alila 2026 contract" />
+            </label>
+            <label>Category
+              <select id="knowledgeIngestCategory">
+                <option value="document">document</option>
+                <option value="policy">policy</option>
+                <option value="contract">contract</option>
+                <option value="general">general</option>
+              </select>
             </label>
           </div>
           <button id="btnKnowledgeIngest" class="primary">Extract to knowledge</button>
           <pre id="knowledgeIngestLog" class="log"></pre>
         </div>
 
-        <div class="card">
+        <div class="card" id="knowledgeNoteCard">
           <h3>Add note manually</h3>
           <div class="grid-2">
-            <label class="full">Title
-              <input id="knowTitle" />
+            <label>Title
+              <input id="knowTitle" placeholder="Short title" />
+            </label>
+            <label>Category
+              <select id="knowCategory">
+                <option value="general">general</option>
+                <option value="policy">policy</option>
+                <option value="document">document</option>
+                <option value="contract">contract</option>
+              </select>
             </label>
             <label class="full">Content
-              <textarea id="knowContent" rows="3"></textarea>
+              <textarea id="knowContent" rows="3" placeholder="Paste or type company knowledge…"></textarea>
             </label>
           </div>
           <button id="btnAddKnowledge" class="primary">Add knowledge</button>
-          <hr />
+        </div>
+
+        <div class="card">
+          <h3>Search</h3>
           <div class="row">
             <input id="knowQuery" placeholder="Search knowledge…" class="grow" />
             <button id="btnSearchKnow" class="secondary">Search</button>

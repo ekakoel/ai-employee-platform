@@ -1,6 +1,6 @@
 # Feature documentation index
 
-## Company setup
+## Company setup path
 
 | # | Feature | Doc |
 |---|---------|-----|
@@ -10,8 +10,8 @@
 | 4 | Users & job positions | [04_users_roles_employees.md](04_users_roles_employees.md) |
 | 5 | AI Administrator | [05_ai_administrator.md](05_ai_administrator.md) |
 | 6 | Hire AI Employees | [06_ai_employees_hire.md](06_ai_employees_hire.md) |
+| 7 | Company knowledge | [07_knowledge.md](07_knowledge.md) |
 
-## Path
-Register → verify → profile → invite users → **hire AI Employees** → grant access → chat/tasks
-
-See [PLATFORM_ACCESS.md](../PLATFORM_ACCESS.md)
+```
+Register → verify → profile → users → hire AI → knowledge → chat/tasks
+```

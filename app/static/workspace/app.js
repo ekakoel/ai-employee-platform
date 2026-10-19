@@ -427,7 +427,7 @@
     if (name === "policies") { loadAgentOptions(); }
     if (name === "policy-management") loadPolicies();
     if (name === "users") loadUsers();
-    if (name === "knowledge") loadKnowledge();
+    if (name === "knowledge") { applyKnowledgeWriteGating(); loadKnowledge(); }
     if (name === "departments") loadDepartments();
     if (name === "teams") { loadAgentOptions(); loadTeams(); }
     if (name === "skills") loadSkills();
@@ -1759,8 +1759,15 @@
     );
   }
 
+  function applyKnowledgeWriteGating() {
+    const canWrite = hasPermission("knowledge.write");
+    if ($("knowledgeWriteCard")) $("knowledgeWriteCard").classList.toggle("hidden", !canWrite);
+    if ($("knowledgeNoteCard")) $("knowledgeNoteCard").classList.toggle("hidden", !canWrite);
+  }
+
   async function loadKnowledge() {
     if (!state.companyId) return;
+    applyKnowledgeWriteGating();
     const listEl = $("knowList");
     if (!listEl) return;
     try {
@@ -1842,17 +1849,25 @@
   if ($("btnKnowledgeIngest"))
     $("btnKnowledgeIngest").onclick = async () => {
       const log = $("knowledgeIngestLog");
+      const btn = $("btnKnowledgeIngest");
       const fileInput = $("knowledgeIngestFile");
       if (!fileInput || !fileInput.files || !fileInput.files[0]) {
         if (log) log.textContent = "Choose a file first";
         return;
       }
+      if (!hasPermission("knowledge.write")) {
+        if (log) log.textContent = "You do not have knowledge.write permission.";
+        return;
+      }
       try {
+        if (btn) { btn.disabled = true; btn.textContent = "Extracting…"; }
+        if (log) log.textContent = "Uploading and extracting (file will not be stored)…";
         const fd = new FormData();
         fd.append("file", fileInput.files[0]);
         const title = ($("knowledgeIngestTitle") && $("knowledgeIngestTitle").value.trim()) || "";
         if (title) fd.append("title", title);
-        fd.append("category", "document");
+        const cat = ($("knowledgeIngestCategory") && $("knowledgeIngestCategory").value) || "document";
+        fd.append("category", cat);
         const base = (state.apiBase || "/api/v1").replace(/\/$/, "");
         const version = sessionVersion;
         const token = state.accessToken;
@@ -1872,11 +1887,20 @@
           if (res.status === 401) expireCurrentSession(version, token);
           throw new Error(typeof data === "object" ? data.detail || JSON.stringify(data) : text);
         }
-        if (log) log.textContent = "Knowledge saved (file not retained): " + (data.title || data.id);
+        if (log) {
+          log.textContent =
+            "Saved as knowledge (file discarded): " + (data.title || data.id) +
+            "\nCategory: " + (data.category || cat) +
+            "\nAI Employees can use this in chat/tasks within policy.";
+        }
         if ($("knowFilter")) $("knowFilter").value = "extract";
+        if (fileInput) fileInput.value = "";
+        if ($("knowledgeIngestTitle")) $("knowledgeIngestTitle").value = "";
         await loadKnowledge();
       } catch (err) {
         if (log) log.textContent = err.message;
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = "Extract to knowledge"; }
       }
     };
 
