@@ -29,6 +29,11 @@ def owner_only(company: Company, user: User):
         raise HTTPException(status_code=403, detail="Company owner required")
 
 
+def team_manager(company: Company, user: User):
+    if not company_onboarding.can_manage_team(user, company):
+        raise HTTPException(status_code=403, detail="Team management permission required")
+
+
 @router.get("/{company_id}/profile")
 def profile(company_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     company = own_company(db, user, company_id)
@@ -74,7 +79,7 @@ class InviteRequest(BaseModel):
 def invite(company_id: str, payload: InviteRequest, db: Session = Depends(get_db),
            user: User = Depends(get_current_user)):
     company = own_company(db, user, company_id)
-    owner_only(company, user)
+    team_manager(company, user)
     try:
         return company_onboarding.invite(db, user, payload.email, role_name=payload.role_name)
     except auth_sessions.AuthError as exc:
@@ -104,6 +109,7 @@ def list_job_roles(company_id: str, db: Session = Depends(get_db),
             "name": name,
             "label": labels.get(name, name.replace("_", " ").title()),
             "is_administrator": name == "ai_admin",
+            "owner_only": name == "ai_admin",
         })
     return {"roles": roles}
 
@@ -116,7 +122,7 @@ class JobRoleUpdate(BaseModel):
 def update_job_role(company_id: str, target_id: str, payload: JobRoleUpdate,
                     db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     company = own_company(db, user, company_id)
-    owner_only(company, user)
+    team_manager(company, user)
     try:
         return company_onboarding.set_job_role(db, user, target_id, payload.role_name)
     except auth_sessions.AuthError as exc:
@@ -126,7 +132,7 @@ def update_job_role(company_id: str, target_id: str, payload: JobRoleUpdate,
 @router.get("/{company_id}/invitations")
 def list_invitations(company_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     company = own_company(db, user, company_id)
-    owner_only(company, user)
+    team_manager(company, user)
     rows = db.scalars(select(CompanyInvitation).where(CompanyInvitation.company_id == company_id)
                       .order_by(CompanyInvitation.created_at.desc()).limit(100)).all()
     return [{"id": row.id, "email": row.email, "status": "revoked" if row.revoked_at else
@@ -138,7 +144,7 @@ def list_invitations(company_id: str, db: Session = Depends(get_db), user: User 
 def revoke_invitation(company_id: str, invitation_id: str, db: Session = Depends(get_db),
                       user: User = Depends(get_current_user)):
     company = own_company(db, user, company_id)
-    owner_only(company, user)
+    team_manager(company, user)
     result = db.execute(update(CompanyInvitation).where(CompanyInvitation.id == invitation_id,
         CompanyInvitation.company_id == company_id, CompanyInvitation.consumed_at.is_(None),
         CompanyInvitation.revoked_at.is_(None)).values(revoked_at=auth_sessions.now()))

@@ -148,17 +148,53 @@ def verify_email(db, token):
     return {"message": "Email verified. You can sign in."}
 
 
+def _actor_permission_keys(actor) -> set:
+    try:
+        from app.services.access import user_permission_keys
+        return set(user_permission_keys(actor))
+    except Exception:
+        if actor.role and actor.role.permissions:
+            return {p.key for p in actor.role.permissions}
+        return set()
+
+
+def can_manage_team(actor, company) -> bool:
+    if company.onboarding_status != "complete":
+        return False
+    if company.owner_user_id == actor.id and getattr(actor.role, "name", None) == "owner":
+        return True
+    return "team.manage" in _actor_permission_keys(actor)
+
+
+# Roles an Administrator (ai_admin / administration) may assign via invite
+ADMIN_INVITE_ROLES = frozenset({
+    "member", "reservation", "manager", "contract_manager",
+    "administration", "accounting",
+})
+# Owner may also invite AI administrators
+OWNER_INVITE_ROLES = ADMIN_INVITE_ROLES | {"ai_admin"}
+
+
 def invite(db, actor, email, role_name: str = "member"):
-    """Owner invites an employee with a company job role (not owner/platform)."""
+    """Owner or team manager (AI Admin / Administration) invites an employee."""
     require_delivery()
     email = normalized_email(email)
     company = db.get(Company, actor.company_id)
-    if company.owner_user_id != actor.id or company.onboarding_status != "complete":
-        raise auth_sessions.AuthError("Only the company owner can invite employees after onboarding", 403)
+    if not can_manage_team(actor, company):
+        raise auth_sessions.AuthError(
+            "Only the owner or an administrator with team access can invite employees after onboarding",
+            403,
+        )
     from app.services.seed import ROLE_PERMISSIONS, get_or_create_role
     role_name = (role_name or "member").strip().lower()
-    if role_name in {"owner"} or role_name not in ROLE_PERMISSIONS:
-        raise auth_sessions.AuthError("Invalid job role for invitation", 400)
+    is_owner = company.owner_user_id == actor.id and getattr(actor.role, "name", None) == "owner"
+    allowed = OWNER_INVITE_ROLES if is_owner else ADMIN_INVITE_ROLES
+    if role_name not in ROLE_PERMISSIONS or role_name not in allowed:
+        raise auth_sessions.AuthError(
+            "Invalid job role for invitation (administrators cannot invite owners or AI admins)"
+            if not is_owner else "Invalid job role for invitation",
+            400,
+        )
     # Do not expose whether an arbitrary email already belongs to another tenant.
     if db.scalar(select(User.id).where(func.lower(User.email) == email).limit(1)):
         return {"message": "If eligible, an invitation has been created."}
@@ -230,14 +266,17 @@ def accept_invitation(db, token, name, password):
 
 
 def set_job_role(db, actor, target_user_id: str, role_name: str) -> dict:
-    """Owner sets an employee's job role/position. Cannot change owner."""
+    """Owner or team manager sets job role. Owner-only for ai_admin assignment."""
     from app.services.seed import ROLE_PERMISSIONS, get_or_create_role
     company = db.get(Company, actor.company_id)
-    if company.owner_user_id != actor.id or actor.role.name != "owner":
-        raise auth_sessions.AuthError("Only the company owner can change job roles", 403)
+    if not can_manage_team(actor, company):
+        raise auth_sessions.AuthError("Not allowed to change job roles", 403)
+    is_owner = company.owner_user_id == actor.id and getattr(actor.role, "name", None) == "owner"
     role_name = (role_name or "").strip().lower()
     if role_name == "owner" or role_name not in ROLE_PERMISSIONS:
         raise auth_sessions.AuthError("Invalid job role", 400)
+    if not is_owner and role_name not in ADMIN_INVITE_ROLES:
+        raise auth_sessions.AuthError("Only the owner can assign AI Administrator", 403)
     target = db.scalar(select(User).where(User.id == target_user_id, User.company_id == company.id))
     if not target or target.status != "active":
         raise auth_sessions.AuthError("Employee not found", 404)

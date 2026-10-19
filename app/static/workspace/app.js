@@ -2114,11 +2114,13 @@
       ["member", "Member"],
       ["reservation", "Reservation"],
       ["manager", "Manager"],
-      ["ai_admin", "AI Administrator"],
       ["contract_manager", "Contract Manager"],
       ["administration", "Administration"],
       ["accounting", "Accounting"],
     ];
+    if (state.role === "owner") {
+      roleOptions.splice(3, 0, ["ai_admin", "AI Administrator"]);
+    }
     try {
       // refresh job-role select from API when available
       try {
@@ -2126,7 +2128,10 @@
         const sel = $("userRoleInput");
         if (sel && rolesBody.roles && rolesBody.roles.length) {
           const current = sel.value;
-          sel.innerHTML = rolesBody.roles
+          const roles = rolesBody.roles.filter(
+            (r) => state.role === "owner" || r.name !== "ai_admin"
+          );
+          sel.innerHTML = roles
             .map((r) => `<option value="${escapeHtml(r.name)}">${escapeHtml(r.label || r.name)}</option>`)
             .join("");
           if ([...sel.options].some((o) => o.value === current)) sel.value = current;
@@ -2139,7 +2144,7 @@
           .map((u) => {
             const isOwner = u.role === "owner";
             const roleSelect =
-              state.role === "owner" && !isOwner
+              hasPermission("team.manage") && !isOwner
                 ? `<label class="inline-role">Position
                     <select class="user-role-select" data-id="${escapeHtml(u.id)}">
                       ${roleOptions
@@ -2201,7 +2206,7 @@
           }
         };
       });
-      if (state.role === "owner" && $("invitationsList")) {
+      if (hasPermission("team.manage") && $("invitationsList")) {
         const invitations = await api(`/companies/${state.companyId}/invitations`);
         $("invitationsList").innerHTML =
           invitations

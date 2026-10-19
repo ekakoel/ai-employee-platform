@@ -1,20 +1,19 @@
 # Feature: Users, invitations & job positions
 
-## Purpose
-Owner adds employees and assigns a **job position**. Only the company **Owner** can invite or change positions.
+## Who can invite
+| Actor | Can invite | Can assign `ai_admin` | Can change Owner |
+|-------|------------|----------------------|------------------|
+| Owner | Yes | Yes | No |
+| AI Administrator (`ai_admin`) | Yes (operational roles) | No | No |
+| Administration | Yes (operational roles) | No | No |
+| Other roles | No | No | No |
 
-## Frontend
-- Nav: **Users & positions**
-- Invite: email + job position → **Send invitation**
-- Employee list: change position → **Save position**
-- **Make AI administrator** shortcut
-- Debug token when DEBUG=true → login gate **Accept invitation**
-
-## Hierarchy
-Owner → AI Administrator → Manager/Supervisor → operational roles (reservation, contract, accounting, administration, member)
+## Navigation
+Menus without the required permission are **hidden** (not merely disabled).
+- `users` requires `team.manage` (owner, ai_admin, administration)
+- Operational roles see Chat / Tasks / Knowledge as allowed by their matrix
 
 ## Backend
-- `GET /companies/{id}/job-roles`
-- `POST /companies/{id}/invitations` `{ email, role_name }`
-- `PUT /companies/{id}/users/{id}/role` `{ role_name }`
-- `POST /auth/accept-invitation`
+- `POST /invitations` — owner or `team.manage`
+- `PUT /users/{id}/role` — owner or `team.manage` (ai_admin assign = owner only)
+- `PUT /administrators/{id}` — owner only

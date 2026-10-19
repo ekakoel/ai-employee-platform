@@ -58,6 +58,7 @@ ROLE_PERMISSIONS = {
         "integration.manage",
         "governance.read",
         "audit.read",
+        "team.manage",  # invite/manage employees (not owner privileges)
     },
     # Operational staff (e.g. reservation desk)
     "reservation": {
