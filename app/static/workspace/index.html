@@ -370,26 +370,33 @@
 
       <!-- TASKS -->
       <section id="view-tasks" class="view">
-        <div class="card">
+        <p class="home-notice" role="status">
+          <strong>Tasks</strong> run under policy with tools.
+          <code>Consult</code> = plan only; <code>Execute</code> = tools (may need <strong>Approvals</strong>).
+          Chat stays advisory — create a task when the AI must act.
+        </p>
+        <div class="card" id="taskCreateCard">
           <h2>Create task</h2>
+          <p class="muted">Requires <code>task.create</code>. Pick a hired AI Employee, mode, and clear instruction.</p>
           <div class="grid-2">
             <label>Agent
               <select id="taskAgent"></select>
             </label>
             <label>Mode
               <select id="taskMode">
-                <option value="execute">Execute</option>
-                <option value="consult">Consult</option>
+                <option value="consult">Consult — plan only</option>
+                <option value="execute">Execute — tools + policy</option>
               </select>
             </label>
             <label class="full">Title
-              <input id="taskTitle" placeholder="Task title" />
+              <input id="taskTitle" placeholder="e.g. Quote Alila 2 pax 27 Oct" />
             </label>
             <label class="full">Instruction
               <textarea id="taskInstruction" rows="3" placeholder="What should the AI do?"></textarea>
             </label>
           </div>
           <button id="btnCreateTask" class="primary">Create task</button>
+          <pre id="taskCreateLog" class="log hidden-log"></pre>
         </div>
         <div class="card">
           <div class="row between">
@@ -415,7 +422,7 @@
           <div class="row between">
             <div>
               <h2>Approval center</h2>
-              <p class="muted">Human authority for restricted AI actions (e.g. create_reservation). Approve resumes the task; reject stops it.</p>
+              <p class="muted">Human authority for restricted AI actions (e.g. create_reservation). Requires <code>approval.manage</code> to approve/reject. Approve resumes the task; reject stops it. Managers and Owner typically handle this queue.</p>
             </div>
             <button id="btnRefreshApprovals" class="secondary">Refresh</button>
           </div>

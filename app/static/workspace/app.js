@@ -1457,8 +1457,14 @@
     return [...new Set(tags)].map((t) => `<span class="tag">${t}</span>`).join(" ");
   }
 
+  function applyTaskActionGating() {
+    const canCreate = hasPermission("task.create");
+    if ($("taskCreateCard")) $("taskCreateCard").classList.toggle("hidden", !canCreate);
+  }
+
   async function loadTasks() {
     if (!state.companyId) return;
+    applyTaskActionGating();
     try {
       let tasks = await api(`/companies/${state.companyId}/tasks`);
       const f = $("taskFilter").value;
@@ -1568,7 +1574,8 @@
   }
   $("btnRefreshTasks").onclick = loadTasks;
   $("taskFilter").onchange = loadTasks;
-  $("btnCreateTask").onclick = async () => {
+  if ($("btnCreateTask")) $("btnCreateTask").onclick = async () => {
+    const log = $("taskCreateLog");
     try {
       const task = await api(`/companies/${state.companyId}/tasks`, {
         method: "POST",
@@ -1581,10 +1588,22 @@
       });
       $("taskTitle").value = "";
       $("taskInstruction").value = "";
+      if (log) {
+        log.classList.remove("hidden-log");
+        log.textContent =
+          "Task created: " + (task.title || task.id) +
+          "\nMode: " + (task.mode || $("taskMode").value) +
+          "\nNext: use Consult or Execute on the task row. If policy requires approval, open Approvals.";
+      }
       loadTasks();
       refreshInboxBadge();
     } catch (err) {
-      alert(err.message);
+      if (log) {
+        log.classList.remove("hidden-log");
+        log.textContent = err.message;
+      } else {
+        alert(err.message);
+      }
     }
   };
 
@@ -1629,13 +1648,16 @@
         (list || [])
           .map((a) => {
             const summary = approvalPayloadSummary(a);
+            const canApprove = hasPermission("approval.manage");
             const actions =
-              a.status === "pending"
+              a.status === "pending" && canApprove
                 ? `<div class="actions">
             <button class="success btn-approve" data-id="${a.id}">Approve</button>
             <button class="danger btn-reject" data-id="${a.id}">Reject</button>
             ${a.task_id ? `<button class="secondary btn-appr-task" data-task="${a.task_id}">Open task</button>` : ""}
           </div>`
+                : a.status === "pending" && !canApprove
+                ? `<div class="meta">Waiting for manager/owner approval.</div>`
                 : `<div class="actions">
             ${a.task_id ? `<button class="secondary btn-appr-task" data-task="${a.task_id}">Open task</button>` : ""}
             <span class="meta">Reviewed: ${escapeHtml(a.review_comment || a.status)}</span>
