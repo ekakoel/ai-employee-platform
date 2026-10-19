@@ -4666,6 +4666,16 @@ def marketplace_list_installations(
     return [MarketplaceInstallationRead.model_validate(r) for r in rows]
 
 
+
+@router.post("/demo/bootstrap")
+def demo_bootstrap(
+    db: Session = Depends(get_db),
+    hire_agents: bool = True,
+):
+    """Job 60 — debug-only demo company + personas (no platform admin required)."""
+    from app.services.demo_bootstrap import bootstrap_demo_workspace
+    return bootstrap_demo_workspace(db, hire_agents=hire_agents)
+
 @router.post("/companies/{company_id}/demo/seed-reservation")
 def seed_reservation_demo_api(
     company_id: str,

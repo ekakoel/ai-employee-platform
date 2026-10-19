@@ -676,109 +676,53 @@
     showView(defaultLandingView());
   }
 
-  // ----- Quick start -----
+  // ----- Quick start (Job 60: debug bootstrap API) -----
   $("btnQuickStart").onclick = async () => {
     const log = $("quickLog");
     try {
-      log.textContent = "Creating company…";
-      const co = await api("/companies", {
+      if (log) log.textContent = "Bootstrapping demo workspace (debug only)…";
+      const body = await api("/demo/bootstrap", {
         method: "POST",
-        body: JSON.stringify({ name: "Demo Co " + Date.now().toString(36) }),
+        body: "{}",
         skipAuth: true,
       });
-      log.textContent += "\nCompany " + co.id;
-      const user = await api(`/companies/${co.id}/users`, {
+      const ownerEmail = body.owner_email || (body.users && body.users[0] && body.users[0].email);
+      if (log) {
+        log.textContent =
+          "Company: " + (body.company_name || body.company_id) +
+          "\nID: " + body.company_id +
+          "\nPassword: " + (body.password || "demo12345") +
+          "\nAccounts:";
+        (body.users || []).forEach((u) => {
+          log.textContent += "\n  " + u.email + " (" + u.role + ")";
+        });
+        (body.agents || []).forEach((a) => {
+          if (a.name) log.textContent += "\nHired: " + a.name;
+          if (a.error) log.textContent += "\nHire note: " + a.error;
+        });
+      }
+      if ($("loginEmail") && ownerEmail) $("loginEmail").value = ownerEmail;
+      if ($("loginPassword")) $("loginPassword").value = body.password || "demo12345";
+
+      // Auto sign-in as owner
+      const tok = await api("/auth/login", {
         method: "POST",
         body: JSON.stringify({
-          name: "Demo Owner",
-          email: "owner@demo.local",
-          role: "owner",
-          password: "demo12345",
+          email: ownerEmail,
+          password: body.password || "demo12345",
         }),
         skipAuth: true,
       });
-      log.textContent += "\nUser " + user.id;
-      state.companyId = co.id;
-      state.userId = user.id;
-      state.userName = user.name || "Demo Owner";
-      localStorage.setItem("ws_companyId", state.companyId);
-      localStorage.setItem("ws_userId", state.userId);
-      localStorage.setItem("ws_userName", state.userName);
-
-      // Try password login for JWT
-      try {
-        const tok = await api("/auth/login", {
-          method: "POST",
-          body: JSON.stringify({
-            company_id: co.id,
-            email: "owner@demo.local",
-            password: "demo12345",
-          }),
-          skipAuth: true,
-        });
-        state.accessToken = tok.access_token || "";
-        localStorage.setItem("ws_accessToken", state.accessToken);
-        if (tok.refresh_token) localStorage.setItem("ws_refreshToken", tok.refresh_token);
-        log.textContent += "\nJWT session OK";
-      } catch (e) {
-        log.textContent += "\nJWT optional: " + e.message;
-      }
-
-      // Hire from catalog
-      try {
-        const catalog = await api("/agent-catalog", { skipAuth: true });
-        for (const c of (catalog || []).slice(0, 2)) {
-          await api(`/companies/${co.id}/agents/${c.id}/hire`, {
-            method: "POST",
-            body: JSON.stringify({ name: c.name.replace(/ AI Employee$/, "") + " (Demo)" }),
-          });
-          log.textContent += "\nHired " + c.slug;
-        }
-      } catch (e) {
-        log.textContent += "\nHire: " + e.message;
-      }
-
-      if ($("loginEmail")) $("loginEmail").value = "owner@demo.local";
-      if ($("loginPassword")) $("loginPassword").value = "demo12345";
-      if ($("companyId")) $("companyId").value = co.id;
-      if ($("userId")) $("userId").value = user.id;
-
-      if (!state.accessToken) throw new Error("Password authentication required");
-      if (!await loadMeProfile()) return;
-      if (!await loadCompanyProfile()) return;
-      applyNavGating();
-      setConnected(true);
-      await bootstrapSessionEnvironment();
-      await refreshInboxBadge();
-      showView(defaultLandingView());
-      
-      // Seed persona users for role testing (Job 36)
-      for (const [role, email] of [
-        ["ai_admin", "aiadmin@demo.local"],
-        ["reservation", "reservation@demo.local"],
-        ["manager", "manager@demo.local"],
-        ["contract_manager", "contracts@demo.local"],
-        ["administration", "admin@demo.local"],
-      ]) {
-        try {
-          await api(`/companies/${co.id}/users`, {
-            method: "POST",
-            body: JSON.stringify({
-              name: role.replace("_", " "),
-              email,
-              role,
-              password: "demo12345",
-            }),
-          });
-          log.textContent += "\nUser " + email + " (" + role + ")";
-        } catch (e) {
-          log.textContent += "\nUser " + email + ": " + e.message;
-        }
-      }
-
-      log.textContent += "\n\nWorkspace ready. Password: demo12345\nDemo accounts:\n  owner@demo.local (owner)\n  aiadmin@demo.local (ai_admin)\n  reservation@demo.local (reservation)\n  manager@demo.local (manager)\n  contracts@demo.local (contract_manager)\n  admin@demo.local (administration)";
+      if (log) log.textContent += "\nSigned in as " + ownerEmail;
+      await applyAuthSession(tok);
     } catch (err) {
-      log.textContent = "Quick start failed: " + err.message;
+      if (log) {
+        log.textContent =
+          "Quick start failed: " + err.message +
+          "\n\nNote: Demo bootstrap requires DEBUG=true." +
+          "\nProduction path: Register company → verify email → complete profile." +
+          "\nOr use /developer Provision (platform admin).";
+      }
     }
   };
 

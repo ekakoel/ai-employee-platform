@@ -13,7 +13,8 @@
 
 ## A. Bootstrap (2 min)
 
-1. On the login gate, open **Quick start** (or Create company).
+1. On `/developer` login gate (DEBUG), open **Quick start** — uses `POST /api/v1/demo/bootstrap`.
+   Production: **Register company** → verify email → complete Company profile.
 2. Note demo accounts in the log:
    - `owner@demo.local` — full company control
    - `reservation@demo.local` — front desk / chat & tasks
