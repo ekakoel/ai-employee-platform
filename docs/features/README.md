@@ -1,7 +1,5 @@
 # Feature documentation index
 
-## Company setup path
-
 | # | Feature | Doc |
 |---|---------|-----|
 | 1 | Register business | [01_company_registration.md](01_company_registration.md) |
@@ -11,7 +9,8 @@
 | 5 | AI Administrator | [05_ai_administrator.md](05_ai_administrator.md) |
 | 6 | Hire AI Employees | [06_ai_employees_hire.md](06_ai_employees_hire.md) |
 | 7 | Company knowledge | [07_knowledge.md](07_knowledge.md) |
+| 8 | Advisory chat | [08_chat.md](08_chat.md) |
 
 ```
-Register → verify → profile → users → hire AI → knowledge → chat/tasks
+Register → profile → users → hire AI → knowledge → chat → task/execute
 ```

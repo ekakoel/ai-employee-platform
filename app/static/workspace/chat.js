@@ -39,19 +39,24 @@
     const current = (request, session) => request === generation && session === key();
     function notice(text = '') { $('chatLog').textContent = text; $('chatLog').classList.toggle('hidden', !text); }
     function controls() {
-      ['chatAgent', 'chatConversation', 'btnChatStart', 'btnRefreshChat', 'chatCreateTask'].forEach(id => { $(id).disabled = busy; });
-      $('chatTaskMode').disabled = busy || !$('chatCreateTask').checked;
-      $('btnChatSend').disabled = busy || !$('chatAgent').value || (conversation && conversation.status !== 'active') || !$('chatInput').value.trim();
-      $('chatInput').disabled = busy || !$('chatAgent').value || (conversation && conversation.status !== 'active');
-      $('chatTyping').classList.toggle('hidden', !pendingMessage);
-      $('btnChatSend').textContent = pendingMessage ? 'Sending...' : 'Send';
-      $('chatHistoryList').querySelectorAll?.('[data-chat-conversation]').forEach(button => { button.disabled = busy; });
+      const session = getSession() || {};
+      const perms = session.permissions || [];
+      const canTask = perms.includes('task.create');
+      const taskOpts = document.querySelector('.chat-task-options');
+      if (taskOpts) taskOpts.classList.toggle('hidden', !canTask);
+      ['chatAgent', 'chatConversation', 'btnChatStart', 'btnRefreshChat', 'chatCreateTask'].forEach(id => { if ($(id)) $(id).disabled = busy; });
+      if ($('chatTaskMode')) $('chatTaskMode').disabled = busy || !$('chatCreateTask') || !$('chatCreateTask').checked || !canTask;
+      if ($('btnChatSend')) $('btnChatSend').disabled = busy || !$('chatAgent').value || (conversation && conversation.status !== 'active') || !$('chatInput').value.trim();
+      if ($('chatInput')) $('chatInput').disabled = busy || !$('chatAgent').value || (conversation && conversation.status !== 'active');
+      if ($('chatTyping')) $('chatTyping').classList.toggle('hidden', !busy);
+      if ($('btnChatSend')) $('btnChatSend').textContent = busy ? 'Sending...' : 'Send';
+      $('chatHistoryList')?.querySelectorAll?.('[data-chat-conversation]').forEach(button => { button.disabled = busy; });
     }
     function render(scroll = true) {
       const thread = $('chatThread');
       const nearBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
       const agentName = agents.find(agent => agent.id === (conversation?.agent_instance_id || activeAgentId))?.name || '';
-      thread.innerHTML = messages.map(message => messageMarkup(message, esc, { agentName })).join('') + (pendingMessage ? `<article class="bubble human pending"><div class="who">${esc(getSession().userName || 'Unknown sender')} / Sending...</div><div>${esc(pendingMessage)}</div></article>` : '') || `<div class="empty">${$('chatAgent').value ? 'No messages yet.' : 'No AI employees available.'}</div>`;
+      thread.innerHTML = messages.map(message => messageMarkup(message, esc, { agentName })).join('') + (pendingMessage ? `<article class="bubble human pending"><div class="who">${esc(getSession().userName || 'Unknown sender')} / Sending...</div><div>${esc(pendingMessage)}</div></article>` : '') || `<div class="empty">${$('chatAgent').value ? 'No messages yet. Ask about company knowledge or procedures.' : 'No AI employees available. Owner/AI Admin: open <strong>AI Employees</strong> and hire a catalog agent, then grant you can_use if needed.'}</div>`;
       thread.querySelectorAll?.('[data-chat-result]').forEach(button => {
         button.onclick = () => {
           const work = messages.find(message => message.work_result?.id === button.dataset.chatResult)?.work_result;
@@ -152,6 +157,11 @@
         if (result.task_id) {
           const tid = result.task_id;
           const mode = $('chatTaskMode').value || 'consult';
+          if ($('chatTaskHint')) {
+            $('chatTaskHint').classList.remove('hidden');
+            $('chatTaskHint').textContent =
+              'Task created (' + mode + '). Chat stays advisory. Click Run task now, or open Tasks to consult/execute under policy.';
+          }
           $('chatLinkedTask').classList.remove('hidden');
           $('chatLinkedTask').onclick = () => openTask(tid);
           const runBtn = $('chatRunTask');
@@ -183,10 +193,6 @@
                 runBtn.textContent = mode === 'execute' ? 'Run execute now' : 'Run consult now';
               }
             };
-          }
-          if ($('chatTaskHint')) {
-            $('chatTaskHint').classList.remove('hidden');
-            $('chatTaskHint').textContent = 'Task created as ' + mode + '. Chat did not execute tools. Click Run task now, or open Tasks.';
           }
           onTaskCreated();
         }
