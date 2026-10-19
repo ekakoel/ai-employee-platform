@@ -432,16 +432,30 @@
 
       <!-- AGENTS -->
       <section id="view-agents" class="view">
+        <div class="card" id="hireCard">
+          <h2>Hire AI Employee</h2>
+          <p class="muted">Owner and AI Administrator can hire from the platform catalog. After hiring, grant operational staff access if they need chat/tasks with that agent.</p>
+          <div class="row" style="flex-wrap:wrap;gap:.5rem;align-items:flex-end">
+            <label style="flex:1;min-width:12rem">Catalog template
+              <select id="catalogSelect"></select>
+            </label>
+            <label style="flex:1;min-width:10rem">Display name
+              <input id="hireName" placeholder="e.g. Reservation Desk" />
+            </label>
+            <button id="btnHire" class="primary">Hire</button>
+          </div>
+          <pre id="hireLog" class="log"></pre>
+        </div>
         <div class="card">
           <div class="row between">
-            <h2>AI Employees</h2>
+            <h2>Hired AI Employees</h2>
             <button id="btnRefreshAgents" class="secondary">Refresh</button>
           </div>
           <div id="agentList" class="cards"></div>
         </div>
-        <div class="card">
-          <h3>Agent access</h3>
-          <p class="muted">Operational roles (reservation, member, manager) need <code>can_use</code> on each agent. Owner/ai_admin already have full access.</p>
+        <div class="card" id="agentAccessCard">
+          <h3>Agent access for staff</h3>
+          <p class="muted">Reservation / member roles need <code>can_use</code> on each agent. Owner and AI Administrator already have full access.</p>
           <div class="grid-2">
             <label>Agent
               <select id="accessAgentSelect"></select>
@@ -458,15 +472,6 @@
           </div>
           <pre id="accessLog" class="log hidden-log"></pre>
           <div id="accessList" class="list"></div>
-        </div>
-        <div class="card">
-          <h3>Hire from catalog</h3>
-          <div class="row">
-            <select id="catalogSelect"></select>
-            <input id="hireName" placeholder="Instance name" />
-            <button id="btnHire" class="primary">Hire</button>
-          </div>
-          <pre id="hireLog" class="log"></pre>
         </div>
         <div class="card">
           <div class="row between">

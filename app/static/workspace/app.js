@@ -403,7 +403,7 @@
     if (name === "home") loadHome();
     if (name === "company") loadCompanyProfile();
     if (name === "inbox") loadInbox();
-    if (name === "agents") loadAgents();
+    if (name === "agents") { applyAgentActionGating(); loadAgents(); }
     if (name === "inventory") loadInventory();
     if (name === "tasks") {
       loadAgentOptions();
@@ -1177,8 +1177,17 @@
       }
     };
 
+
+  function applyAgentActionGating() {
+    const canHire = hasPermission("agent.hire") || hasPermission("agent.manage");
+    const canManage = hasPermission("agent.manage");
+    if ($("hireCard")) $("hireCard").classList.toggle("hidden", !canHire);
+    if ($("agentAccessCard")) $("agentAccessCard").classList.toggle("hidden", !canManage);
+  }
+
   async function loadAgents() {
     if (!state.companyId) return;
+    applyAgentActionGating();
     try {
       const [agents, catalog] = await Promise.all([
         api(`/companies/${state.companyId}/agents`),
