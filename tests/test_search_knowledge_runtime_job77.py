@@ -25,37 +25,30 @@ def _bootstrap(client):
     data = r.json()
     company_id = data.get("company_id") or (data.get("company") or {}).get("id")
     assert company_id, data
-    agent_instance_id = (
-        data.get("agent_instance_id")
-        or data.get("agent_id")
-        or (
-            (data.get("agents") or [{}])[0].get("id")
-            if isinstance(data.get("agents"), list) and data.get("agents")
-            else None
-        )
-    )
+    agents = data.get("agents") or []
+    agent_instance_id = None
+    if isinstance(agents, list) and agents:
+        first = agents[0]
+        if isinstance(first, dict) and "id" in first:
+            agent_instance_id = first["id"]
     return data, company_id, agent_instance_id
 
 
 def _session_local():
     try:
         from app.core.database import SessionLocal
-
         return SessionLocal
     except Exception:
         pass
     try:
         from app.db.session import SessionLocal
-
         return SessionLocal
     except Exception:
         return None
 
 
 def _search(db, company_id, query, limit=5, agent_instance_id=None):
-    """Call search_knowledge_chunks with required agent_instance_id kwarg."""
     from app.knowledge.retrieval import search_knowledge_chunks
-
     return search_knowledge_chunks(
         db,
         company_id=company_id,

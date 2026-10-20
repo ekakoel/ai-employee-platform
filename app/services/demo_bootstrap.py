@@ -166,6 +166,18 @@ def bootstrap_demo_workspace(db: Session, *, hire_agents: bool = True) -> dict:
         except Exception as exc:
             hired.append({"error": str(exc)})
 
+
+    # Job 76/77 — demo skills + searchable knowledge (index chunks)
+    try:
+        from app.services.seed import (
+            seed_demo_company_skills,
+            seed_and_index_demo_knowledge,
+        )
+        seed_demo_company_skills(db, company_id=company.id)
+        seed_and_index_demo_knowledge(db, company_id=company.id)
+    except Exception as exc:
+        hired.append({"seed_warning": str(exc)})
+
     record_audit(
         db,
         company_id=company.id,

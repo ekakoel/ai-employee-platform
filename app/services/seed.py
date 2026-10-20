@@ -768,6 +768,7 @@ def seed_demo_company_skills(db: Session, *, company_id: str) -> list[Skill]:
     return created
 
 # === Job 77: index knowledge after demo seed ===
+
 def seed_demo_company_knowledge(db: Session, *, company_id: str) -> list:
     """Seed demo KnowledgeItem rows for skills required_knowledge keys."""
     from app.models.entities import KnowledgeItem
@@ -823,7 +824,6 @@ def seed_demo_company_knowledge(db: Session, *, company_id: str) -> list:
 
     created = []
     for key, title, category, content in items:
-        # Idempotent by company + title (no key column on KnowledgeItem)
         existing = db.scalar(
             select(KnowledgeItem).where(
                 KnowledgeItem.company_id == company_id,
@@ -839,7 +839,7 @@ def seed_demo_company_knowledge(db: Session, *, company_id: str) -> list:
             continue
         row = KnowledgeItem(
             company_id=company_id,
-            agent_instance_id=None,  # company-wide → visible to all agents
+            agent_instance_id=None,
             title=title,
             content=content,
             category=category,
@@ -850,3 +850,13 @@ def seed_demo_company_knowledge(db: Session, *, company_id: str) -> list:
         created.append(row)
     return created
 
+
+def seed_and_index_demo_knowledge(db: Session, *, company_id: str) -> list:
+    """Seed demo knowledge and index chunks for search_knowledge."""
+    from app.knowledge.indexing import replace_chunks_for_item
+
+    rows = seed_demo_company_knowledge(db, company_id=company_id)
+    for row in rows:
+        replace_chunks_for_item(db, row)
+    db.flush()
+    return rows
