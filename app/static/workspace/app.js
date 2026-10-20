@@ -2546,6 +2546,28 @@ async function loadDepartments() {
     contract_validation: "Contract",
     hotel_upsell_package: "Custom",
   };
+
+  function dedupeSkillsPreferCompany(list) {
+    // One card per slug: company-scoped overrides platform (company_id null).
+    const bySlug = new Map();
+    for (const s of list || []) {
+      const slug = s.slug || s.id;
+      const prev = bySlug.get(slug);
+      if (!prev) {
+        bySlug.set(slug, s);
+        continue;
+      }
+      const prevIsCompany = !!prev.company_id;
+      const curIsCompany = !!s.company_id;
+      if (curIsCompany && !prevIsCompany) {
+        bySlug.set(slug, s);
+      }
+    }
+    return Array.from(bySlug.values()).sort((a, b) =>
+      String(a.slug || "").localeCompare(String(b.slug || ""))
+    );
+  }
+
   function skillDomain(slug) {
     return SKILL_DOMAIN_MAP[slug] || "Other";
   }
@@ -2596,9 +2618,10 @@ async function loadDepartments() {
     const sel = $("skillAssignSkill");
     if (!sel) return;
     const cur = sel.value;
+    const opts = dedupeSkillsPreferCompany(list || []);
     sel.innerHTML =
       `<option value="">— select skill —</option>` +
-      (list || [])
+      (opts || [])
         .map(
           (s) =>
             `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)} (${escapeHtml(skillDomain(s.slug))})</option>`
