@@ -2585,11 +2585,13 @@ async function loadDepartments() {
   let _skillsCache = [];
   let _skillsDomainFilter = "all";
 
+
   function renderSkillsList(list) {
+    const deduped = dedupeSkillsPreferCompany(list);
     const filtered =
       _skillsDomainFilter === "all"
-        ? list
-        : (list || []).filter((s) => skillDomain(s.slug) === _skillsDomainFilter);
+        ? deduped
+        : (deduped || []).filter((s) => skillDomain(s.slug) === _skillsDomainFilter);
     $("skillsList").innerHTML =
       (filtered || [])
         .map((s) => {
@@ -2613,6 +2615,7 @@ async function loadDepartments() {
         })
         .join("") || `<div class="empty">No skills${_skillsDomainFilter !== "all" ? " in this domain" : ""}.</div>`;
   }
+
 
   function fillSkillAssignSelects(list) {
     const sel = $("skillAssignSkill");
