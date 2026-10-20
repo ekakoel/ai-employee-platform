@@ -954,7 +954,31 @@
             </div>
             <button id="btnRefreshSkills" class="secondary">Refresh</button>
           </div>
-          <div id="skillsList" class="cards"></div>
+          
+      <div id="skillsToolbar" class="row" style="gap:.5rem;flex-wrap:wrap;margin:.75rem 0">
+        <span class="muted" style="font-size:.85rem">Domain:</span>
+        <button type="button" class="secondary skill-domain-chip active" data-domain="all">All</button>
+        <button type="button" class="secondary skill-domain-chip" data-domain="Reservation">Reservation</button>
+        <button type="button" class="secondary skill-domain-chip" data-domain="Accounting">Accounting</button>
+        <button type="button" class="secondary skill-domain-chip" data-domain="Sales / CS">Sales / CS</button>
+        <button type="button" class="secondary skill-domain-chip" data-domain="Contract">Contract</button>
+        <button type="button" class="secondary skill-domain-chip" data-domain="Custom">Custom</button>
+        <button type="button" class="secondary skill-domain-chip" data-domain="Other">Other</button>
+      </div>
+      <div class="card" id="skillAssignCard" style="margin-bottom:1rem">
+        <h3>Assign skill to agent</h3>
+        <p class="muted" style="font-size:.85rem">Requires agent.manage. Skill tools must be subset of agent allowed_tools.</p>
+        <label>Agent instance
+          <select id="skillAssignAgent"><option value="">— select agent —</option></select>
+        </label>
+        <label>Skill
+          <select id="skillAssignSkill"><option value="">— select skill —</option></select>
+        </label>
+        <button type="button" id="btnAssignSkill" class="primary">Assign</button>
+        <pre id="skillAssignLog" class="log"></pre>
+      </div>
+
+      <div id="skillsList" class="cards"></div>
         </div>
         <div class="card" id="skillCreateCard">
           <h3>Create company skill</h3>

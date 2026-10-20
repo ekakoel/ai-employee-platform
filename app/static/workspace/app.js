@@ -2489,6 +2489,104 @@ async function loadDepartments() {
     };
 
   // ----- Skills -----
+
+  // ----- Job 78: Skills domain map + filter + assign -----
+  const SKILL_DOMAIN_MAP = {
+    availability_check: "Reservation",
+    reservation_management: "Reservation",
+    booking_support: "Reservation",
+    quotation_preparation: "Reservation",
+    customer_follow_up: "Sales / CS",
+    invoice_draft_preparation: "Accounting",
+    expense_anomaly_detection: "Accounting",
+    lead_qualification: "Sales / CS",
+    faq_response: "Sales / CS",
+    contract_analysis: "Contract",
+    contract_extraction: "Contract",
+    contract_validation: "Contract",
+    hotel_upsell_package: "Custom",
+  };
+  function skillDomain(slug) {
+    return SKILL_DOMAIN_MAP[slug] || "Other";
+  }
+  function domainBadgeClass(domain) {
+    const m = {
+      Reservation: "badge-blue",
+      Accounting: "badge-amber",
+      "Sales / CS": "badge-green",
+      Contract: "badge-purple",
+      Custom: "badge-slate",
+      Other: "badge-slate",
+    };
+    return m[domain] || "badge-slate";
+  }
+  let _skillsCache = [];
+  let _skillsDomainFilter = "all";
+
+  function renderSkillsList(list) {
+    const filtered =
+      _skillsDomainFilter === "all"
+        ? list
+        : (list || []).filter((s) => skillDomain(s.slug) === _skillsDomainFilter);
+    $("skillsList").innerHTML =
+      (filtered || [])
+        .map((s) => {
+          const dom = skillDomain(s.slug);
+          const tools = (s.allowed_tools || []).slice(0, 6)
+            .map((t) => `<span class="tag">${escapeHtml(t)}</span>`)
+            .join("");
+          const know = (s.required_knowledge || []).slice(0, 4)
+            .map((k) => `<span class="tag">${escapeHtml(k)}</span>`)
+            .join("");
+          return `<div class="agent-card" data-skill-id="${escapeHtml(s.id)}" data-skill-slug="${escapeHtml(s.slug)}">
+          <div class="row" style="justify-content:space-between;gap:.5rem;flex-wrap:wrap">
+            <h4 style="margin:0">${escapeHtml(s.name)}</h4>
+            <span class="tag ${domainBadgeClass(dom)}">${escapeHtml(dom)}</span>
+          </div>
+          <div class="muted" style="font-size:.8rem">${escapeHtml(s.slug)} · ${s.company_id ? "company" : "platform"} · v${escapeHtml(s.version || "")}</div>
+          <p style="font-size:.85rem;color:var(--muted)">${escapeHtml((s.description || "").slice(0, 140))}</p>
+          ${tools ? `<div style="margin-top:.35rem"><span class="muted" style="font-size:.75rem">Tools:</span> ${tools}</div>` : ""}
+          ${know ? `<div style="margin-top:.25rem"><span class="muted" style="font-size:.75rem">Knowledge:</span> ${know}</div>` : ""}
+        </div>`;
+        })
+        .join("") || `<div class="empty">No skills${_skillsDomainFilter !== "all" ? " in this domain" : ""}.</div>`;
+  }
+
+  function fillSkillAssignSelects(list) {
+    const sel = $("skillAssignSkill");
+    if (!sel) return;
+    const cur = sel.value;
+    sel.innerHTML =
+      `<option value="">— select skill —</option>` +
+      (list || [])
+        .map(
+          (s) =>
+            `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)} (${escapeHtml(skillDomain(s.slug))})</option>`
+        )
+        .join("");
+    if (cur) sel.value = cur;
+  }
+
+  async function fillSkillAssignAgents() {
+    const sel = $("skillAssignAgent");
+    if (!sel || !state.companyId) return;
+    try {
+      const agents = await api(`/companies/${state.companyId}/agents`);
+      const cur = sel.value;
+      sel.innerHTML =
+        `<option value="">— select agent —</option>` +
+        (agents || [])
+          .map(
+            (a) =>
+              `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name || a.id)}</option>`
+          )
+          .join("");
+      if (cur) sel.value = cur;
+    } catch (err) {
+      /* ignore */
+    }
+  }
+
   async function loadSkills() {
     if (!state.companyId) return;
     if ($("skillCreateCard")) {
