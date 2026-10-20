@@ -2587,28 +2587,55 @@ async function loadDepartments() {
     }
   }
 
+
   async function loadSkills() {
     if (!state.companyId) return;
     if ($("skillCreateCard")) {
       $("skillCreateCard").classList.toggle("hidden", !hasPermission("agent.manage"));
     }
+    if ($("skillAssignCard")) {
+      $("skillAssignCard").classList.toggle("hidden", !hasPermission("agent.manage"));
+    }
     try {
       const list = await api(`/companies/${state.companyId}/skills`);
-      $("skillsList").innerHTML =
-        (list || [])
-          .map(
-            (s) => `<div class="agent-card">
-          <h4>${escapeHtml(s.name)}</h4>
-          <div class="muted" style="font-size:.8rem">${escapeHtml(s.slug)} · ${s.company_id ? "company" : "platform"} · v${escapeHtml(s.version || "")}</div>
-          <p style="font-size:.85rem;color:var(--muted)">${escapeHtml((s.description || "").slice(0, 100))}</p>
-        </div>`
-          )
-          .join("") || `<div class="empty">No skills.</div>`;
+      _skillsCache = list || [];
+      renderSkillsList(_skillsCache);
+      fillSkillAssignSelects(_skillsCache);
+      await fillSkillAssignAgents();
     } catch (err) {
       $("skillsList").innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
     }
   }
+
   if ($("btnRefreshSkills")) $("btnRefreshSkills").onclick = loadSkills;
+  document.querySelectorAll(".skill-domain-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".skill-domain-chip").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      _skillsDomainFilter = btn.getAttribute("data-domain") || "all";
+      renderSkillsList(_skillsCache);
+    });
+  });
+  if ($("btnAssignSkill"))
+    $("btnAssignSkill").onclick = async () => {
+      const log = $("skillAssignLog");
+      const agentId = $("skillAssignAgent") && $("skillAssignAgent").value;
+      const skillId = $("skillAssignSkill") && $("skillAssignSkill").value;
+      if (!agentId || !skillId) {
+        if (log) log.textContent = "Select agent and skill.";
+        return;
+      }
+      try {
+        await api(`/companies/${state.companyId}/agents/${agentId}/skills`, {
+          method: "POST",
+          body: JSON.stringify({ skill_id: skillId }),
+        });
+        if (log) log.textContent = "Skill assigned.";
+      } catch (err) {
+        if (log) log.textContent = err.message;
+      }
+    };
+
   if ($("btnCreateSkill"))
     $("btnCreateSkill").onclick = async () => {
       const log = $("skillLog");
