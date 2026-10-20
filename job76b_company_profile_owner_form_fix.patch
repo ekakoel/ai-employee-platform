@@ -1,0 +1,84 @@
+diff --git a/app/static/workspace/app.js b/app/static/workspace/app.js
+index 6d6ccf4..4a4d244 100644
+--- a/app/static/workspace/app.js
++++ b/app/static/workspace/app.js
+@@ -446,28 +446,41 @@
+   });
+ 
+   function isCompanyProfileOwner(company) {
+-    const ownerId = company && company.owner_user_id;
+-    return Boolean(
+-      ownerId &&
+-      state.userId &&
+-      ownerId === state.userId &&
+-      (state.role === "owner" || !state.role)
+-    );
++    const ownerId = company && company.owner_user_id != null ? String(company.owner_user_id) : "";
++    const userId = state.userId != null ? String(state.userId) : "";
++    if (!ownerId || !userId || ownerId !== userId) return false;
++    // Prefer explicit owner role; allow empty role only when user id matches owner
++    if (state.role && state.role !== "owner") return false;
++    return true;
+   }
+ 
+   function applyCompanyProfileMode(company) {
+     const owner = isCompanyProfileOwner(company);
+     const edit = $("companyProfileEdit");
+     const read = $("companyProfileRead");
+-    if (edit) edit.classList.toggle("hidden", !owner);
+-    if (read) read.classList.toggle("hidden", owner);
++    // Explicit show/hide (avoid toggle edge cases with stale class lists)
++    if (edit) {
++      if (owner) edit.classList.remove("hidden");
++      else edit.classList.add("hidden");
++    }
++    if (read) {
++      if (owner) read.classList.add("hidden");
++      else read.classList.remove("hidden");
++    }
+ 
+     const complete = company && company.onboarding_status === "complete";
++    // Checklist only while owner still needs to finish onboarding
+     if ($("companyOnboardingHint")) {
+-      $("companyOnboardingHint").classList.toggle("hidden", !owner || complete);
++      if (owner && !complete) $("companyOnboardingHint").classList.remove("hidden");
++      else $("companyOnboardingHint").classList.add("hidden");
+     }
+     if ($("companyOnboardingSteps")) {
+-      $("companyOnboardingSteps").classList.toggle("hidden", !owner || complete);
++      if (owner && !complete) $("companyOnboardingSteps").classList.remove("hidden");
++      else $("companyOnboardingSteps").classList.add("hidden");
++    }
++    if ($("companyOwnerEditHeading")) {
++      if (owner) $("companyOwnerEditHeading").classList.remove("hidden");
++      else $("companyOwnerEditHeading").classList.add("hidden");
+     }
+ 
+     if (owner) {
+@@ -501,12 +514,12 @@
+         if (isCompanyProfileOwner(company)) {
+           $("companyOnboardingStatus").textContent =
+             company.onboarding_status === "complete"
+-              ? "Profile complete — Users & positions is in the left sidebar."
++              ? "Status: complete. You can update organization details below, or open Users & positions to invite staff."
+               : "Status: pending. Fill name, contact email, and industry, then Save. Other menus stay hidden until this is complete.";
+         } else {
+           $("companyOnboardingStatus").textContent =
+             company.onboarding_status === "complete"
+-              ? "Organization profile is complete."
++              ? "Organization profile is complete (read-only for your role)."
+               : "Organization profile is still pending completion by the Owner.";
+         }
+       }
+diff --git a/app/static/workspace/index.html b/app/static/workspace/index.html
+index 7dbf996..29850e2 100644
+--- a/app/static/workspace/index.html
++++ b/app/static/workspace/index.html
+@@ -229,6 +229,7 @@
+ 
+         <!-- Owner only: onboarding checklist + editable form (PUT profile is owner-only) -->
+         <div id="companyProfileEdit" class="hidden">
++          <h3 id="companyOwnerEditHeading" class="hidden" style="margin:.75rem 0 .35rem;font-size:1rem">Organization details</h3>
+           <p id="companyOnboardingHint" class="muted">
+             <strong>Step 2 (required):</strong> complete organization details to unlock the full sidebar.
+             Until status is <code>complete</code>, only this page is available —
