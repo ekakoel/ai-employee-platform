@@ -768,12 +768,85 @@ def seed_demo_company_skills(db: Session, *, company_id: str) -> list[Skill]:
     return created
 
 # === Job 77: index knowledge after demo seed ===
-def seed_and_index_demo_knowledge(db, *, company_id: str):
-    """Seed demo knowledge keys and index chunks for search_knowledge."""
-    from app.knowledge.indexing import replace_chunks_for_item
-    rows = seed_demo_company_knowledge(db, company_id=company_id)
-    for row in rows:
-        replace_chunks_for_item(db, row)
-    db.flush()
-    return rows
+def seed_demo_company_knowledge(db: Session, *, company_id: str) -> list:
+    """Seed demo KnowledgeItem rows for skills required_knowledge keys."""
+    from app.models.entities import KnowledgeItem
+    from sqlalchemy import select
+
+    items = [
+        ("product_catalog", "Product / Room Catalog", "reservation",
+         "Demo Hotel Product Catalog\n"
+         "- Standard Room: IDR 650000 / night\n"
+         "- Deluxe Room: IDR 950000 / night\n"
+         "- Suite: IDR 1800000 / night\n"
+         "Always check availability tool before quoting.\n"),
+        ("cancellation_policy", "Cancellation Policy", "reservation",
+         "Demo Cancellation Policy\n"
+         "- Free cancellation until 48 hours before check-in.\n"
+         "- 48h-24h: 50% of first night charged.\n"
+         "- Under 24h or no-show: 100% of first night charged.\n"
+         "- Non-refundable rates: no refund after confirmation.\n"),
+        ("pricing_rules", "Pricing Rules", "reservation",
+         "Demo Pricing Rules\n"
+         "- Weekend surcharge Fri-Sat: +15% on room rate.\n"
+         "- High season Jul Dec: +25% on room rate.\n"
+         "- Stay 5+ nights: 10% discount on room only.\n"
+         "- Quotation validity: 7 calendar days.\n"),
+        ("tax_policy", "Tax Policy", "accounting",
+         "Demo Tax Policy\n"
+         "- VAT / PPN: 11% on room and F&B.\n"
+         "- Service charge: 10% on F&B only.\n"
+         "- Quotations must show subtotal, tax line, grand total.\n"),
+        ("communication_tone", "Communication Tone Guidelines", "sales",
+         "Demo Communication Tone\n"
+         "- Professional, warm, concise.\n"
+         "- Escalate angry or legal threats to human supervisor.\n"),
+        ("approved_faq", "Approved FAQ", "sales",
+         "Demo Approved FAQ\n"
+         "Q: Check-in / check-out?\n"
+         "A: Check-in from 14:00, check-out until 12:00.\n"
+         "Q: Breakfast included?\n"
+         "A: Only if the rate plan includes breakfast.\n"),
+        ("legal_guidelines", "Legal Guidelines for Contracts", "contract",
+         "Demo Legal Guidelines\n"
+         "- Required clauses: parties, scope, term, termination, liability.\n"
+         "- Escalate unlimited liability to human legal review.\n"),
+        ("upsell_margin_rules", "Upsell Margin Rules", "custom",
+         "Demo Upsell Margin Rules\n"
+         "- Room upgrade Standard to Deluxe: target margin >= 35%.\n"
+         "- Spa package: only if capacity; min margin 40%.\n"),
+        ("customer_preferences", "Customer Preference Notes", "custom",
+         "Demo Customer Preferences\n"
+         "- Prefer high floor and quiet room when available.\n"
+         "- Do not invent preferences.\n"),
+    ]
+
+    created = []
+    for key, title, category, content in items:
+        # Idempotent by company + title (no key column on KnowledgeItem)
+        existing = db.scalar(
+            select(KnowledgeItem).where(
+                KnowledgeItem.company_id == company_id,
+                KnowledgeItem.title == title,
+            )
+        )
+        if existing:
+            existing.content = content
+            existing.category = category
+            existing.is_active = True
+            db.flush()
+            created.append(existing)
+            continue
+        row = KnowledgeItem(
+            company_id=company_id,
+            agent_instance_id=None,  # company-wide → visible to all agents
+            title=title,
+            content=content,
+            category=category,
+            is_active=True,
+        )
+        db.add(row)
+        db.flush()
+        created.append(row)
+    return created
 
