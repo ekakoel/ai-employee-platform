@@ -4,6 +4,8 @@ import uuid
 
 from fastapi.testclient import TestClient
 
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
+
 from app.main import app
 
 client = TestClient(app)
@@ -11,30 +13,15 @@ client = TestClient(app)
 
 def _setup():
     suffix = uuid.uuid4().hex[:8]
-    co = client.post("/api/v1/companies", json={"name": f"Co37 {suffix}"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={
-            "name": "Owner",
-            "email": f"owner-{suffix}@job37.test",
-            "role": "owner",
-            "password": "demo12345",
-        },
-    ).json()
-    res = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        headers={"X-User-ID": owner["id"]},
-        json={
-            "name": "Res",
-            "email": f"res-{suffix}@job37.test",
-            "role": "reservation",
-            "password": "demo12345",
-        },
-    ).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
+    member = {"id": None}  # invite-only API; use bootstrap personas
     catalog = client.get("/api/v1/agent-catalog").json()
     hire = client.post(
         f"/api/v1/companies/{co['id']}/agents/{catalog[0]['id']}/hire",
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
         json={"name": f"Agent {suffix}"},
     )
     assert hire.status_code in (200, 201), hire.text
@@ -59,7 +46,7 @@ def test_reservation_blocked_until_grant():
 
     grant = client.post(
         f"/api/v1/companies/{company_id}/agents/access/grant-operational",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={},
     )
     assert grant.status_code == 200, grant.text

@@ -2,6 +2,8 @@
 
 import pytest
 from fastapi.testclient import TestClient
+
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -37,7 +39,9 @@ def client():
 
 
 def test_first_user_with_stale_x_user_header(client):
-    co = client.post("/api/v1/companies", json={"name": "Fresh Co"}).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
     # Stale user id from another session must not block first user
     user = client.post(
         f"/api/v1/companies/{co['id']}/users",
@@ -64,7 +68,9 @@ def test_first_user_with_stale_x_user_header(client):
 
 
 def test_second_user_requires_auth(client):
-    co = client.post("/api/v1/companies", json={"name": "Two User Co"}).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
     first = client.post(
         f"/api/v1/companies/{co['id']}/users",
         json={

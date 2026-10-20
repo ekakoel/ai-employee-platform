@@ -4,6 +4,8 @@ import uuid
 
 from fastapi.testclient import TestClient
 
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
+
 from app.main import app
 from app.tools.base import ToolContext
 from app.tools.connectors import MockExternalSystemClient, set_external_client
@@ -16,26 +18,20 @@ client = TestClient(app)
 def test_inventory_persists_and_matches_without_connector_rows():
     set_external_client(MockExternalSystemClient())  # empty connector
     suffix = uuid.uuid4().hex[:8]
-    co = client.post("/api/v1/companies", json={"name": f"Co39 {suffix}"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={
-            "name": "Owner",
-            "email": f"owner-{suffix}@job39.test",
-            "role": "owner",
-            "password": "demo12345",
-        },
-    ).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
     seed = client.post(
         f"/api/v1/companies/{co['id']}/demo/seed-reservation",
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
         json={},
     )
     assert seed.status_code == 200, seed.text
 
     listed = client.get(
         f"/api/v1/companies/{co['id']}/inventory",
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
     )
     assert listed.status_code == 200, listed.text
     assert len(listed.json()["items"]) >= 3
@@ -67,25 +63,19 @@ def test_inventory_persists_and_matches_without_connector_rows():
 def test_hydrate_endpoint():
     set_external_client(MockExternalSystemClient())
     suffix = uuid.uuid4().hex[:8]
-    co = client.post("/api/v1/companies", json={"name": f"Co39h {suffix}"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={
-            "name": "Owner",
-            "email": f"owner-h-{suffix}@job39.test",
-            "role": "owner",
-            "password": "demo12345",
-        },
-    ).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
     client.post(
         f"/api/v1/companies/{co['id']}/demo/seed-reservation",
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
         json={},
     )
     set_external_client(MockExternalSystemClient())
     res = client.post(
         f"/api/v1/companies/{co['id']}/inventory/hydrate",
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
         json={},
     )
     assert res.status_code == 200, res.text

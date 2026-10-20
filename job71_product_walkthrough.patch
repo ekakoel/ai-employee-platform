@@ -1,0 +1,188 @@
+diff --git a/app/static/workspace/index.html b/app/static/workspace/index.html
+index cb3a3ef..56f7db9 100644
+--- a/app/static/workspace/index.html
++++ b/app/static/workspace/index.html
+@@ -738,6 +738,10 @@
+ 
+       <!-- NOTIFICATIONS -->
+       <section id="view-notifications" class="view">
++        <p class="home-notice" role="status">
++          <strong>Notifications</strong> alert you to approvals, finished tasks, and system events.
++          Use <strong>Open</strong> to jump to the related Inbox, Task, or Results view. The bell in the top bar opens this page.
++        </p>
+         <div class="card">
+           <div class="row between">
+             <h2>Notifications</h2>
+diff --git a/docs/DEMO_15MIN.md b/docs/DEMO_15MIN.md
+index 976042d..f209e9a 100644
+--- a/docs/DEMO_15MIN.md
++++ b/docs/DEMO_15MIN.md
+@@ -1,5 +1,8 @@
+ # AI Employee Platform — 15-minute demo script
+ 
++> **Official product path (no Quick start):** see [features/00_PRODUCT_WALKTHROUGH.md](features/00_PRODUCT_WALKTHROUGH.md).
++> This script prioritizes a fast stakeholder demo via bootstrap.
++
+ **Audience:** stakeholders / first-time testers  
+ **Password for all demo users:** `demo12345`
+ 
+diff --git a/docs/features/00_PRODUCT_WALKTHROUGH.md b/docs/features/00_PRODUCT_WALKTHROUGH.md
+new file mode 100644
+index 0000000..0b1bf3c
+--- /dev/null
++++ b/docs/features/00_PRODUCT_WALKTHROUGH.md
+@@ -0,0 +1,67 @@
++# Product walkthrough — official UI path
++
++**Goal:** exercise the full company path **without** relying on Quick start (optional for developers only).
++
++**Time:** ~20–30 minutes first time; ~15 minutes once familiar.
++
++## Prerequisites
++- API running: `uvicorn app.main:app --reload`
++- Browser: `http://127.0.0.1:8000/workspace`
++- Email: in `DEBUG` / `APP_ENV=development`, verification & invite tokens appear in the UI
++
++---
++
++## Phase 1 — Company & people
++
++| Step | Where | Action |
++|------|--------|--------|
++| 1 | Register company | Create business; you become **Owner** |
++| 2 | Verify email | Paste debug token if shown |
++| 3 | Sign in | Email + password only |
++| 4 | Company profile | Name, contact email, industry → **Save** (unlocks sidebar) |
++| 5 | Users & positions | Invite AI Administrator + Reservation (job position dropdown) |
++| 6 | Accept invitation | Login gate → Accept invitation → staff sign in |
++
++Docs: [01](01_company_registration.md)–[05](05_ai_administrator.md)
++
++---
++
++## Phase 2 — AI workforce & data
++
++| Step | Where | Action |
++|------|--------|--------|
++| 7 | AI Employees | Hire from catalog; grant `can_use` to reservation staff |
++| 8 | Knowledge | Extract PDF/DOCX/TXT or add notes |
++| 9 | Inventory | Seed reservation demo (or load real rates later) |
++
++Docs: [06](06_ai_employees_hire.md)–[07](07_knowledge.md), [11](11_inventory.md)
++
++---
++
++## Phase 3 — Work
++
++| Step | Where | Action |
++|------|--------|--------|
++| 10 | Home | Role quick actions + needs attention |
++| 11 | Chat | Advisory only; optional “Also create Task” |
++| 12 | Tasks | Consult or Execute |
++| 13 | Approvals | Manager/Owner approve restricted tools |
++| 14 | Inbox / Notifications | Track open work and alerts |
++
++Docs: [08](08_chat.md)–[10](10_approvals.md), [12](12_home_inbox.md), [13](13_notifications.md)
++
++---
++
++## Phase 4 — Role checks (optional)
++
++1. Login as **Reservation** — Chat/Tasks/Inventory visible; Users/Hire hidden  
++2. Login as **AI Admin** — Hire + invite operational staff; cannot appoint another AI Admin  
++3. Login as **Manager** — Approvals approve/reject  
++
++---
++
++## Developer-only shortcuts
++- `/developer` + **Quick start** → `POST /api/v1/demo/bootstrap` (DEBUG)
++- Demo playbook on Home/Inventory seeds inventory + sample task  
++
++See also: [DEMO_15MIN.md](../DEMO_15MIN.md)
+diff --git a/docs/features/13_notifications.md b/docs/features/13_notifications.md
+new file mode 100644
+index 0000000..5647b4f
+--- /dev/null
++++ b/docs/features/13_notifications.md
+@@ -0,0 +1,18 @@
++# Feature: Notifications
++
++## Purpose
++In-app alerts for approvals, task outcomes, and company events. Complements **Inbox** (work queue) with a read/unread feed.
++
++## Who
++Any authenticated company user (scoped to their company).
++
++## Frontend
++- Nav **Notifications** and top-bar bell
++- Filter all / unread
++- Mark one or all as read
++- **Open** jumps to task / approvals / results when linked
++
++## Backend
++- `GET /companies/{id}/notifications`
++- `POST /companies/{id}/notifications/{id}/read`
++- `POST /companies/{id}/notifications/read-all`
+diff --git a/docs/features/README.md b/docs/features/README.md
+index 771614b..c4b2642 100644
+--- a/docs/features/README.md
++++ b/docs/features/README.md
+@@ -1,8 +1,15 @@
+ # Feature documentation index
+ 
++**Start here:** [00_PRODUCT_WALKTHROUGH.md](00_PRODUCT_WALKTHROUGH.md)
++
+ | # | Feature | Doc |
+ |---|---------|-----|
+-| 1–5 | Company setup & roles | 01–05 |
++| 0 | Full UI walkthrough | [00_PRODUCT_WALKTHROUGH.md](00_PRODUCT_WALKTHROUGH.md) |
++| 1 | Register business | [01](01_company_registration.md) |
++| 2 | Email verification | [02](02_email_verification.md) |
++| 3 | Company profile | [03](03_company_profile.md) |
++| 4 | Users & positions | [04](04_users_roles_employees.md) |
++| 5 | AI Administrator | [05](05_ai_administrator.md) |
+ | 6 | Hire AI Employees | [06](06_ai_employees_hire.md) |
+ | 7 | Knowledge | [07](07_knowledge.md) |
+ | 8 | Chat | [08](08_chat.md) |
+@@ -10,8 +17,9 @@
+ | 10 | Approvals | [10](10_approvals.md) |
+ | 11 | Inventory | [11](11_inventory.md) |
+ | 12 | Home & Inbox | [12](12_home_inbox.md) |
++| 13 | Notifications | [13](13_notifications.md) |
+ 
+ ```
+-Users → Hire AI → Knowledge → Inventory → Chat/Tasks → Approvals
+-(Home = command center for the path above)
++Register → profile → users → hire AI → knowledge → inventory
++  → home → chat → tasks → approvals → notifications
+ ```
+diff --git a/tests/test_walkthrough_docs_job71.py b/tests/test_walkthrough_docs_job71.py
+new file mode 100644
+index 0000000..555ff08
+--- /dev/null
++++ b/tests/test_walkthrough_docs_job71.py
+@@ -0,0 +1,24 @@
++"""Job 71 — product walkthrough docs and notifications copy."""
++
++from pathlib import Path
++
++from fastapi.testclient import TestClient
++
++from app.main import app
++
++client = TestClient(app)
++
++
++def test_walkthrough_doc_exists():
++    p = Path("docs/features/00_PRODUCT_WALKTHROUGH.md")
++    assert p.is_file()
++    text = p.read_text(encoding="utf-8")
++    assert "Company profile" in text
++    assert "Hire" in text
++    assert "Tasks" in text
++
++
++def test_notifications_view_has_notice():
++    html = client.get("/workspace").text
++    assert 'id="view-notifications"' in html
++    assert "Notifications" in html

@@ -5,6 +5,8 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
+
 from app.main import app
 from app.tools.connectors import MockExternalSystemClient, set_external_client
 
@@ -22,29 +24,14 @@ def test_app_js_bootstrap_session_environment():
 def test_reservation_can_hydrate():
     set_external_client(MockExternalSystemClient())
     suffix = uuid.uuid4().hex[:8]
-    co = client.post("/api/v1/companies", json={"name": f"Hyd45 {suffix}"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={
-            "name": "Owner",
-            "email": f"owner-{suffix}@h45.test",
-            "role": "owner",
-            "password": "demo12345",
-        },
-    ).json()
-    res_user = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        headers={"X-User-ID": owner["id"]},
-        json={
-            "name": "Res",
-            "email": f"res-{suffix}@h45.test",
-            "role": "reservation",
-            "password": "demo12345",
-        },
-    ).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
+    member = {"id": None}  # invite-only API; use bootstrap personas
     seed = client.post(
         f"/api/v1/companies/{co['id']}/demo/seed-reservation",
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
         json={},
     )
     assert seed.status_code == 200, seed.text

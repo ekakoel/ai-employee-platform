@@ -1,0 +1,159 @@
+diff --git a/app/static/workspace/chat.js b/app/static/workspace/chat.js
+index f93748a..bb300bb 100644
+--- a/app/static/workspace/chat.js
++++ b/app/static/workspace/chat.js
+@@ -39,19 +39,24 @@
+     const current = (request, session) => request === generation && session === key();
+     function notice(text = '') { $('chatLog').textContent = text; $('chatLog').classList.toggle('hidden', !text); }
+     function controls() {
+-      ['chatAgent', 'chatConversation', 'btnChatStart', 'btnRefreshChat', 'chatCreateTask'].forEach(id => { $(id).disabled = busy; });
+-      $('chatTaskMode').disabled = busy || !$('chatCreateTask').checked;
+-      $('btnChatSend').disabled = busy || !$('chatAgent').value || (conversation && conversation.status !== 'active') || !$('chatInput').value.trim();
+-      $('chatInput').disabled = busy || !$('chatAgent').value || (conversation && conversation.status !== 'active');
+-      $('chatTyping').classList.toggle('hidden', !pendingMessage);
+-      $('btnChatSend').textContent = pendingMessage ? 'Sending...' : 'Send';
+-      $('chatHistoryList').querySelectorAll?.('[data-chat-conversation]').forEach(button => { button.disabled = busy; });
++      const session = getSession() || {};
++      const perms = session.permissions || [];
++      const canTask = perms.includes('task.create');
++      const taskOpts = document.querySelector('.chat-task-options');
++      if (taskOpts) taskOpts.classList.toggle('hidden', !canTask);
++      ['chatAgent', 'chatConversation', 'btnChatStart', 'btnRefreshChat', 'chatCreateTask'].forEach(id => { if ($(id)) $(id).disabled = busy; });
++      if ($('chatTaskMode')) $('chatTaskMode').disabled = busy || !$('chatCreateTask') || !$('chatCreateTask').checked || !canTask;
++      if ($('btnChatSend')) $('btnChatSend').disabled = busy || !$('chatAgent').value || (conversation && conversation.status !== 'active') || !$('chatInput').value.trim();
++      if ($('chatInput')) $('chatInput').disabled = busy || !$('chatAgent').value || (conversation && conversation.status !== 'active');
++      if ($('chatTyping')) $('chatTyping').classList.toggle('hidden', !busy);
++      if ($('btnChatSend')) $('btnChatSend').textContent = busy ? 'Sending...' : 'Send';
++      $('chatHistoryList')?.querySelectorAll?.('[data-chat-conversation]').forEach(button => { button.disabled = busy; });
+     }
+     function render(scroll = true) {
+       const thread = $('chatThread');
+       const nearBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
+       const agentName = agents.find(agent => agent.id === (conversation?.agent_instance_id || activeAgentId))?.name || '';
+-      thread.innerHTML = messages.map(message => messageMarkup(message, esc, { agentName })).join('') + (pendingMessage ? `<article class="bubble human pending"><div class="who">${esc(getSession().userName || 'Unknown sender')} / Sending...</div><div>${esc(pendingMessage)}</div></article>` : '') || `<div class="empty">${$('chatAgent').value ? 'No messages yet.' : 'No AI employees available.'}</div>`;
++      thread.innerHTML = messages.map(message => messageMarkup(message, esc, { agentName })).join('') + (pendingMessage ? `<article class="bubble human pending"><div class="who">${esc(getSession().userName || 'Unknown sender')} / Sending...</div><div>${esc(pendingMessage)}</div></article>` : '') || `<div class="empty">${$('chatAgent').value ? 'No messages yet. Ask about company knowledge or procedures.' : 'No AI employees available. Owner/AI Admin: open <strong>AI Employees</strong> and hire a catalog agent, then grant you can_use if needed.'}</div>`;
+       thread.querySelectorAll?.('[data-chat-result]').forEach(button => {
+         button.onclick = () => {
+           const work = messages.find(message => message.work_result?.id === button.dataset.chatResult)?.work_result;
+@@ -152,6 +157,11 @@
+         if (result.task_id) {
+           const tid = result.task_id;
+           const mode = $('chatTaskMode').value || 'consult';
++          if ($('chatTaskHint')) {
++            $('chatTaskHint').classList.remove('hidden');
++            $('chatTaskHint').textContent =
++              'Task created (' + mode + '). Chat stays advisory. Click Run task now, or open Tasks to consult/execute under policy.';
++          }
+           $('chatLinkedTask').classList.remove('hidden');
+           $('chatLinkedTask').onclick = () => openTask(tid);
+           const runBtn = $('chatRunTask');
+@@ -184,10 +194,6 @@
+               }
+             };
+           }
+-          if ($('chatTaskHint')) {
+-            $('chatTaskHint').classList.remove('hidden');
+-            $('chatTaskHint').textContent = 'Task created as ' + mode + '. Chat did not execute tools. Click Run task now, or open Tasks.';
+-          }
+           onTaskCreated();
+         }
+         loadedAt = Date.now(); render();
+diff --git a/app/static/workspace/index.html b/app/static/workspace/index.html
+index 1f26fae..a06793a 100644
+--- a/app/static/workspace/index.html
++++ b/app/static/workspace/index.html
+@@ -324,7 +324,11 @@
+ 
+       <!-- CHAT -->
+       <section id="view-chat" class="view">
+-        <p id="chatModeNotice" class="home-notice" role="status">Chat is <strong>advisory only</strong> (no tools). Tick <strong>Also create Task</strong> to open a policy-gated work item, then run it from <strong>Tasks</strong>. Finished outputs appear in <strong>Results</strong> (quotations, availability, …).</p>
++        <p id="chatModeNotice" class="home-notice" role="status">
++          <strong>Advisory chat</strong> — answers use company knowledge; <em>no tools run here</em>.
++          To book, quote, or change data: tick <strong>Also create Task</strong> → <strong>Run task</strong> (or open <strong>Tasks</strong>).
++          Need an agent first? Hire one under <strong>AI Employees</strong>.
++        </p>
+         <div class="chat-layout">
+           <aside class="card chat-history" aria-label="Conversation history">
+             <div class="chat-history-heading"><h3>Conversations</h3><button id="btnRefreshChat" class="icon-btn secondary" title="Refresh conversations" aria-label="Refresh conversations">&#8635;</button></div>
+diff --git a/docs/features/08_chat.md b/docs/features/08_chat.md
+new file mode 100644
+index 0000000..8d9f678
+--- /dev/null
++++ b/docs/features/08_chat.md
+@@ -0,0 +1,25 @@
++# Feature: Advisory chat
++
++## Purpose
++Staff talk to a hired AI Employee using **company knowledge**. Chat does **not** run tools (no bookings, no inventory writes).
++
++## Who
++Requires `agent.read` and an agent with `can_use` (or owner/ai_admin).  
++**Also create Task** requires `task.create`.
++
++## Frontend
++- Nav **Chat**
++- Pick AI Employee → new or existing conversation
++- Spinner while waiting for reply
++- Optional **Also create Task** (consult or execute mode) → **Run task now** / **Tasks**
++
++## Flow
++1. Hire AI Employee + grant access  
++2. Add knowledge (contracts, SOPs)  
++3. Chat for advice  
++4. Tick create Task when action is needed → run under policy → **Results** / **Approvals** if required  
++
++## Backend
++- `POST /companies/{id}/conversations`
++- `POST /companies/{id}/conversations/{id}/messages` `{ content, create_task, task_mode }`
++- Task execute/consult endpoints under Tasks
+diff --git a/docs/features/README.md b/docs/features/README.md
+index eba4a75..0b450a2 100644
+--- a/docs/features/README.md
++++ b/docs/features/README.md
+@@ -1,7 +1,5 @@
+ # Feature documentation index
+ 
+-## Company setup path
+-
+ | # | Feature | Doc |
+ |---|---------|-----|
+ | 1 | Register business | [01_company_registration.md](01_company_registration.md) |
+@@ -11,7 +9,8 @@
+ | 5 | AI Administrator | [05_ai_administrator.md](05_ai_administrator.md) |
+ | 6 | Hire AI Employees | [06_ai_employees_hire.md](06_ai_employees_hire.md) |
+ | 7 | Company knowledge | [07_knowledge.md](07_knowledge.md) |
++| 8 | Advisory chat | [08_chat.md](08_chat.md) |
+ 
+ ```
+-Register → verify → profile → users → hire AI → knowledge → chat/tasks
++Register → profile → users → hire AI → knowledge → chat → task/execute
+ ```
+diff --git a/tests/test_chat_ui_job67.py b/tests/test_chat_ui_job67.py
+new file mode 100644
+index 0000000..baca277
+--- /dev/null
++++ b/tests/test_chat_ui_job67.py
+@@ -0,0 +1,23 @@
++"""Job 67 — chat advisory UI copy and module."""
++
++from pathlib import Path
++
++from fastapi.testclient import TestClient
++
++from app.main import app
++
++client = TestClient(app)
++
++
++def test_chat_view_advisory_notice():
++    html = client.get("/workspace").text
++    assert 'id="view-chat"' in html
++    assert "Advisory" in html or "advisory" in html.lower()
++    assert "chatCreateTask" in html
++    assert "chatTyping" in html
++
++
++def test_chat_js_task_gating():
++    js = Path("app/static/workspace/chat.js").read_text(encoding="utf-8")
++    assert "task.create" in js
++    assert "chatTyping" in js

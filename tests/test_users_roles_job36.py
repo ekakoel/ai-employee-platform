@@ -4,6 +4,8 @@ import uuid
 
 from fastapi.testclient import TestClient
 
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
+
 from app.main import app
 
 client = TestClient(app)
@@ -11,16 +13,10 @@ client = TestClient(app)
 
 def _owner_company():
     suffix = uuid.uuid4().hex[:8]
-    co = client.post("/api/v1/companies", json={"name": f"Co36 {suffix}"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co["id"]}/users",
-        json={
-            "name": "Owner",
-            "email": f"owner-{suffix}@job36.test",
-            "role": "owner",
-            "password": "demo12345",
-        },
-    ).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
     return co["id"], owner["id"]
 
 
@@ -28,7 +24,7 @@ def test_list_users_requires_team_manage():
     company_id, owner_id = _owner_company()
     res = client.post(
         f"/api/v1/companies/{company_id}/users",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "name": "Res",
             "email": f"res-{uuid.uuid4().hex[:6]}@job36.test",
@@ -48,7 +44,7 @@ def test_list_users_requires_team_manage():
 
     ok = client.get(
         f"/api/v1/companies/{company_id}/users",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     )
     assert ok.status_code == 200, ok.text
     assert len(ok.json()) >= 2
@@ -59,7 +55,7 @@ def test_patch_user_role():
     company_id, owner_id = _owner_company()
     member = client.post(
         f"/api/v1/companies/{company_id}/users",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "name": "Member",
             "email": f"mem-{uuid.uuid4().hex[:6]}@job36.test",
@@ -69,7 +65,7 @@ def test_patch_user_role():
     ).json()
     patched = client.patch(
         f"/api/v1/companies/{company_id}/users/{member["id"]}",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={"role": "ai_admin"},
     )
     assert patched.status_code == 200, patched.text

@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -75,11 +77,10 @@ def test_jwt_roundtrip():
 
 
 def test_issue_token_endpoint(client):
-    co = client.post("/api/v1/companies", json={"name": "Auth Co"}).json()
-    user = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={"name": "Owner", "email": "owner@auth.test", "role": "owner"},
-    ).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
     tok = client.post(
         "/api/v1/auth/token",
         json={"company_id": co["id"], "email": "owner@auth.test"},

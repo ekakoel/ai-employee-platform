@@ -2,6 +2,8 @@
 
 import pytest
 from fastapi.testclient import TestClient
+
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -41,27 +43,25 @@ def client():
 
 
 def setup(client):
-    co = client.post("/api/v1/companies", json={"name": "Skill Co"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={"name": "Owner", "email": "owner@s.test", "role": "owner"},
-    ).json()
-    catalog = client.get("/api/v1/agent-catalog").json()
+    company_id, owner_id, headers, demo = provision_company(client)
+    catalog = client.get("/api/v1/agent-catalog", headers=headers).json()
     res = next(i for i in catalog if i["slug"] == "reservation")
     hire = client.post(
-        f"/api/v1/companies/{co['id']}/agents/{res['id']}/hire",
+        f"/api/v1/companies/{company_id}/agents/{res["id"]}/hire",
         json={"name": "Skill AI"},
-        headers={"X-User-ID": owner["id"]},
+        headers=headers,
     )
     assert hire.status_code == 201, hire.text
-    return co["id"], owner["id"], hire.json()["id"]
+    return company_id, owner_id, hire.json()["id"], headers
+
+
 
 
 def test_list_platform_skills(client):
-    company_id, owner_id, _ = setup(client)
+    company_id, owner_id, _, headers = setup(client)
     resp = client.get(
         f"/api/v1/companies/{company_id}/skills",
-        headers={"X-User-ID": owner_id},
+        headers=headers,
     )
     assert resp.status_code == 200
     slugs = {s["slug"] for s in resp.json()}
@@ -73,20 +73,20 @@ def test_list_platform_skills(client):
 
 
 def test_hire_auto_assigns_matching_skills(client):
-    company_id, owner_id, agent_id = setup(client)
+    company_id, owner_id, agent_id, headers = setup(client)
     resp = client.get(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/skills",
-        headers={"X-User-ID": owner_id},
+        headers=headers,
     )
     assert resp.status_code == 200
     assert len(resp.json()) >= 1
 
 
 def test_create_company_skill_tenant_isolated(client):
-    company_id, owner_id, _ = setup(client)
+    company_id, owner_id, _, headers = setup(client)
     created = client.post(
         f"/api/v1/companies/{company_id}/skills",
-        headers={"X-User-ID": owner_id},
+        headers=headers,
         json={
             "slug": "custom_upsell",
             "name": "Custom Upsell",
@@ -98,7 +98,9 @@ def test_create_company_skill_tenant_isolated(client):
     assert created.json()["company_id"] == company_id
 
     # second company cannot see first company's custom skill only platform
-    co2 = client.post("/api/v1/companies", json={"name": "Other Co"}).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co2 = {"id": _cid}
     owner2 = client.post(
         f"/api/v1/companies/{co2['id']}/users",
         json={"name": "O2", "email": "o2@s.test", "role": "owner"},
@@ -112,11 +114,11 @@ def test_create_company_skill_tenant_isolated(client):
 
 
 def test_tool_requirement_enforcement(client):
-    company_id, owner_id, agent_id = setup(client)
+    company_id, owner_id, agent_id, headers = setup(client)
     # create skill with tool not on agent
     skill = client.post(
         f"/api/v1/companies/{company_id}/skills",
-        headers={"X-User-ID": owner_id},
+        headers=headers,
         json={
             "slug": "forbidden_tool_skill",
             "name": "Forbidden",
@@ -126,7 +128,7 @@ def test_tool_requirement_enforcement(client):
     assert skill.status_code == 201
     assign = client.post(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/skills",
-        headers={"X-User-ID": owner_id},
+        headers=headers,
         json={"skill_id": skill.json()["id"]},
     )
     assert assign.status_code == 400
@@ -134,10 +136,10 @@ def test_tool_requirement_enforcement(client):
 
 
 def test_assign_compatible_skill(client):
-    company_id, owner_id, agent_id = setup(client)
+    company_id, owner_id, agent_id, headers = setup(client)
     skills = client.get(
         f"/api/v1/companies/{company_id}/skills",
-        headers={"X-User-ID": owner_id},
+        headers=headers,
     ).json()
     # pick a platform skill whose tools are subset of reservation agent tools
     target = next(
@@ -146,7 +148,7 @@ def test_assign_compatible_skill(client):
     # may already be assigned at hire — second assign should be idempotent 201
     assign = client.post(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/skills",
-        headers={"X-User-ID": owner_id},
+        headers=headers,
         json={"skill_id": target["id"]},
     )
     assert assign.status_code == 201, assign.text

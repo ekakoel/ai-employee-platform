@@ -1,0 +1,329 @@
+diff --git a/app/api/company_onboarding_routes.py b/app/api/company_onboarding_routes.py
+index 6cd4fcc..843711d 100644
+--- a/app/api/company_onboarding_routes.py
++++ b/app/api/company_onboarding_routes.py
+@@ -29,6 +29,11 @@ def owner_only(company: Company, user: User):
+         raise HTTPException(status_code=403, detail="Company owner required")
+ 
+ 
++def team_manager(company: Company, user: User):
++    if not company_onboarding.can_manage_team(user, company):
++        raise HTTPException(status_code=403, detail="Team management permission required")
++
++
+ @router.get("/{company_id}/profile")
+ def profile(company_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+     company = own_company(db, user, company_id)
+@@ -74,7 +79,7 @@ class InviteRequest(BaseModel):
+ def invite(company_id: str, payload: InviteRequest, db: Session = Depends(get_db),
+            user: User = Depends(get_current_user)):
+     company = own_company(db, user, company_id)
+-    owner_only(company, user)
++    team_manager(company, user)
+     try:
+         return company_onboarding.invite(db, user, payload.email, role_name=payload.role_name)
+     except auth_sessions.AuthError as exc:
+@@ -104,6 +109,7 @@ def list_job_roles(company_id: str, db: Session = Depends(get_db),
+             "name": name,
+             "label": labels.get(name, name.replace("_", " ").title()),
+             "is_administrator": name == "ai_admin",
++            "owner_only": name == "ai_admin",
+         })
+     return {"roles": roles}
+ 
+@@ -116,7 +122,7 @@ class JobRoleUpdate(BaseModel):
+ def update_job_role(company_id: str, target_id: str, payload: JobRoleUpdate,
+                     db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+     company = own_company(db, user, company_id)
+-    owner_only(company, user)
++    team_manager(company, user)
+     try:
+         return company_onboarding.set_job_role(db, user, target_id, payload.role_name)
+     except auth_sessions.AuthError as exc:
+@@ -126,7 +132,7 @@ def update_job_role(company_id: str, target_id: str, payload: JobRoleUpdate,
+ @router.get("/{company_id}/invitations")
+ def list_invitations(company_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+     company = own_company(db, user, company_id)
+-    owner_only(company, user)
++    team_manager(company, user)
+     rows = db.scalars(select(CompanyInvitation).where(CompanyInvitation.company_id == company_id)
+                       .order_by(CompanyInvitation.created_at.desc()).limit(100)).all()
+     return [{"id": row.id, "email": row.email, "status": "revoked" if row.revoked_at else
+@@ -138,7 +144,7 @@ def list_invitations(company_id: str, db: Session = Depends(get_db), user: User
+ def revoke_invitation(company_id: str, invitation_id: str, db: Session = Depends(get_db),
+                       user: User = Depends(get_current_user)):
+     company = own_company(db, user, company_id)
+-    owner_only(company, user)
++    team_manager(company, user)
+     result = db.execute(update(CompanyInvitation).where(CompanyInvitation.id == invitation_id,
+         CompanyInvitation.company_id == company_id, CompanyInvitation.consumed_at.is_(None),
+         CompanyInvitation.revoked_at.is_(None)).values(revoked_at=auth_sessions.now()))
+diff --git a/app/services/company_onboarding.py b/app/services/company_onboarding.py
+index c403535..075aea7 100644
+--- a/app/services/company_onboarding.py
++++ b/app/services/company_onboarding.py
+@@ -148,17 +148,53 @@ def verify_email(db, token):
+     return {"message": "Email verified. You can sign in."}
+ 
+ 
++def _actor_permission_keys(actor) -> set:
++    try:
++        from app.services.access import user_permission_keys
++        return set(user_permission_keys(actor))
++    except Exception:
++        if actor.role and actor.role.permissions:
++            return {p.key for p in actor.role.permissions}
++        return set()
++
++
++def can_manage_team(actor, company) -> bool:
++    if company.onboarding_status != "complete":
++        return False
++    if company.owner_user_id == actor.id and getattr(actor.role, "name", None) == "owner":
++        return True
++    return "team.manage" in _actor_permission_keys(actor)
++
++
++# Roles an Administrator (ai_admin / administration) may assign via invite
++ADMIN_INVITE_ROLES = frozenset({
++    "member", "reservation", "manager", "contract_manager",
++    "administration", "accounting",
++})
++# Owner may also invite AI administrators
++OWNER_INVITE_ROLES = ADMIN_INVITE_ROLES | {"ai_admin"}
++
++
+ def invite(db, actor, email, role_name: str = "member"):
+-    """Owner invites an employee with a company job role (not owner/platform)."""
++    """Owner or team manager (AI Admin / Administration) invites an employee."""
+     require_delivery()
+     email = normalized_email(email)
+     company = db.get(Company, actor.company_id)
+-    if company.owner_user_id != actor.id or company.onboarding_status != "complete":
+-        raise auth_sessions.AuthError("Only the company owner can invite employees after onboarding", 403)
++    if not can_manage_team(actor, company):
++        raise auth_sessions.AuthError(
++            "Only the owner or an administrator with team access can invite employees after onboarding",
++            403,
++        )
+     from app.services.seed import ROLE_PERMISSIONS, get_or_create_role
+     role_name = (role_name or "member").strip().lower()
+-    if role_name in {"owner"} or role_name not in ROLE_PERMISSIONS:
+-        raise auth_sessions.AuthError("Invalid job role for invitation", 400)
++    is_owner = company.owner_user_id == actor.id and getattr(actor.role, "name", None) == "owner"
++    allowed = OWNER_INVITE_ROLES if is_owner else ADMIN_INVITE_ROLES
++    if role_name not in ROLE_PERMISSIONS or role_name not in allowed:
++        raise auth_sessions.AuthError(
++            "Invalid job role for invitation (administrators cannot invite owners or AI admins)"
++            if not is_owner else "Invalid job role for invitation",
++            400,
++        )
+     # Do not expose whether an arbitrary email already belongs to another tenant.
+     if db.scalar(select(User.id).where(func.lower(User.email) == email).limit(1)):
+         return {"message": "If eligible, an invitation has been created."}
+@@ -230,14 +266,17 @@ def accept_invitation(db, token, name, password):
+ 
+ 
+ def set_job_role(db, actor, target_user_id: str, role_name: str) -> dict:
+-    """Owner sets an employee's job role/position. Cannot change owner."""
++    """Owner or team manager sets job role. Owner-only for ai_admin assignment."""
+     from app.services.seed import ROLE_PERMISSIONS, get_or_create_role
+     company = db.get(Company, actor.company_id)
+-    if company.owner_user_id != actor.id or actor.role.name != "owner":
+-        raise auth_sessions.AuthError("Only the company owner can change job roles", 403)
++    if not can_manage_team(actor, company):
++        raise auth_sessions.AuthError("Not allowed to change job roles", 403)
++    is_owner = company.owner_user_id == actor.id and getattr(actor.role, "name", None) == "owner"
+     role_name = (role_name or "").strip().lower()
+     if role_name == "owner" or role_name not in ROLE_PERMISSIONS:
+         raise auth_sessions.AuthError("Invalid job role", 400)
++    if not is_owner and role_name not in ADMIN_INVITE_ROLES:
++        raise auth_sessions.AuthError("Only the owner can assign AI Administrator", 403)
+     target = db.scalar(select(User).where(User.id == target_user_id, User.company_id == company.id))
+     if not target or target.status != "active":
+         raise auth_sessions.AuthError("Employee not found", 404)
+diff --git a/app/services/seed.py b/app/services/seed.py
+index 1fc4314..71cef94 100644
+--- a/app/services/seed.py
++++ b/app/services/seed.py
+@@ -58,6 +58,7 @@ ROLE_PERMISSIONS = {
+         "integration.manage",
+         "governance.read",
+         "audit.read",
++        "team.manage",  # invite/manage employees (not owner privileges)
+     },
+     # Operational staff (e.g. reservation desk)
+     "reservation": {
+diff --git a/app/static/workspace/app.js b/app/static/workspace/app.js
+index 1207352..4742e13 100644
+--- a/app/static/workspace/app.js
++++ b/app/static/workspace/app.js
+@@ -2114,11 +2114,13 @@
+       ["member", "Member"],
+       ["reservation", "Reservation"],
+       ["manager", "Manager"],
+-      ["ai_admin", "AI Administrator"],
+       ["contract_manager", "Contract Manager"],
+       ["administration", "Administration"],
+       ["accounting", "Accounting"],
+     ];
++    if (state.role === "owner") {
++      roleOptions.splice(3, 0, ["ai_admin", "AI Administrator"]);
++    }
+     try {
+       // refresh job-role select from API when available
+       try {
+@@ -2126,7 +2128,10 @@
+         const sel = $("userRoleInput");
+         if (sel && rolesBody.roles && rolesBody.roles.length) {
+           const current = sel.value;
+-          sel.innerHTML = rolesBody.roles
++          const roles = rolesBody.roles.filter(
++            (r) => state.role === "owner" || r.name !== "ai_admin"
++          );
++          sel.innerHTML = roles
+             .map((r) => `<option value="${escapeHtml(r.name)}">${escapeHtml(r.label || r.name)}</option>`)
+             .join("");
+           if ([...sel.options].some((o) => o.value === current)) sel.value = current;
+@@ -2139,7 +2144,7 @@
+           .map((u) => {
+             const isOwner = u.role === "owner";
+             const roleSelect =
+-              state.role === "owner" && !isOwner
++              hasPermission("team.manage") && !isOwner
+                 ? `<label class="inline-role">Position
+                     <select class="user-role-select" data-id="${escapeHtml(u.id)}">
+                       ${roleOptions
+@@ -2201,7 +2206,7 @@
+           }
+         };
+       });
+-      if (state.role === "owner" && $("invitationsList")) {
++      if (hasPermission("team.manage") && $("invitationsList")) {
+         const invitations = await api(`/companies/${state.companyId}/invitations`);
+         $("invitationsList").innerHTML =
+           invitations
+diff --git a/app/static/workspace/index.html b/app/static/workspace/index.html
+index 5469cf7..6a483fd 100644
+--- a/app/static/workspace/index.html
++++ b/app/static/workspace/index.html
+@@ -772,7 +772,7 @@
+       <section id="view-users" class="view">
+         <div class="card">
+           <h2>Users &amp; job positions</h2>
+-          <p class="muted"><strong>Owner only:</strong> invite employees and change their job position. The Owner account cannot be invited or demoted here.</p>
++          <p class="muted"><strong>Owner</strong> and <strong>AI Administrator / Administration</strong> (team access) can invite employees. Only the Owner can appoint AI Administrators. The Owner account cannot be demoted.</p>
+           <div class="role-legend muted" style="font-size:.85rem;line-height:1.5;margin-bottom:1rem;padding:.75rem 1rem;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc">
+             <strong>Hierarchy</strong>
+             <ul style="margin:.35rem 0 0 1.1rem;padding:0">
+diff --git a/docs/features/04_users_roles_employees.md b/docs/features/04_users_roles_employees.md
+index 33a8b3c..79d3879 100644
+--- a/docs/features/04_users_roles_employees.md
++++ b/docs/features/04_users_roles_employees.md
+@@ -1,20 +1,19 @@
+ # Feature: Users, invitations & job positions
+ 
+-## Purpose
+-Owner adds employees and assigns a **job position**. Only the company **Owner** can invite or change positions.
++## Who can invite
++| Actor | Can invite | Can assign `ai_admin` | Can change Owner |
++|-------|------------|----------------------|------------------|
++| Owner | Yes | Yes | No |
++| AI Administrator (`ai_admin`) | Yes (operational roles) | No | No |
++| Administration | Yes (operational roles) | No | No |
++| Other roles | No | No | No |
+ 
+-## Frontend
+-- Nav: **Users & positions**
+-- Invite: email + job position → **Send invitation**
+-- Employee list: change position → **Save position**
+-- **Make AI administrator** shortcut
+-- Debug token when DEBUG=true → login gate **Accept invitation**
+-
+-## Hierarchy
+-Owner → AI Administrator → Manager/Supervisor → operational roles (reservation, contract, accounting, administration, member)
++## Navigation
++Menus without the required permission are **hidden** (not merely disabled).
++- `users` requires `team.manage` (owner, ai_admin, administration)
++- Operational roles see Chat / Tasks / Knowledge as allowed by their matrix
+ 
+ ## Backend
+-- `GET /companies/{id}/job-roles`
+-- `POST /companies/{id}/invitations` `{ email, role_name }`
+-- `PUT /companies/{id}/users/{id}/role` `{ role_name }`
+-- `POST /auth/accept-invitation`
++- `POST /invitations` — owner or `team.manage`
++- `PUT /users/{id}/role` — owner or `team.manage` (ai_admin assign = owner only)
++- `PUT /administrators/{id}` — owner only
+diff --git a/tests/test_admin_invite_job64.py b/tests/test_admin_invite_job64.py
+new file mode 100644
+index 0000000..68a445a
+--- /dev/null
++++ b/tests/test_admin_invite_job64.py
+@@ -0,0 +1,66 @@
++"""Job 64 — AI admin / administration can invite; nav gated by permission."""
++
++from fastapi.testclient import TestClient
++
++from app.main import app
++
++client = TestClient(app)
++
++
++def _bootstrap():
++    res = client.post("/api/v1/demo/bootstrap")
++    assert res.status_code == 200, res.text
++    return res.json()
++
++
++def _login(email: str):
++    tok = client.post("/api/v1/auth/login", json={"email": email, "password": "demo12345"})
++    assert tok.status_code == 200, tok.text
++    body = tok.json()
++    return {
++        "Authorization": f"Bearer {body['access_token']}",
++        "X-User-ID": body["user_id"],
++    }
++
++
++def test_ai_admin_can_invite_reservation():
++    demo = _bootstrap()
++    admin = next(u for u in demo["users"] if u["role"] == "ai_admin")
++    headers = _login(admin["email"])
++    res = client.post(
++        f"/api/v1/companies/{demo['company_id']}/invitations",
++        headers=headers,
++        json={"email": "newres@example.test", "role_name": "reservation"},
++    )
++    assert res.status_code == 201, res.text
++    assert res.json().get("role_name") == "reservation"
++
++
++def test_ai_admin_cannot_invite_ai_admin():
++    demo = _bootstrap()
++    admin = next(u for u in demo["users"] if u["role"] == "ai_admin")
++    headers = _login(admin["email"])
++    res = client.post(
++        f"/api/v1/companies/{demo['company_id']}/invitations",
++        headers=headers,
++        json={"email": "otheradmin@example.test", "role_name": "ai_admin"},
++    )
++    assert res.status_code in (400, 403), res.text
++
++
++def test_reservation_cannot_invite():
++    demo = _bootstrap()
++    res_user = next(u for u in demo["users"] if u["role"] == "reservation")
++    headers = _login(res_user["email"])
++    res = client.post(
++        f"/api/v1/companies/{demo['company_id']}/invitations",
++        headers=headers,
++        json={"email": "x@example.test", "role_name": "member"},
++    )
++    assert res.status_code == 403, res.text
++
++
++def test_users_nav_requires_team_manage():
++    from pathlib import Path
++    js = Path("app/static/workspace/app.js").read_text(encoding="utf-8")
++    assert 'users: ["team.manage"]' in js or "users: ['team.manage']" in js

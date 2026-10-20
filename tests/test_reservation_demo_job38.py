@@ -4,6 +4,8 @@ import uuid
 
 from fastapi.testclient import TestClient
 
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
+
 from app.main import app
 from app.tools.base import ToolContext
 from app.tools.connectors import MockExternalSystemClient, set_external_client
@@ -42,19 +44,13 @@ def test_seed_reservation_api_and_search_via_domain():
     """Seed via API, verify inventory through domain matching (no policy gate)."""
     set_external_client(MockExternalSystemClient())
     suffix = uuid.uuid4().hex[:8]
-    co = client.post("/api/v1/companies", json={"name": f"Co38 {suffix}"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={
-            "name": "Owner",
-            "email": f"owner-{suffix}@job38.test",
-            "role": "owner",
-            "password": "demo12345",
-        },
-    ).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
     seed = client.post(
         f"/api/v1/companies/{co['id']}/demo/seed-reservation",
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
         json={},
     )
     assert seed.status_code == 200, seed.text
@@ -84,24 +80,18 @@ def test_search_tool_with_allow_policy():
     """Full tool execute path after allowing search_availability by policy."""
     set_external_client(MockExternalSystemClient())
     suffix = uuid.uuid4().hex[:8]
-    co = client.post("/api/v1/companies", json={"name": f"Co38p {suffix}"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={
-            "name": "Owner",
-            "email": f"owner-p-{suffix}@job38.test",
-            "role": "owner",
-            "password": "demo12345",
-        },
-    ).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
     client.post(
         f"/api/v1/companies/{co['id']}/demo/seed-reservation",
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
         json={},
     )
     pol = client.post(
         f"/api/v1/companies/{co['id']}/policies",
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
         json={
             "name": f"Allow search availability {suffix}",
             "configuration": {
@@ -121,7 +111,7 @@ def test_search_tool_with_allow_policy():
     )
     hire = client.post(
         f"/api/v1/companies/{co['id']}/agents/{reservation['id']}/hire",
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
         json={"name": "Res AI"},
     )
     assert hire.status_code in (200, 201), hire.text
@@ -129,7 +119,7 @@ def test_search_tool_with_allow_policy():
 
     tool = client.post(
         f"/api/v1/companies/{co['id']}/agents/{agent_id}/tools/search_availability/execute",
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
         json={
             "arguments": {
                 "check_in": "2026-10-30",

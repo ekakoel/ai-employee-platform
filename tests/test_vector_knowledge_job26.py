@@ -2,6 +2,8 @@
 
 import pytest
 from fastapi.testclient import TestClient
+
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -73,17 +75,11 @@ def test_indexing_stores_embedding(client, monkeypatch):
     monkeypatch.setenv("KNOWLEDGE_VECTOR", "true")
     cfg_mod.settings = cfg_mod.Settings()
 
-    co = client.post("/api/v1/companies", json={"name": "Vec Co"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={
-            "name": "Owner",
-            "email": "vec@test.local",
-            "role": "owner",
-            "password": "secret123",
-        },
-    ).json()
-    headers = {"X-User-ID": owner["id"]}
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
+    headers = _hdrs
     item = client.post(
         f"/api/v1/companies/{co['id']}/knowledge",
         headers=headers,
@@ -115,17 +111,11 @@ def test_hybrid_search_returns_vector_scores(client, monkeypatch):
     monkeypatch.setenv("KNOWLEDGE_VECTOR", "true")
     cfg_mod.settings = cfg_mod.Settings()
 
-    co = client.post("/api/v1/companies", json={"name": "Hybrid Co"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={
-            "name": "Owner",
-            "email": "hybrid@test.local",
-            "role": "owner",
-            "password": "secret123",
-        },
-    ).json()
-    headers = {"X-User-ID": owner["id"]}
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
+    headers = _hdrs
     client.post(
         f"/api/v1/companies/{co['id']}/knowledge",
         headers=headers,

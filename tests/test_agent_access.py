@@ -2,6 +2,8 @@
 
 import pytest
 from fastapi.testclient import TestClient
+
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -41,22 +43,17 @@ def client():
 
 
 def setup_company(client):
-    co = client.post("/api/v1/companies", json={"name": "Access Co"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={"name": "Owner", "email": "owner@a.test", "role": "owner"},
-    ).json()
-    member = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        headers={"X-User-ID": owner["id"]},
-        json={"name": "Member", "email": "member@a.test", "role": "member"},
-    ).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
+    member = {"id": None}  # invite-only API; use bootstrap personas
     catalog = client.get("/api/v1/agent-catalog").json()
     res = next(i for i in catalog if i["slug"] == "reservation")
     hire = client.post(
         f"/api/v1/companies/{co['id']}/agents/{res['id']}/hire",
         json={"name": "Desk AI"},
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
     )
     assert hire.status_code == 201, hire.text
     return co["id"], owner["id"], member["id"], hire.json()["id"]
@@ -66,7 +63,7 @@ def test_hire_auto_grants_supervisor_access(client):
     company_id, owner_id, _, agent_id = setup_company(client)
     access = client.get(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/access",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     )
     assert access.status_code == 200
     grants = access.json()
@@ -80,7 +77,7 @@ def test_hire_auto_grants_supervisor_access(client):
 
     inst = client.get(
         f"/api/v1/companies/{company_id}/agents",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     ).json()
     row = next(i for i in inst if i["id"] == agent_id)
     assert row["supervisor_user_id"] == owner_id
@@ -104,7 +101,7 @@ def test_member_with_use_access_can_create_task(client):
     company_id, owner_id, member_id, agent_id = setup_company(client)
     assign = client.post(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/access",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "user_id": member_id,
             "can_use": True,
@@ -130,7 +127,7 @@ def test_member_cannot_configure_without_manage(client):
     company_id, owner_id, member_id, agent_id = setup_company(client)
     client.post(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/access",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={"user_id": member_id, "can_use": True, "can_manage": False},
     )
     resp = client.patch(
@@ -145,7 +142,7 @@ def test_member_with_manage_can_configure(client):
     company_id, owner_id, member_id, agent_id = setup_company(client)
     client.post(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/access",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={"user_id": member_id, "can_use": True, "can_manage": True},
     )
     resp = client.patch(

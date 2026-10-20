@@ -6,6 +6,8 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
+
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -45,16 +47,10 @@ def client():
 
 
 def setup(client):
-    co = client.post("/api/v1/companies", json={"name": "Integ Co"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={
-            "name": "Owner",
-            "email": "integ@test.local",
-            "role": "owner",
-            "password": "secret123",
-        },
-    ).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
     return co["id"], {"X-User-ID": owner["id"]}
 
 

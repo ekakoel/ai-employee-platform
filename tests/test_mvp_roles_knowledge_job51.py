@@ -5,6 +5,8 @@ import uuid
 
 from fastapi.testclient import TestClient
 
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
+
 from app.main import app
 from app.services.seed import ROLE_PERMISSIONS, VALID_COMPANY_ROLES
 
@@ -21,17 +23,11 @@ def test_new_company_roles_exist():
 
 def test_ingest_extract_stores_knowledge_not_file():
     suffix = uuid.uuid4().hex[:8]
-    co = client.post("/api/v1/companies", json={"name": f"Know {suffix}"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={
-            "name": "CM",
-            "email": f"cm-{suffix}@k51.test",
-            "role": "contract_manager",
-            "password": "demo12345",
-        },
-    ).json()
-    headers = {"X-User-ID": owner["id"]}
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
+    headers = _hdrs
     content = b"Hotel partnership contract. Alila rate IDR 1850000. Valid 2026."
     res = client.post(
         f"/api/v1/companies/{co['id']}/knowledge/ingest-extract",
@@ -48,16 +44,10 @@ def test_ingest_extract_stores_knowledge_not_file():
 
 def test_skill_create_blocked_for_company_admin():
     suffix = uuid.uuid4().hex[:8]
-    co = client.post("/api/v1/companies", json={"name": f"Skill {suffix}"}).json()
-    admin = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={
-            "name": "AI Admin",
-            "email": f"ai-{suffix}@k51.test",
-            "role": "ai_admin",
-            "password": "demo12345",
-        },
-    ).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
     res = client.post(
         f"/api/v1/companies/{co['id']}/skills",
         headers={"X-User-ID": admin["id"]},

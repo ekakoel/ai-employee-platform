@@ -1,0 +1,282 @@
+diff --git a/app/static/workspace/app.js b/app/static/workspace/app.js
+index 57bd87c..33e4cda 100644
+--- a/app/static/workspace/app.js
++++ b/app/static/workspace/app.js
+@@ -427,7 +427,7 @@
+     if (name === "policies") { loadAgentOptions(); }
+     if (name === "policy-management") loadPolicies();
+     if (name === "users") loadUsers();
+-    if (name === "knowledge") loadKnowledge();
++    if (name === "knowledge") { applyKnowledgeWriteGating(); loadKnowledge(); }
+     if (name === "departments") loadDepartments();
+     if (name === "teams") { loadAgentOptions(); loadTeams(); }
+     if (name === "skills") loadSkills();
+@@ -1759,8 +1759,15 @@
+     );
+   }
+ 
++  function applyKnowledgeWriteGating() {
++    const canWrite = hasPermission("knowledge.write");
++    if ($("knowledgeWriteCard")) $("knowledgeWriteCard").classList.toggle("hidden", !canWrite);
++    if ($("knowledgeNoteCard")) $("knowledgeNoteCard").classList.toggle("hidden", !canWrite);
++  }
++
+   async function loadKnowledge() {
+     if (!state.companyId) return;
++    applyKnowledgeWriteGating();
+     const listEl = $("knowList");
+     if (!listEl) return;
+     try {
+@@ -1842,17 +1849,25 @@
+   if ($("btnKnowledgeIngest"))
+     $("btnKnowledgeIngest").onclick = async () => {
+       const log = $("knowledgeIngestLog");
++      const btn = $("btnKnowledgeIngest");
+       const fileInput = $("knowledgeIngestFile");
+       if (!fileInput || !fileInput.files || !fileInput.files[0]) {
+         if (log) log.textContent = "Choose a file first";
+         return;
+       }
++      if (!hasPermission("knowledge.write")) {
++        if (log) log.textContent = "You do not have knowledge.write permission.";
++        return;
++      }
+       try {
++        if (btn) { btn.disabled = true; btn.textContent = "Extracting…"; }
++        if (log) log.textContent = "Uploading and extracting (file will not be stored)…";
+         const fd = new FormData();
+         fd.append("file", fileInput.files[0]);
+         const title = ($("knowledgeIngestTitle") && $("knowledgeIngestTitle").value.trim()) || "";
+         if (title) fd.append("title", title);
+-        fd.append("category", "document");
++        const cat = ($("knowledgeIngestCategory") && $("knowledgeIngestCategory").value) || "document";
++        fd.append("category", cat);
+         const base = (state.apiBase || "/api/v1").replace(/\/$/, "");
+         const version = sessionVersion;
+         const token = state.accessToken;
+@@ -1872,11 +1887,20 @@
+           if (res.status === 401) expireCurrentSession(version, token);
+           throw new Error(typeof data === "object" ? data.detail || JSON.stringify(data) : text);
+         }
+-        if (log) log.textContent = "Knowledge saved (file not retained): " + (data.title || data.id);
++        if (log) {
++          log.textContent =
++            "Saved as knowledge (file discarded): " + (data.title || data.id) +
++            "\nCategory: " + (data.category || cat) +
++            "\nAI Employees can use this in chat/tasks within policy.";
++        }
+         if ($("knowFilter")) $("knowFilter").value = "extract";
++        if (fileInput) fileInput.value = "";
++        if ($("knowledgeIngestTitle")) $("knowledgeIngestTitle").value = "";
+         await loadKnowledge();
+       } catch (err) {
+         if (log) log.textContent = err.message;
++      } finally {
++        if (btn) { btn.disabled = false; btn.textContent = "Extract to knowledge"; }
+       }
+     };
+ 
+diff --git a/app/static/workspace/index.html b/app/static/workspace/index.html
+index f2b5323..1f26fae 100644
+--- a/app/static/workspace/index.html
++++ b/app/static/workspace/index.html
+@@ -565,8 +565,8 @@
+         <div class="card">
+           <div class="row between">
+             <div>
+-              <h2>Knowledge</h2>
+-              <p class="muted">Company memory used by AI employees. Extracted documents are stored as text only (original file discarded).</p>
++              <h2>Company knowledge</h2>
++              <p class="muted">Shared memory for AI Employees and staff chat. Document uploads are <strong>extracted to text only</strong> — original files are not kept on the server.</p>
+             </div>
+             <button id="btnRefreshKnowledge" class="secondary">Refresh</button>
+           </div>
+@@ -577,6 +577,7 @@
+                 <option value="extract">From document extract</option>
+                 <option value="manual">Manual notes</option>
+                 <option value="document">Category: document</option>
++                <option value="policy">Category: policy</option>
+               </select>
+             </label>
+             <div id="knowStats" class="stats"></div>
+@@ -584,33 +585,52 @@
+           <div id="knowList" class="list"></div>
+         </div>
+ 
+-        <div class="card">
+-          <h3>Upload document → knowledge (file not stored)</h3>
+-          <p class="muted">PDF, Word, Excel, text are extracted into company knowledge. Original file is discarded after extract.</p>
++        <div class="card" id="knowledgeWriteCard">
++          <h3>Upload document → extract</h3>
++          <p class="muted">Requires <code>knowledge.write</code> (Owner, AI Admin, Contract Manager, Manager). Formats: PDF, Word, Excel, TXT.</p>
+           <div class="grid-2">
+             <label class="full">File
+-              <input type="file" id="knowledgeIngestFile" accept=".pdf,.docx,.xlsx,.txt,application/pdf" />
++              <input type="file" id="knowledgeIngestFile" accept=".pdf,.docx,.xlsx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain" />
+             </label>
+-            <label class="full">Title (optional)
++            <label>Title (optional)
+               <input id="knowledgeIngestTitle" placeholder="e.g. Alila 2026 contract" />
+             </label>
++            <label>Category
++              <select id="knowledgeIngestCategory">
++                <option value="document">document</option>
++                <option value="policy">policy</option>
++                <option value="contract">contract</option>
++                <option value="general">general</option>
++              </select>
++            </label>
+           </div>
+           <button id="btnKnowledgeIngest" class="primary">Extract to knowledge</button>
+           <pre id="knowledgeIngestLog" class="log"></pre>
+         </div>
+ 
+-        <div class="card">
++        <div class="card" id="knowledgeNoteCard">
+           <h3>Add note manually</h3>
+           <div class="grid-2">
+-            <label class="full">Title
+-              <input id="knowTitle" />
++            <label>Title
++              <input id="knowTitle" placeholder="Short title" />
++            </label>
++            <label>Category
++              <select id="knowCategory">
++                <option value="general">general</option>
++                <option value="policy">policy</option>
++                <option value="document">document</option>
++                <option value="contract">contract</option>
++              </select>
+             </label>
+             <label class="full">Content
+-              <textarea id="knowContent" rows="3"></textarea>
++              <textarea id="knowContent" rows="3" placeholder="Paste or type company knowledge…"></textarea>
+             </label>
+           </div>
+           <button id="btnAddKnowledge" class="primary">Add knowledge</button>
+-          <hr />
++        </div>
++
++        <div class="card">
++          <h3>Search</h3>
+           <div class="row">
+             <input id="knowQuery" placeholder="Search knowledge…" class="grow" />
+             <button id="btnSearchKnow" class="secondary">Search</button>
+diff --git a/docs/features/07_knowledge.md b/docs/features/07_knowledge.md
+new file mode 100644
+index 0000000..d36a144
+--- /dev/null
++++ b/docs/features/07_knowledge.md
+@@ -0,0 +1,32 @@
++# Feature: Company knowledge
++
++## Purpose
++Store company facts, policies, and extracted document text so AI Employees and staff can use them in chat and tasks. **Files are not retained** after extract.
++
++## Who
++| Role | Read | Write / extract |
++|------|------|-----------------|
++| Owner | Yes | Yes |
++| AI Administrator | Yes | Yes |
++| Contract Manager | Yes | Yes |
++| Manager | Yes | Yes |
++| Reservation / Member | Yes | No |
++| Accounting | Yes | No |
++
++## Frontend
++- Nav **Knowledge** (`knowledge.read`)
++- List + filter (extract / manual / category)
++- **Upload document → extract** (hidden without `knowledge.write`)
++- **Add note manually**
++- **Search**
++
++## Backend
++- `GET /companies/{id}/knowledge`
++- `POST /companies/{id}/knowledge` — manual note
++- `POST /companies/{id}/knowledge/ingest-extract` — multipart file + title + category
++- `POST /companies/{id}/knowledge/search`
++
++## Flow after hire
++1. Hire AI Employee  
++2. Extract contracts / SOPs into knowledge  
++3. Staff chat or tasks use knowledge under policy  
+diff --git a/docs/features/README.md b/docs/features/README.md
+index a96754e..eba4a75 100644
+--- a/docs/features/README.md
++++ b/docs/features/README.md
+@@ -1,6 +1,6 @@
+ # Feature documentation index
+ 
+-## Company setup
++## Company setup path
+ 
+ | # | Feature | Doc |
+ |---|---------|-----|
+@@ -10,8 +10,8 @@
+ | 4 | Users & job positions | [04_users_roles_employees.md](04_users_roles_employees.md) |
+ | 5 | AI Administrator | [05_ai_administrator.md](05_ai_administrator.md) |
+ | 6 | Hire AI Employees | [06_ai_employees_hire.md](06_ai_employees_hire.md) |
++| 7 | Company knowledge | [07_knowledge.md](07_knowledge.md) |
+ 
+-## Path
+-Register → verify → profile → invite users → **hire AI Employees** → grant access → chat/tasks
+-
+-See [PLATFORM_ACCESS.md](../PLATFORM_ACCESS.md)
++```
++Register → verify → profile → users → hire AI → knowledge → chat/tasks
++```
+diff --git a/tests/test_knowledge_ui_job66.py b/tests/test_knowledge_ui_job66.py
+new file mode 100644
+index 0000000..4c61c0f
+--- /dev/null
++++ b/tests/test_knowledge_ui_job66.py
+@@ -0,0 +1,49 @@
++"""Job 66 — knowledge UI write gating and extract form."""
++
++from pathlib import Path
++
++from fastapi.testclient import TestClient
++
++from app.main import app
++
++client = TestClient(app)
++
++
++def test_knowledge_view_structure():
++    html = client.get("/workspace").text
++    assert 'id="view-knowledge"' in html
++    assert 'id="knowledgeWriteCard"' in html
++    assert "btnKnowledgeIngest" in html
++    assert "knowledgeIngestCategory" in html
++
++
++def test_knowledge_gating_in_js():
++    js = Path("app/static/workspace/app.js").read_text(encoding="utf-8")
++    assert "applyKnowledgeWriteGating" in js
++    assert "knowledge.write" in js
++
++
++def test_owner_can_add_knowledge_note():
++    demo = client.post("/api/v1/demo/bootstrap")
++    assert demo.status_code == 200, demo.text
++    body = demo.json()
++    login = client.post(
++        "/api/v1/auth/login",
++        json={"email": body["owner_email"], "password": "demo12345"},
++    )
++    assert login.status_code == 200
++    tok = login.json()
++    headers = {
++        "Authorization": f"Bearer {tok['access_token']}",
++        "X-User-ID": tok["user_id"],
++    }
++    res = client.post(
++        f"/api/v1/companies/{body['company_id']}/knowledge",
++        headers=headers,
++        json={
++            "title": "Leave policy",
++            "content": "Employees get 12 days annual leave.",
++            "category": "policy",
++        },
++    )
++    assert res.status_code in (200, 201), res.text

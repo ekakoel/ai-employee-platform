@@ -2,6 +2,8 @@
 
 import pytest
 from fastapi.testclient import TestClient
+
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -44,7 +46,9 @@ def client():
 
 
 def company_with_user(client, email="owner@auth.test", password="secret123"):
-    co = client.post("/api/v1/companies", json={"name": "Auth Co"}).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
     # register sets password
     reg = client.post(
         "/api/v1/auth/register",
@@ -130,7 +134,9 @@ def test_login_inactive_user(client):
 
 def test_login_tenant_mismatch_email_other_company(client):
     company_id, _ = company_with_user(client, email="a@auth.test")
-    co2 = client.post("/api/v1/companies", json={"name": "Other Co"}).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co2 = {"id": _cid}
     bad = client.post(
         "/api/v1/auth/login",
         json={
@@ -179,15 +185,10 @@ def test_bearer_token_access_company_api(client):
 
 
 def test_legacy_token_endpoint_still_works(client):
-    co = client.post("/api/v1/companies", json={"name": "Legacy Co"}).json()
-    user = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={
-            "name": "Legacy",
-            "email": "legacy@auth.test",
-            "role": "owner",
-        },
-    ).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
     tok = client.post(
         "/api/v1/auth/token",
         json={"company_id": co["id"], "email": "legacy@auth.test"},
@@ -197,7 +198,9 @@ def test_legacy_token_endpoint_still_works(client):
 
 
 def test_create_user_with_password(client):
-    co = client.post("/api/v1/companies", json={"name": "Pw Co"}).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
     owner = client.post(
         f"/api/v1/companies/{co['id']}/users",
         json={

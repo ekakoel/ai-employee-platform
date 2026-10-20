@@ -2,6 +2,8 @@
 
 import pytest
 from fastapi.testclient import TestClient
+
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -42,24 +44,23 @@ def client():
 
 
 def setup_two_agents(client):
-    co = client.post("/api/v1/companies", json={"name": "Dir Co"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={"name": "Owner", "email": "owner@d.test", "role": "owner"},
-    ).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
     catalog = client.get("/api/v1/agent-catalog").json()
     res = next(i for i in catalog if i["slug"] == "reservation")
     contract = next(i for i in catalog if i["slug"] == "contract-manager")
     h1 = client.post(
         f"/api/v1/companies/{co['id']}/agents/{res['id']}/hire",
         json={"name": "Res AI"},
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
     )
     assert h1.status_code == 201, h1.text
     h2 = client.post(
         f"/api/v1/companies/{co['id']}/agents/{contract['id']}/hire",
         json={"name": "Contract AI"},
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
     )
     assert h2.status_code == 201, h2.text
     return co["id"], owner["id"], h1.json()["id"], h2.json()["id"]
@@ -82,7 +83,7 @@ def test_directory_lists_hired_agents(client):
     company_id, owner_id, a1, a2 = setup_two_agents(client)
     resp = client.get(
         f"/api/v1/companies/{company_id}/directory",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     )
     assert resp.status_code == 200, resp.text
     ids = {e["agent_instance_id"] for e in resp.json()}
@@ -96,7 +97,7 @@ def test_discover_by_skill(client):
     company_id, owner_id, a1, a2 = setup_two_agents(client)
     resp = client.get(
         f"/api/v1/companies/{company_id}/directory/search",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         params={"skill": "contract_analysis"},
     )
     assert resp.status_code == 200
@@ -109,7 +110,7 @@ def test_validate_target_success(client):
     company_id, owner_id, a1, a2 = setup_two_agents(client)
     resp = client.post(
         f"/api/v1/companies/{company_id}/directory/validate-target",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "target_agent_instance_id": a2,
             "required_capability": "contract_analysis",
@@ -126,7 +127,7 @@ def test_validate_target_rejects_self(client):
     company_id, owner_id, a1, _ = setup_two_agents(client)
     resp = client.post(
         f"/api/v1/companies/{company_id}/directory/validate-target",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "target_agent_instance_id": a1,
             "source_agent_instance_id": a1,
@@ -140,7 +141,7 @@ def test_validate_missing_capability(client):
     company_id, owner_id, a1, a2 = setup_two_agents(client)
     resp = client.post(
         f"/api/v1/companies/{company_id}/directory/validate-target",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "target_agent_instance_id": a1,
             "required_capability": "skill:does_not_exist_xyz",
@@ -155,7 +156,7 @@ def test_create_delegation_request(client):
     company_id, owner_id, a1, a2 = setup_two_agents(client)
     resp = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "source_agent_instance_id": a1,
             "target_agent_instance_id": a2,
@@ -172,7 +173,7 @@ def test_create_delegation_request(client):
 
     listed = client.get(
         f"/api/v1/companies/{company_id}/delegation-requests",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     )
     assert listed.status_code == 200
     assert any(r["id"] == body["id"] for r in listed.json())
@@ -182,7 +183,7 @@ def test_delegation_rejects_invalid_target(client):
     company_id, owner_id, a1, a2 = setup_two_agents(client)
     resp = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "source_agent_instance_id": a1,
             "target_agent_instance_id": a2,

@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -46,17 +48,16 @@ def client():
 
 
 def setup(client):
-    co = client.post("/api/v1/companies", json={"name": "Know Co"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={"name": "Owner", "email": "owner@k.test", "role": "owner"},
-    ).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
     catalog = client.get("/api/v1/agent-catalog").json()
     res = next(i for i in catalog if i["slug"] == "reservation")
     hire = client.post(
         f"/api/v1/companies/{co['id']}/agents/{res['id']}/hire",
         json={"name": "Know AI"},
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
     )
     assert hire.status_code == 201
     return co["id"], owner["id"], hire.json()["id"]
@@ -82,7 +83,7 @@ def test_knowledge_create_indexes_chunks(client):
     }
     resp = client.post(
         f"/api/v1/companies/{company_id}/knowledge",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json=body,
     )
     assert resp.status_code == 201, resp.text
@@ -104,7 +105,7 @@ def test_search_finds_relevant_chunk(client):
     company_id, owner_id, agent_id = setup(client)
     client.post(
         f"/api/v1/companies/{company_id}/knowledge",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "title": "Cancellation",
             "content": "Customers may cancel free within 24 hours. Late cancel incurs fee.",
@@ -113,7 +114,7 @@ def test_search_finds_relevant_chunk(client):
     )
     search = client.post(
         f"/api/v1/companies/{company_id}/knowledge/search",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={"query": "cancel fee", "limit": 5},
     )
     assert search.status_code == 200, search.text
@@ -129,7 +130,9 @@ def test_tenant_isolation_search(client):
         headers={"X-User-ID": o1},
         json={"title": "Secret", "content": "UniqueTokenXYZ123 confidential", "category": "x"},
     )
-    co2 = client.post("/api/v1/companies", json={"name": "OtherKnow"}).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co2 = {"id": _cid}
     o2 = client.post(
         f"/api/v1/companies/{co2['id']}/users",
         json={"name": "O2", "email": "o2@k.test", "role": "owner"},
@@ -147,7 +150,7 @@ def test_agent_memory_lifecycle(client):
     company_id, owner_id, agent_id = setup(client)
     created = client.post(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/memories",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "title": "Preferred contact",
             "content": "Customer prefers WhatsApp for follow-up.",
@@ -159,20 +162,20 @@ def test_agent_memory_lifecycle(client):
 
     listed = client.get(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/memories",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     )
     assert listed.status_code == 200
     assert any(m["id"] == mem_id for m in listed.json())
 
     deleted = client.delete(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/memories/{mem_id}",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     )
     assert deleted.status_code == 204
 
     listed2 = client.get(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/memories",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     )
     assert all(m["id"] != mem_id for m in listed2.json())
 
@@ -182,7 +185,7 @@ def test_expired_memory_not_listed(client):
     past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
     created = client.post(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/memories",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "title": "Expired note",
             "content": "Should not appear",
@@ -192,7 +195,7 @@ def test_expired_memory_not_listed(client):
     assert created.status_code == 201
     listed = client.get(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/memories",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     ).json()
     assert all(m["title"] != "Expired note" for m in listed)
 

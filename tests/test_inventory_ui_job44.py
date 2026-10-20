@@ -5,6 +5,8 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
+
 from app.main import app
 
 client = TestClient(app)
@@ -27,25 +29,19 @@ def test_inventory_js_loader():
 
 def test_inventory_api_after_seed():
     suffix = uuid.uuid4().hex[:8]
-    co = client.post("/api/v1/companies", json={"name": f"InvUI {suffix}"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={
-            "name": "Owner",
-            "email": f"owner-{suffix}@inv44.test",
-            "role": "owner",
-            "password": "demo12345",
-        },
-    ).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
     seed = client.post(
         f"/api/v1/companies/{co['id']}/demo/seed-reservation",
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
         json={},
     )
     assert seed.status_code == 200, seed.text
     listed = client.get(
         f"/api/v1/companies/{co['id']}/inventory",
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
     )
     assert listed.status_code == 200, listed.text
     assert len(listed.json()["items"]) >= 3

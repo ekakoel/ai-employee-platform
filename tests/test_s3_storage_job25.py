@@ -5,6 +5,8 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
+
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -144,18 +146,11 @@ def test_document_upload_uses_storage(client, tmp_path, monkeypatch):
     monkeypatch.setenv("STORAGE_LOCAL_PATH", str(tmp_path / "docs_store"))
     cfg_mod.settings = cfg_mod.Settings()
 
-    co = client.post("/api/v1/companies", json={"name": "Storage Co"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={
-            "name": "Owner",
-            "email": "storage@test.local",
-            "role": "owner",
-            "password": "secret123",
-        },
-    ).json()
-    headers = {"X-User-ID": owner["id"]}
-
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
+    headers = _hdrs
     # Find document upload endpoint
     files = {"file": ("note.txt", b"hello knowledge storage", "text/plain")}
     # try common paths

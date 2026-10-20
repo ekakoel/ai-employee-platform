@@ -2,6 +2,8 @@
 
 import pytest
 from fastapi.testclient import TestClient
+
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -41,22 +43,21 @@ def client():
 
 
 def setup(client):
-    co = client.post("/api/v1/companies", json={"name": "Exp Co"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={"name": "Owner", "email": "owner@e.test", "role": "owner"},
-    ).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
     catalog = client.get("/api/v1/agent-catalog").json()
     res = next(i for i in catalog if i["slug"] == "reservation")
     hire = client.post(
         f"/api/v1/companies/{co['id']}/agents/{res['id']}/hire",
         json={"name": "Exp AI"},
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
     )
     assert hire.status_code == 201
     task = client.post(
         f"/api/v1/companies/{co['id']}/tasks",
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
         json={
             "agent_instance_id": hire.json()["id"],
             "title": "Refund request",
@@ -71,7 +72,7 @@ def test_create_candidate_from_task(client):
     company_id, owner_id, agent_id, task_id = setup(client)
     resp = client.post(
         f"/api/v1/companies/{company_id}/tasks/{task_id}/experiences",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "decision": "Escalate to manager for refund",
             "action": "Created approval request",
@@ -91,7 +92,7 @@ def test_validate_and_search(client):
     company_id, owner_id, agent_id, task_id = setup(client)
     cand = client.post(
         f"/api/v1/companies/{company_id}/tasks/{task_id}/experiences",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "decision": "Require manager approval for refund",
             "lesson": "Never auto-refund without policy check",
@@ -102,7 +103,7 @@ def test_validate_and_search(client):
     # not searchable until validated
     search0 = client.post(
         f"/api/v1/companies/{company_id}/experiences/search",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={"query": "refund approval", "limit": 5},
     )
     assert search0.status_code == 200
@@ -110,7 +111,7 @@ def test_validate_and_search(client):
 
     validated = client.post(
         f"/api/v1/companies/{company_id}/experiences/{cand['id']}/validate",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "approve": True,
             "lesson": "Validated lesson: refunds need manager approval",
@@ -123,7 +124,7 @@ def test_validate_and_search(client):
 
     search1 = client.post(
         f"/api/v1/companies/{company_id}/experiences/search",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={"query": "refund manager approval", "limit": 5},
     )
     assert search1.status_code == 200
@@ -135,12 +136,12 @@ def test_reject_experience(client):
     company_id, owner_id, agent_id, task_id = setup(client)
     cand = client.post(
         f"/api/v1/companies/{company_id}/tasks/{task_id}/experiences",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={"decision": "Bad lesson", "lesson": "Ignore policy"},
     ).json()
     rejected = client.post(
         f"/api/v1/companies/{company_id}/experiences/{cand['id']}/validate",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={"approve": False, "human_correction": "Unsafe lesson rejected"},
     )
     assert rejected.status_code == 200
@@ -160,7 +161,9 @@ def test_tenant_isolation(client):
         json={"approve": True, "confidence": 0.9},
     )
 
-    co2 = client.post("/api/v1/companies", json={"name": "OtherExp"}).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co2 = {"id": _cid}
     o2 = client.post(
         f"/api/v1/companies/{co2['id']}/users",
         json={"name": "O2", "email": "o2@e.test", "role": "owner"},
@@ -178,12 +181,12 @@ def test_member_cannot_validate(client):
     company_id, owner_id, agent_id, task_id = setup(client)
     member = client.post(
         f"/api/v1/companies/{company_id}/users",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={"name": "Member", "email": "m@e.test", "role": "member"},
     ).json()
     cand = client.post(
         f"/api/v1/companies/{company_id}/tasks/{task_id}/experiences",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={"decision": "x", "lesson": "y"},
     ).json()
     resp = client.post(

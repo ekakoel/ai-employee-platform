@@ -2,6 +2,8 @@
 
 import pytest
 from fastapi.testclient import TestClient
+
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -41,21 +43,20 @@ def client():
 
 
 def setup(client):
-    co = client.post("/api/v1/companies", json={"name": "Job10 Co"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={"name": "Owner", "email": "o@j10.test", "role": "owner"},
-    ).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
     catalog = client.get("/api/v1/agent-catalog").json()
     res = next(i for i in catalog if i["slug"] == "reservation")
     hire = client.post(
         f"/api/v1/companies/{co['id']}/agents/{res['id']}/hire",
         json={"name": "J10 AI"},
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
     )
     task = client.post(
         f"/api/v1/companies/{co['id']}/tasks",
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
         json={
             "agent_instance_id": hire.json()["id"],
             "title": "Refund case",
@@ -68,7 +69,7 @@ def setup(client):
 def validated_experience(client, company_id, owner_id, task_id):
     cand = client.post(
         f"/api/v1/companies/{company_id}/tasks/{task_id}/experiences",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "decision": "Escalate refund",
             "lesson": "Late cancel needs manager",
@@ -77,7 +78,7 @@ def validated_experience(client, company_id, owner_id, task_id):
     ).json()
     val = client.post(
         f"/api/v1/companies/{company_id}/experiences/{cand['id']}/validate",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={"approve": True, "confidence": 0.8, "lesson": "Late cancel needs manager"},
     )
     assert val.status_code == 200
@@ -93,7 +94,7 @@ def test_job10_matrix_candidate_validate_retrieve_confidence_feedback(client):
     # retrieval
     hits = client.post(
         f"/api/v1/companies/{company_id}/experiences/search",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={"query": "refund late cancel manager", "limit": 5},
     )
     assert hits.status_code == 200
@@ -102,7 +103,7 @@ def test_job10_matrix_candidate_validate_retrieve_confidence_feedback(client):
     # helpful feedback raises confidence + success_count
     fb = client.post(
         f"/api/v1/companies/{company_id}/experiences/{exp['id']}/feedback",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "helpful": True,
             "human_correction": "Also document policy id REF-1",
@@ -121,7 +122,7 @@ def test_unhelpful_feedback_lowers_confidence(client):
     before = exp["confidence"]
     fb = client.post(
         f"/api/v1/companies/{company_id}/experiences/{exp['id']}/feedback",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={"helpful": False, "human_correction": "Lesson was incomplete"},
     )
     assert fb.status_code == 200
@@ -132,12 +133,12 @@ def test_feedback_only_on_validated(client):
     company_id, owner_id, agent_id, task_id = setup(client)
     cand = client.post(
         f"/api/v1/companies/{company_id}/tasks/{task_id}/experiences",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={"decision": "x", "lesson": "y"},
     ).json()
     fb = client.post(
         f"/api/v1/companies/{company_id}/experiences/{cand['id']}/feedback",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={"helpful": True},
     )
     assert fb.status_code == 409
@@ -148,14 +149,14 @@ def test_reuse_bumps_success_count(client):
     exp = validated_experience(client, company_id, owner_id, task_id)
     r1 = client.post(
         f"/api/v1/companies/{company_id}/experiences/{exp['id']}/reuse",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     )
     assert r1.status_code == 200
     assert r1.json()["success_count"] >= 1
     conf1 = r1.json()["confidence"]
     r2 = client.post(
         f"/api/v1/companies/{company_id}/experiences/{exp['id']}/reuse",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     )
     assert r2.json()["success_count"] >= 2
     assert r2.json()["confidence"] >= conf1
@@ -166,7 +167,7 @@ def test_archive_hides_from_search(client):
     exp = validated_experience(client, company_id, owner_id, task_id)
     arch = client.post(
         f"/api/v1/companies/{company_id}/experiences/{exp['id']}/archive",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     )
     assert arch.status_code == 200
     assert arch.json()["validation_status"] == "archived"
@@ -174,7 +175,7 @@ def test_archive_hides_from_search(client):
 
     hits = client.post(
         f"/api/v1/companies/{company_id}/experiences/search",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={"query": "refund late cancel manager", "limit": 5},
     )
     assert all(h["id"] != exp["id"] for h in hits.json())
@@ -185,7 +186,7 @@ def test_get_experience(client):
     exp = validated_experience(client, company_id, owner_id, task_id)
     got = client.get(
         f"/api/v1/companies/{company_id}/experiences/{exp['id']}",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     )
     assert got.status_code == 200
     assert got.json()["id"] == exp["id"]
@@ -196,7 +197,7 @@ def test_manual_candidate_create_fixed(client):
     company_id, owner_id, agent_id, task_id = setup(client)
     resp = client.post(
         f"/api/v1/companies/{company_id}/experiences",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "agent_instance_id": agent_id,
             "problem": "Manual candidate problem",

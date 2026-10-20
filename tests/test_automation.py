@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -44,17 +46,16 @@ def client():
 
 
 def setup(client):
-    co = client.post("/api/v1/companies", json={"name": "Auto Co"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={"name": "Owner", "email": "owner@auto.test", "role": "owner"},
-    ).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
     catalog = client.get("/api/v1/agent-catalog").json()
     res = next(i for i in catalog if i["slug"] == "reservation")
     hire = client.post(
         f"/api/v1/companies/{co['id']}/agents/{res['id']}/hire",
         json={"name": "Auto AI"},
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
     )
     assert hire.status_code == 201
     return co["id"], owner["id"], hire.json()["id"]
@@ -65,7 +66,7 @@ def test_schedule_tick_creates_task(client):
     past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
     rule = client.post(
         f"/api/v1/companies/{company_id}/automations",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "agent_instance_id": agent_id,
             "name": "Nightly check",
@@ -81,7 +82,7 @@ def test_schedule_tick_creates_task(client):
 
     runs = client.post(
         f"/api/v1/companies/{company_id}/automations/tick",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     )
     assert runs.status_code == 200, runs.text
     body = runs.json()
@@ -92,7 +93,7 @@ def test_schedule_tick_creates_task(client):
     # second tick same window is idempotent (no duplicate for same due key)
     runs2 = client.post(
         f"/api/v1/companies/{company_id}/automations/tick",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     )
     assert runs2.status_code == 200
     # after first run next_run_at advanced; may be empty
@@ -103,7 +104,7 @@ def test_event_trigger_idempotency(client):
     company_id, owner_id, agent_id = setup(client)
     rule = client.post(
         f"/api/v1/companies/{company_id}/automations",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "agent_instance_id": agent_id,
             "name": "On booking",
@@ -118,7 +119,7 @@ def test_event_trigger_idempotency(client):
 
     r1 = client.post(
         f"/api/v1/companies/{company_id}/automations/events",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "event_type": "booking.created",
             "payload": {"booking_id": "B-100"},
@@ -132,7 +133,7 @@ def test_event_trigger_idempotency(client):
 
     r2 = client.post(
         f"/api/v1/companies/{company_id}/automations/events",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "event_type": "booking.created",
             "payload": {"booking_id": "B-100"},
@@ -149,7 +150,7 @@ def test_retry_failed_run(client):
     company_id, owner_id, agent_id = setup(client)
     rule = client.post(
         f"/api/v1/companies/{company_id}/automations",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "agent_instance_id": agent_id,
             "name": "Retryable",
@@ -166,7 +167,7 @@ def test_retry_failed_run(client):
     # instead create event, then manually mark failed and retry
     r1 = client.post(
         f"/api/v1/companies/{company_id}/automations/events",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "event_type": "retry.test",
             "idempotency_key": "retry.test:1",
@@ -185,7 +186,7 @@ def test_retry_failed_run(client):
 
     retry = client.post(
         f"/api/v1/companies/{company_id}/automations/runs/{run_id}/retry",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     )
     assert retry.status_code == 200, retry.text
     assert retry.json()["attempt"] == 2
@@ -196,7 +197,7 @@ def test_list_rules_and_runs(client):
     company_id, owner_id, agent_id = setup(client)
     client.post(
         f"/api/v1/companies/{company_id}/automations",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "agent_instance_id": agent_id,
             "name": "List me",
@@ -208,19 +209,19 @@ def test_list_rules_and_runs(client):
     )
     rules = client.get(
         f"/api/v1/companies/{company_id}/automations",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     )
     assert rules.status_code == 200
     assert len(rules.json()) >= 1
 
     client.post(
         f"/api/v1/companies/{company_id}/automations/events",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={"event_type": "list.event", "idempotency_key": "list.event:1"},
     )
     runs = client.get(
         f"/api/v1/companies/{company_id}/automations/runs",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     )
     assert runs.status_code == 200
     assert len(runs.json()) >= 1
@@ -230,7 +231,7 @@ def test_schedule_requires_interval(client):
     company_id, owner_id, agent_id = setup(client)
     resp = client.post(
         f"/api/v1/companies/{company_id}/automations",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "agent_instance_id": agent_id,
             "name": "Bad schedule",

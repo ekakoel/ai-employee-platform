@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -45,23 +47,22 @@ def client():
 
 
 def setup_two_agents(client):
-    co = client.post("/api/v1/companies", json={"name": "Del Co"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={"name": "Owner", "email": "owner@del.test", "role": "owner"},
-    ).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
     catalog = client.get("/api/v1/agent-catalog").json()
     res = next(i for i in catalog if i["slug"] == "reservation")
     contract = next(i for i in catalog if i["slug"] == "contract-manager")
     h1 = client.post(
         f"/api/v1/companies/{co['id']}/agents/{res['id']}/hire",
         json={"name": "Res AI"},
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
     )
     h2 = client.post(
         f"/api/v1/companies/{co['id']}/agents/{contract['id']}/hire",
         json={"name": "Contract AI"},
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
     )
     assert h1.status_code == 201 and h2.status_code == 201
     return co["id"], owner["id"], h1.json()["id"], h2.json()["id"]
@@ -78,7 +79,7 @@ def create_req(client, company_id, owner_id, a1, a2, **extra):
     }
     resp = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json=body,
     )
     assert resp.status_code == 201, resp.text
@@ -91,7 +92,7 @@ def test_execute_creates_child_task_and_completes(client):
 
     run = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests/{req['id']}/execute",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={"mode": "consult"},
     )
     assert run.status_code == 200, run.text
@@ -116,7 +117,7 @@ def test_accept_and_reject(client):
     req = create_req(client, company_id, owner_id, a1, a2)
     acc = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests/{req['id']}/accept",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     )
     assert acc.status_code == 200
     assert acc.json()["status"] == "accepted"
@@ -124,7 +125,7 @@ def test_accept_and_reject(client):
     req2 = create_req(client, company_id, owner_id, a1, a2, title="Other")
     rej = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests/{req2['id']}/reject",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         params={"reason": "Out of scope"},
     )
     assert rej.status_code == 200
@@ -136,7 +137,7 @@ def test_cancel(client):
     req = create_req(client, company_id, owner_id, a1, a2)
     can = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests/{req['id']}/cancel",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     )
     assert can.status_code == 200
     assert can.json()["status"] == "cancelled"
@@ -154,7 +155,7 @@ def test_timeout_marks_failed(client):
 
     got = client.get(
         f"/api/v1/companies/{company_id}/delegation-requests/{req['id']}",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     )
     assert got.status_code == 200
     assert got.json()["status"] == "failed"
@@ -173,7 +174,7 @@ def test_execute_after_timeout_fails(client):
 
     run = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests/{req['id']}/execute",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={"mode": "consult"},
     )
     assert run.status_code == 409
@@ -184,13 +185,13 @@ def test_cannot_execute_twice(client):
     req = create_req(client, company_id, owner_id, a1, a2)
     first = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests/{req['id']}/execute",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={"mode": "consult"},
     )
     assert first.status_code == 200
     second = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests/{req['id']}/execute",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={"mode": "consult"},
     )
     assert second.status_code == 409
@@ -201,7 +202,7 @@ def test_execute_mode_leaves_child_pending(client):
     req = create_req(client, company_id, owner_id, a1, a2, title="Exec mode")
     run = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests/{req['id']}/execute",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={"mode": "execute"},
     )
     assert run.status_code == 200, run.text

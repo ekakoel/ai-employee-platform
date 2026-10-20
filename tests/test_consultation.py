@@ -4,6 +4,8 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
+
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -45,17 +47,16 @@ def client():
 
 
 def setup(client):
-    co = client.post("/api/v1/companies", json={"name": "Consult Co"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={"name": "Owner", "email": "owner@c.test", "role": "owner"},
-    ).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
     catalog = client.get("/api/v1/agent-catalog").json()
     res = next(i for i in catalog if i["slug"] == "reservation")
     hire = client.post(
         f"/api/v1/companies/{co['id']}/agents/{res['id']}/hire",
         json={"name": "Consult AI"},
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
     )
     assert hire.status_code == 201
     return co["id"], owner["id"], hire.json()["id"]
@@ -73,7 +74,7 @@ def test_create_consult_task_and_run(client):
     # seed some knowledge for rationale
     client.post(
         f"/api/v1/companies/{company_id}/knowledge",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "title": "Discount policy",
             "content": "Maximum discretionary discount is 5 percent without manager approval.",
@@ -83,7 +84,7 @@ def test_create_consult_task_and_run(client):
 
     task = client.post(
         f"/api/v1/companies/{company_id}/tasks",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "agent_instance_id": agent_id,
             "title": "Discount question",
@@ -96,7 +97,7 @@ def test_create_consult_task_and_run(client):
 
     run = client.post(
         f"/api/v1/companies/{company_id}/tasks/{task.json()['id']}/consult",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     )
     assert run.status_code == 200, run.text
     body = run.json()
@@ -113,7 +114,7 @@ def test_consult_endpoint_rejects_execute_mode(client):
     company_id, owner_id, agent_id = setup(client)
     task = client.post(
         f"/api/v1/companies/{company_id}/tasks",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "agent_instance_id": agent_id,
             "title": "Do something",
@@ -123,7 +124,7 @@ def test_consult_endpoint_rejects_execute_mode(client):
     ).json()
     run = client.post(
         f"/api/v1/companies/{company_id}/tasks/{task['id']}/consult",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
     )
     assert run.status_code == 400
 
@@ -132,7 +133,7 @@ def test_tool_executor_blocks_side_effect_in_consult(client):
     company_id, owner_id, agent_id = setup(client)
     task = client.post(
         f"/api/v1/companies/{company_id}/tasks",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "agent_instance_id": agent_id,
             "title": "Consult only",
@@ -160,7 +161,7 @@ def test_default_mode_is_execute(client):
     company_id, owner_id, agent_id = setup(client)
     task = client.post(
         f"/api/v1/companies/{company_id}/tasks",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "agent_instance_id": agent_id,
             "title": "Normal",

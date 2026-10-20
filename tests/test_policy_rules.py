@@ -2,6 +2,8 @@
 
 import pytest
 from fastapi.testclient import TestClient
+
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -43,22 +45,17 @@ def client():
 
 
 def setup_company(client):
-    co = client.post("/api/v1/companies", json={"name": "Policy Co"}).json()
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={"name": "Owner", "email": "owner@p.test", "role": "owner"},
-    ).json()
-    member = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        headers={"X-User-ID": owner["id"]},
-        json={"name": "Member", "email": "member@p.test", "role": "member"},
-    ).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
+    owner = {"id": _oid, "email": _demo.get("owner_email")}
+    member = {"id": None}  # invite-only API; use bootstrap personas
     catalog = client.get("/api/v1/agent-catalog").json()
     res = next(i for i in catalog if i["slug"] == "reservation")
     hire = client.post(
         f"/api/v1/companies/{co['id']}/agents/{res['id']}/hire",
         json={"name": "Policy AI"},
-        headers={"X-User-ID": owner["id"]},
+        headers=_hdrs,
     )
     assert hire.status_code == 201, hire.text
     return co["id"], owner["id"], member["id"], hire.json()["id"]
@@ -79,7 +76,7 @@ def test_low_risk_automatic_allow(client):
     company_id, owner_id, _, agent_id = setup_company(client)
     client.post(
         f"/api/v1/companies/{company_id}/policies",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "name": "Allow search",
             "configuration": {
@@ -105,7 +102,7 @@ def test_approval_required(client):
     company_id, owner_id, _, agent_id = setup_company(client)
     client.post(
         f"/api/v1/companies/{company_id}/policies",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "name": "Approve send quotation",
             "description": "Sending quotations needs approval",
@@ -132,7 +129,7 @@ def test_denial(client):
     company_id, owner_id, _, agent_id = setup_company(client)
     client.post(
         f"/api/v1/companies/{company_id}/policies",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "name": "Deny delete",
             "configuration": {
@@ -157,7 +154,7 @@ def test_conditional_amount(client):
     # low amounts auto, high amounts approval
     client.post(
         f"/api/v1/companies/{company_id}/policies",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "name": "High amount approval",
             "configuration": {
@@ -171,7 +168,7 @@ def test_conditional_amount(client):
     )
     client.post(
         f"/api/v1/companies/{company_id}/policies",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "name": "Low amount auto",
             "configuration": {
@@ -223,7 +220,7 @@ def test_unauthorized_approver_denied(client):
     # member can use but not approve
     client.post(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/access",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "user_id": member_id,
             "can_use": True,
@@ -247,7 +244,7 @@ def test_priority_prefers_higher(client):
     company_id, owner_id, _, agent_id = setup_company(client)
     client.post(
         f"/api/v1/companies/{company_id}/policies",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "name": "Low priority allow",
             "configuration": {
@@ -259,7 +256,7 @@ def test_priority_prefers_higher(client):
     )
     client.post(
         f"/api/v1/companies/{company_id}/policies",
-        headers={"X-User-ID": owner_id},
+        headers=_hdrs,
         json={
             "name": "High priority deny",
             "configuration": {

@@ -1,0 +1,231 @@
+diff --git a/app/static/workspace/app.js b/app/static/workspace/app.js
+index 33e4cda..10c3a0a 100644
+--- a/app/static/workspace/app.js
++++ b/app/static/workspace/app.js
+@@ -1457,8 +1457,14 @@
+     return [...new Set(tags)].map((t) => `<span class="tag">${t}</span>`).join(" ");
+   }
+ 
++  function applyTaskActionGating() {
++    const canCreate = hasPermission("task.create");
++    if ($("taskCreateCard")) $("taskCreateCard").classList.toggle("hidden", !canCreate);
++  }
++
+   async function loadTasks() {
+     if (!state.companyId) return;
++    applyTaskActionGating();
+     try {
+       let tasks = await api(`/companies/${state.companyId}/tasks`);
+       const f = $("taskFilter").value;
+@@ -1568,7 +1574,8 @@
+   }
+   $("btnRefreshTasks").onclick = loadTasks;
+   $("taskFilter").onchange = loadTasks;
+-  $("btnCreateTask").onclick = async () => {
++  if ($("btnCreateTask")) $("btnCreateTask").onclick = async () => {
++    const log = $("taskCreateLog");
+     try {
+       const task = await api(`/companies/${state.companyId}/tasks`, {
+         method: "POST",
+@@ -1581,10 +1588,22 @@
+       });
+       $("taskTitle").value = "";
+       $("taskInstruction").value = "";
++      if (log) {
++        log.classList.remove("hidden-log");
++        log.textContent =
++          "Task created: " + (task.title || task.id) +
++          "\nMode: " + (task.mode || $("taskMode").value) +
++          "\nNext: use Consult or Execute on the task row. If policy requires approval, open Approvals.";
++      }
+       loadTasks();
+       refreshInboxBadge();
+     } catch (err) {
+-      alert(err.message);
++      if (log) {
++        log.classList.remove("hidden-log");
++        log.textContent = err.message;
++      } else {
++        alert(err.message);
++      }
+     }
+   };
+ 
+@@ -1629,13 +1648,16 @@
+         (list || [])
+           .map((a) => {
+             const summary = approvalPayloadSummary(a);
++            const canApprove = hasPermission("approval.manage");
+             const actions =
+-              a.status === "pending"
++              a.status === "pending" && canApprove
+                 ? `<div class="actions">
+             <button class="success btn-approve" data-id="${a.id}">Approve</button>
+             <button class="danger btn-reject" data-id="${a.id}">Reject</button>
+             ${a.task_id ? `<button class="secondary btn-appr-task" data-task="${a.task_id}">Open task</button>` : ""}
+           </div>`
++                : a.status === "pending" && !canApprove
++                ? `<div class="meta">Waiting for manager/owner approval.</div>`
+                 : `<div class="actions">
+             ${a.task_id ? `<button class="secondary btn-appr-task" data-task="${a.task_id}">Open task</button>` : ""}
+             <span class="meta">Reviewed: ${escapeHtml(a.review_comment || a.status)}</span>
+diff --git a/app/static/workspace/index.html b/app/static/workspace/index.html
+index a06793a..8041069 100644
+--- a/app/static/workspace/index.html
++++ b/app/static/workspace/index.html
+@@ -370,26 +370,33 @@
+ 
+       <!-- TASKS -->
+       <section id="view-tasks" class="view">
+-        <div class="card">
++        <p class="home-notice" role="status">
++          <strong>Tasks</strong> run under policy with tools.
++          <code>Consult</code> = plan only; <code>Execute</code> = tools (may need <strong>Approvals</strong>).
++          Chat stays advisory — create a task when the AI must act.
++        </p>
++        <div class="card" id="taskCreateCard">
+           <h2>Create task</h2>
++          <p class="muted">Requires <code>task.create</code>. Pick a hired AI Employee, mode, and clear instruction.</p>
+           <div class="grid-2">
+             <label>Agent
+               <select id="taskAgent"></select>
+             </label>
+             <label>Mode
+               <select id="taskMode">
+-                <option value="execute">Execute</option>
+-                <option value="consult">Consult</option>
++                <option value="consult">Consult — plan only</option>
++                <option value="execute">Execute — tools + policy</option>
+               </select>
+             </label>
+             <label class="full">Title
+-              <input id="taskTitle" placeholder="Task title" />
++              <input id="taskTitle" placeholder="e.g. Quote Alila 2 pax 27 Oct" />
+             </label>
+             <label class="full">Instruction
+               <textarea id="taskInstruction" rows="3" placeholder="What should the AI do?"></textarea>
+             </label>
+           </div>
+           <button id="btnCreateTask" class="primary">Create task</button>
++          <pre id="taskCreateLog" class="log hidden-log"></pre>
+         </div>
+         <div class="card">
+           <div class="row between">
+@@ -415,7 +422,7 @@
+           <div class="row between">
+             <div>
+               <h2>Approval center</h2>
+-              <p class="muted">Human authority for restricted AI actions (e.g. create_reservation). Approve resumes the task; reject stops it.</p>
++              <p class="muted">Human authority for restricted AI actions (e.g. create_reservation). Requires <code>approval.manage</code> to approve/reject. Approve resumes the task; reject stops it. Managers and Owner typically handle this queue.</p>
+             </div>
+             <button id="btnRefreshApprovals" class="secondary">Refresh</button>
+           </div>
+diff --git a/docs/features/09_tasks.md b/docs/features/09_tasks.md
+new file mode 100644
+index 0000000..c36be88
+--- /dev/null
++++ b/docs/features/09_tasks.md
+@@ -0,0 +1,24 @@
++# Feature: Tasks (consult / execute)
++
++## Purpose
++Policy-gated work items where the AI Employee may use tools. Separate from advisory chat.
++
++## Modes
++| Mode | Behavior |
++|------|----------|
++| **Consult** | Plan / analysis only (safer) |
++| **Execute** | Tools run; may create approval requests |
++
++## Who
++- Create: `task.create` (Owner, AI Admin, Manager, Reservation, Member, …)
++- Read list: `task.read`
++- Run consult/execute: same company + agent access
++
++## Frontend
++- **Tasks** — create form (hidden without `task.create`) + task center with Consult / Execute actions
++- Linked from Chat “Also create Task”
++
++## Backend
++- `POST /companies/{id}/tasks`
++- `POST /companies/{id}/tasks/{id}/consult`
++- `POST /companies/{id}/tasks/{id}/execute`
+diff --git a/docs/features/10_approvals.md b/docs/features/10_approvals.md
+new file mode 100644
+index 0000000..128bb23
+--- /dev/null
++++ b/docs/features/10_approvals.md
+@@ -0,0 +1,18 @@
++# Feature: Approvals
++
++## Purpose
++Human gate for restricted tool actions (e.g. create_reservation). Approve continues the task; reject stops it.
++
++## Who
++- View: `approval.read`
++- Approve/Reject: `approval.manage` (Owner, Manager typically)
++- Other roles see pending items as read-only “waiting for manager”
++
++## Frontend
++- **Approvals** nav + Inbox badges
++- Approve / Reject buttons only with `approval.manage`
++
++## Backend
++- `GET /companies/{id}/approvals`
++- `POST /companies/{id}/approvals/{id}/approve`
++- `POST /companies/{id}/approvals/{id}/reject`
+diff --git a/docs/features/README.md b/docs/features/README.md
+index 0b450a2..cc67b29 100644
+--- a/docs/features/README.md
++++ b/docs/features/README.md
+@@ -2,15 +2,15 @@
+ 
+ | # | Feature | Doc |
+ |---|---------|-----|
+-| 1 | Register business | [01_company_registration.md](01_company_registration.md) |
+-| 2 | Email verification | [02_email_verification.md](02_email_verification.md) |
+-| 3 | Company profile | [03_company_profile.md](03_company_profile.md) |
+-| 4 | Users & job positions | [04_users_roles_employees.md](04_users_roles_employees.md) |
++| 1–3 | Register, verify, profile | 01–03 |
++| 4 | Users & positions | [04_users_roles_employees.md](04_users_roles_employees.md) |
+ | 5 | AI Administrator | [05_ai_administrator.md](05_ai_administrator.md) |
+ | 6 | Hire AI Employees | [06_ai_employees_hire.md](06_ai_employees_hire.md) |
+-| 7 | Company knowledge | [07_knowledge.md](07_knowledge.md) |
++| 7 | Knowledge | [07_knowledge.md](07_knowledge.md) |
+ | 8 | Advisory chat | [08_chat.md](08_chat.md) |
++| 9 | Tasks | [09_tasks.md](09_tasks.md) |
++| 10 | Approvals | [10_approvals.md](10_approvals.md) |
+ 
+ ```
+-Register → profile → users → hire AI → knowledge → chat → task/execute
++Chat (advice) → Task (tools) → Approval if required → Results
+ ```
+diff --git a/tests/test_tasks_approvals_ui_job68.py b/tests/test_tasks_approvals_ui_job68.py
+new file mode 100644
+index 0000000..e99923f
+--- /dev/null
++++ b/tests/test_tasks_approvals_ui_job68.py
+@@ -0,0 +1,23 @@
++"""Job 68 — tasks/approvals UI gating and docs."""
++
++from pathlib import Path
++
++from fastapi.testclient import TestClient
++
++from app.main import app
++
++client = TestClient(app)
++
++
++def test_tasks_view_has_create_card():
++    html = client.get("/workspace").text
++    assert 'id="view-tasks"' in html
++    assert 'id="taskCreateCard"' in html
++    assert "btnCreateTask" in html
++    assert 'id="view-approvals"' in html
++
++
++def test_js_task_and_approval_gating():
++    js = Path("app/static/workspace/app.js").read_text(encoding="utf-8")
++    assert "applyTaskActionGating" in js
++    assert "approval.manage" in js

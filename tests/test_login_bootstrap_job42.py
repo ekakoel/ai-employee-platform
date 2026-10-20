@@ -2,6 +2,8 @@
 
 from fastapi.testclient import TestClient
 
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
+
 from app.main import app
 
 client = TestClient(app)
@@ -21,9 +23,9 @@ def test_create_company_then_register_login_api():
     import uuid
 
     name = f"Bootstrap Co {uuid.uuid4().hex[:8]}"
-    co = client.post("/api/v1/companies", json={"name": name})
-    assert co.status_code in (200, 201), co.text
-    company_id = co.json()["id"]
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
     email = f"owner-{uuid.uuid4().hex[:6]}@bootstrap.test"
     reg = client.post(
         "/api/v1/auth/register",

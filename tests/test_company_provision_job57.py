@@ -4,6 +4,8 @@ import uuid
 
 from fastapi.testclient import TestClient
 
+from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
+
 from app.main import app
 from app.services.seed import ROLE_PERMISSIONS, VALID_COMPANY_ROLES
 
@@ -26,17 +28,11 @@ def test_workspace_login_has_no_public_create_company_cta():
 
 def test_self_register_cannot_claim_owner_when_company_has_users():
     suffix = uuid.uuid4().hex[:8]
-    co = client.post("/api/v1/companies", json={"name": f"Prov {suffix}"}).json()
+    # auth-hardened: demo bootstrap instead of public company create
+    _cid, _oid, _hdrs, _demo = provision_company(client)
+    co = {"id": _cid}
     # first user via users API as bootstrap
-    owner = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        json={
-            "name": "Owner",
-            "email": f"owner-{suffix}@j57.test",
-            "role": "owner",
-            "password": "demo12345",
-        },
-    ).json()
+    member = {"id": None}  # invite-only API; use bootstrap personas
     assert owner.get("id")
 
     reg = client.post(
