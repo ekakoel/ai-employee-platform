@@ -2588,6 +2588,66 @@ async function loadDepartments() {
   }
 
 
+
+  async function loadAgentAssignedSkills(agentId) {
+    const box = $("skillAssignedList");
+    if (!box) return;
+    if (!agentId || !state.companyId) {
+      box.innerHTML = `<div class="muted" style="font-size:.85rem">Select an agent to see assigned skills.</div>`;
+      return;
+    }
+    try {
+      const rows = await api(`/companies/${state.companyId}/agents/${agentId}/skills`);
+      if (!rows || !rows.length) {
+        box.innerHTML = `<div class="empty">No skills assigned to this agent.</div>`;
+        return;
+      }
+      const byId = {};
+      (_skillsCache || []).forEach((s) => {
+        byId[s.id] = s;
+      });
+      box.innerHTML = rows
+        .map((row) => {
+          const sk = byId[row.skill_id] || {};
+          const name = sk.name || row.skill_id;
+          const slug = sk.slug || "";
+          const dom = slug ? skillDomain(slug) : "Other";
+          const canManage = hasPermission("agent.manage");
+          const btn = canManage
+            ? `<button type="button" class="secondary btn-unassign-skill" data-assignment-id="${escapeHtml(row.id)}" data-agent-id="${escapeHtml(agentId)}" style="margin-top:.35rem">Unassign</button>`
+            : "";
+          return `<div class="agent-card" data-assignment-id="${escapeHtml(row.id)}">
+            <div class="row" style="justify-content:space-between;gap:.5rem;flex-wrap:wrap">
+              <strong>${escapeHtml(name)}</strong>
+              <span class="tag ${domainBadgeClass(dom)}">${escapeHtml(dom)}</span>
+            </div>
+            <div class="muted" style="font-size:.8rem">${escapeHtml(slug || row.skill_id)}</div>
+            ${btn}
+          </div>`;
+        })
+        .join("");
+      box.querySelectorAll(".btn-unassign-skill").forEach((btn) => {
+        btn.onclick = async () => {
+          const assignmentId = btn.getAttribute("data-assignment-id");
+          const ag = btn.getAttribute("data-agent-id");
+          const log = $("skillAssignLog");
+          try {
+            await api(
+              `/companies/${state.companyId}/agents/${ag}/skills/${assignmentId}`,
+              { method: "DELETE" }
+            );
+            if (log) log.textContent = "Skill unassigned.";
+            await loadAgentAssignedSkills(ag);
+          } catch (err) {
+            if (log) log.textContent = err.message;
+          }
+        };
+      });
+    } catch (err) {
+      box.innerHTML = `<div class="muted">${escapeHtml(err.message)}</div>`;
+    }
+  }
+
   async function loadSkills() {
     if (!state.companyId) return;
     if ($("skillCreateCard")) {
@@ -2616,6 +2676,14 @@ async function loadDepartments() {
       renderSkillsList(_skillsCache);
     });
   });
+
+  if ($("skillAssignAgent")) {
+    $("skillAssignAgent").addEventListener("change", () => {
+      const ag = $("skillAssignAgent").value;
+      loadAgentAssignedSkills(ag);
+    });
+  }
+
   if ($("btnAssignSkill"))
     $("btnAssignSkill").onclick = async () => {
       const log = $("skillAssignLog");
@@ -2631,6 +2699,7 @@ async function loadDepartments() {
           body: JSON.stringify({ skill_id: skillId }),
         });
         if (log) log.textContent = "Skill assigned.";
+        await loadAgentAssignedSkills(agentId);
       } catch (err) {
         if (log) log.textContent = err.message;
       }
