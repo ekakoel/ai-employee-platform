@@ -1,21 +1,28 @@
-# Feature: Company profile (complete onboarding)
+# Feature: Company profile
 
 ## Purpose
-Owner fills organization details so the workspace unlocks.
+Organization identity (name, contact email, industry) and onboarding gate for the workspace sidebar.
+
+## API
+| Method | Path | Who |
+|--------|------|-----|
+| GET | `/api/v1/companies/{id}/profile` | Any company user |
+| PUT | `/api/v1/companies/{id}/profile` | **Owner only** |
+
+## UI (role matrix)
+
+| Role | View | Edit form / Save |
+|------|------|------------------|
+| Owner | Full + onboarding checklist until complete | Yes |
+| AI Admin, Administration, Manager, Reservation, Contract, Accounting, Member | Read-only summary | No — form hidden |
 
 ## Frontend
-- Nav: **Company profile** (forced landing while status is pending)
-- Fields: name, contact email, industry
-- Save → `onboarding_status=complete`
+- `#companyProfileEdit` — owner only
+- `#companyProfileRead` — non-owner only
+- `applyCompanyProfileMode()` in `app.js`
 
-## Backend
-- `GET /api/v1/companies/{id}/profile`
-- `PUT /api/v1/companies/{id}/profile`
-
-## Rules
-- Only **owner** may complete profile
-- While pending, most workspace routes return 403
-- `/auth/me` and profile remain available
-
-## Next
-[Users, invitations & job positions](04_users_roles_employees.md)
+## Flow
+```
+Owner: register → verify → login → complete profile → sidebar unlock → invite staff
+Staff: login → see read-only company profile (no edit controls)
+```

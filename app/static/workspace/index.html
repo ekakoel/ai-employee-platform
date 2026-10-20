@@ -225,20 +225,42 @@
 
       <section id="view-company" class="view">
         <h2 id="companyProfileName">Company profile</h2>
-        <p class="muted"><strong>Step 2 (required):</strong> complete organization details to unlock the full sidebar.
-          Until status is <code>complete</code>, only this page is available — <strong>Users &amp; positions will not appear yet</strong>.</p>
-        <ol class="muted" style="margin:.5rem 0 1rem 1.1rem;font-size:.85rem;line-height:1.45">
-          <li>Enter company name, contact email, and industry</li>
-          <li>Click <strong>Save company profile</strong></li>
-          <li>After unlock, open <strong>Users &amp; positions</strong> in the left menu to invite staff</li>
-        </ol>
         <p id="companyOnboardingStatus" class="muted" role="status"></p>
-        <div class="grid-2">
-          <label>Company name<input id="companyProfileNameInput" maxlength="200" /></label>
-          <label>Contact email<input id="companyContactEmail" type="email" maxlength="320" /></label>
-          <label>Industry<input id="companyIndustry" maxlength="120" /></label>
+
+        <!-- Owner only: onboarding checklist + editable form (PUT profile is owner-only) -->
+        <div id="companyProfileEdit" class="hidden">
+          <p id="companyOnboardingHint" class="muted">
+            <strong>Step 2 (required):</strong> complete organization details to unlock the full sidebar.
+            Until status is <code>complete</code>, only this page is available —
+            <strong>Users &amp; positions will not appear yet</strong>.
+          </p>
+          <ol id="companyOnboardingSteps" class="muted" style="margin:.5rem 0 1rem 1.1rem;font-size:.85rem;line-height:1.45">
+            <li>Enter company name, contact email, and industry</li>
+            <li>Click <strong>Save company profile</strong></li>
+            <li>After unlock, open <strong>Users &amp; positions</strong> in the left menu to invite staff</li>
+          </ol>
+          <div class="grid-2">
+            <label>Company name<input id="companyProfileNameInput" maxlength="200" autocomplete="organization" /></label>
+            <label>Contact email<input id="companyContactEmail" type="email" maxlength="320" autocomplete="email" /></label>
+            <label>Industry<input id="companyIndustry" maxlength="120" /></label>
+          </div>
+          <button type="button" id="btnSaveCompanyProfile" class="primary">Save company profile</button>
         </div>
-        <button id="btnSaveCompanyProfile" class="primary">Save company profile</button>
+
+        <!-- Non-owner: read-only summary (no form controls) -->
+        <div id="companyProfileRead" class="hidden">
+          <p class="home-notice" role="status">
+            Organization details are <strong>read-only</strong> for your role.
+            Only the <strong>Owner</strong> can change company name, contact email, and industry.
+          </p>
+          <div class="grid-2 company-profile-readonly">
+            <div class="item"><span class="meta">Company name</span><strong id="companyReadName">—</strong></div>
+            <div class="item"><span class="meta">Contact email</span><strong id="companyReadEmail">—</strong></div>
+            <div class="item"><span class="meta">Industry</span><strong id="companyReadIndustry">—</strong></div>
+            <div class="item"><span class="meta">Onboarding</span><strong id="companyReadStatus">—</strong></div>
+          </div>
+        </div>
+
         <p id="companyProfileLog" class="login-message" role="status"></p>
       </section>
 

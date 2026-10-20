@@ -445,6 +445,47 @@
     btn.addEventListener("click", () => showView(btn.dataset.view));
   });
 
+  function isCompanyProfileOwner(company) {
+    const ownerId = company && company.owner_user_id;
+    return Boolean(
+      ownerId &&
+      state.userId &&
+      ownerId === state.userId &&
+      (state.role === "owner" || !state.role)
+    );
+  }
+
+  function applyCompanyProfileMode(company) {
+    const owner = isCompanyProfileOwner(company);
+    const edit = $("companyProfileEdit");
+    const read = $("companyProfileRead");
+    if (edit) edit.classList.toggle("hidden", !owner);
+    if (read) read.classList.toggle("hidden", owner);
+
+    const complete = company && company.onboarding_status === "complete";
+    if ($("companyOnboardingHint")) {
+      $("companyOnboardingHint").classList.toggle("hidden", !owner || complete);
+    }
+    if ($("companyOnboardingSteps")) {
+      $("companyOnboardingSteps").classList.toggle("hidden", !owner || complete);
+    }
+
+    if (owner) {
+      if ($("companyProfileNameInput")) $("companyProfileNameInput").value = company.name || "";
+      if ($("companyContactEmail")) $("companyContactEmail").value = company.contact_email || "";
+      if ($("companyIndustry")) $("companyIndustry").value = company.industry || "";
+      if ($("btnSaveCompanyProfile")) $("btnSaveCompanyProfile").classList.remove("hidden");
+    } else {
+      if ($("companyReadName")) $("companyReadName").textContent = company.name || "—";
+      if ($("companyReadEmail")) $("companyReadEmail").textContent = company.contact_email || "—";
+      if ($("companyReadIndustry")) $("companyReadIndustry").textContent = company.industry || "—";
+      if ($("companyReadStatus")) {
+        $("companyReadStatus").textContent =
+          company.onboarding_status === "complete" ? "Complete" : (company.onboarding_status || "Pending");
+      }
+    }
+  }
+
   async function loadCompanyProfile() {
     if (!state.companyId || developerMode) return true;
     const version = sessionVersion;
@@ -454,15 +495,22 @@
       const company = await api(`/companies/${state.companyId}/profile`, { skipSidebarRefresh: true });
       if (version !== sessionVersion || token !== state.accessToken) return false;
       state.onboardingStatus = company.onboarding_status;
-      if ($("companyProfileName")) $("companyProfileName").textContent = company.name;
-      if ($("companyOnboardingStatus")) $("companyOnboardingStatus").textContent =
-        company.onboarding_status === "complete"
-          ? "Profile complete — Users & positions is in the left sidebar."
-          : "Status: pending. Fill name, contact email, and industry, then Save. Other menus (including Users) stay hidden until this is complete.";
-      if ($("companyProfileNameInput")) $("companyProfileNameInput").value = company.name || "";
-      if ($("companyContactEmail")) $("companyContactEmail").value = company.contact_email || "";
-      if ($("companyIndustry")) $("companyIndustry").value = company.industry || "";
-      if ($("btnSaveCompanyProfile")) $("btnSaveCompanyProfile").classList.toggle("hidden", company.owner_user_id !== state.userId);
+      state.ownerUserId = company.owner_user_id || null;
+      if ($("companyProfileName")) $("companyProfileName").textContent = company.name || "Company profile";
+      if ($("companyOnboardingStatus")) {
+        if (isCompanyProfileOwner(company)) {
+          $("companyOnboardingStatus").textContent =
+            company.onboarding_status === "complete"
+              ? "Profile complete — Users & positions is in the left sidebar."
+              : "Status: pending. Fill name, contact email, and industry, then Save. Other menus stay hidden until this is complete.";
+        } else {
+          $("companyOnboardingStatus").textContent =
+            company.onboarding_status === "complete"
+              ? "Organization profile is complete."
+              : "Organization profile is still pending completion by the Owner.";
+        }
+      }
+      applyCompanyProfileMode(company);
       applyNavGating();
       if (log) log.textContent = "";
       return true;
@@ -477,6 +525,10 @@
 
   if ($("btnSaveCompanyProfile")) $("btnSaveCompanyProfile").onclick = async () => {
     const log = $("companyProfileLog");
+    if (state.role && state.role !== "owner") {
+      if (log) log.textContent = "Only the company Owner can update the profile.";
+      return;
+    }
     try {
       await api(`/companies/${state.companyId}/profile`, { method: "PUT", body: JSON.stringify({
         name: $("companyProfileNameInput").value.trim(),
