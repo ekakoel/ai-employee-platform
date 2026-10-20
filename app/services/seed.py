@@ -767,8 +767,6 @@ def seed_demo_company_skills(db: Session, *, company_id: str) -> list[Skill]:
         created.append(skill)
     return created
 
-# === Job 77: index knowledge after demo seed ===
-
 def seed_demo_company_knowledge(db: Session, *, company_id: str) -> list:
     """Seed demo KnowledgeItem rows for skills required_knowledge keys."""
     from app.models.entities import KnowledgeItem
