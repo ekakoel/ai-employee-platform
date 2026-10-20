@@ -9,8 +9,8 @@ from app.models.entities import AgentSkill, Skill
 
 
 def list_available_skills(db: Session, company_id: str) -> list[Skill]:
-    """Platform skills (company_id IS NULL) + company custom skills."""
-    return list(
+    """Platform skills + company skills, one row per slug (company overrides platform)."""
+    rows = list(
         db.scalars(
             select(Skill).where(
                 Skill.is_active.is_(True),
@@ -21,6 +21,17 @@ def list_available_skills(db: Session, company_id: str) -> list[Skill]:
             ).order_by(Skill.slug)
         ).all()
     )
+    by_slug: dict[str, Skill] = {}
+    for skill in rows:
+        slug = skill.slug or skill.id
+        prev = by_slug.get(slug)
+        if prev is None:
+            by_slug[slug] = skill
+            continue
+        # Prefer company-scoped over platform (company_id IS NULL)
+        if skill.company_id is not None and prev.company_id is None:
+            by_slug[slug] = skill
+    return sorted(by_slug.values(), key=lambda s: (s.slug or ""))
 
 
 def get_skill_for_company(
