@@ -766,3 +766,14 @@ def seed_demo_company_skills(db: Session, *, company_id: str) -> list[Skill]:
         )
         created.append(skill)
     return created
+
+# === Job 77: index knowledge after demo seed ===
+def seed_and_index_demo_knowledge(db, *, company_id: str):
+    """Seed demo knowledge keys and index chunks for search_knowledge."""
+    from app.knowledge.indexing import replace_chunks_for_item
+    rows = seed_demo_company_knowledge(db, company_id=company_id)
+    for row in rows:
+        replace_chunks_for_item(db, row)
+    db.flush()
+    return rows
+
