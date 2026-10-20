@@ -1128,12 +1128,12 @@ def revoke_agent_access(
 )
 def list_company_skills(
     company_id: str,
+    scope: str = "deduped",
     db: Session = Depends(get_db),
     x_user_id: str = Depends(get_authenticated_user_id),
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.read")
-    scope: str = "deduped",
     return list_available_skills(db, company_id, scope=scope)
 
 
