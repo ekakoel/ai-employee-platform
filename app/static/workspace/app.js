@@ -1261,6 +1261,32 @@
     if ($("agentAccessCard")) $("agentAccessCard").classList.toggle("hidden", !canManage);
   }
 
+
+  function openAgentSkills(agentId) {
+    showView("skills");
+    const sel = $("skillAssignAgent");
+    if (sel && agentId) {
+      sel.value = agentId;
+      if (typeof loadAgentAssignedSkills === "function") {
+        loadAgentAssignedSkills(agentId);
+      }
+    }
+    if (typeof loadSkills === "function") {
+      loadSkills();
+    }
+  }
+
+
+  if ($("agentList") && !$("agentList").dataset.manageSkillsWired) {
+    $("agentList").dataset.manageSkillsWired = "1";
+    $("agentList").addEventListener("click", (ev) => {
+      const btn = ev.target && ev.target.closest && ev.target.closest(".btn-manage-skills");
+      if (!btn) return;
+      const id = btn.getAttribute("data-agent-id");
+      if (id) openAgentSkills(id);
+    });
+  }
+
   async function loadAgents() {
     if (!state.companyId) return;
     applyAgentActionGating();
@@ -1272,11 +1298,25 @@
       $("agentList").innerHTML =
         (agents || [])
           .map(
-            (a) => `<div class="agent-card">
+            (a) => {
+            const skillChips = (a.skills || [])
+              .slice(0, 8)
+              .map((s) => {
+                const dom = typeof skillDomain === "function" ? skillDomain(s) : "Other";
+                const cls = typeof domainBadgeClass === "function" ? domainBadgeClass(dom) : "";
+                return `<span class="tag ${cls}" title="${escapeHtml(dom)}">${escapeHtml(s)}</span>`;
+              })
+              .join("");
+            const manageBtn = hasPermission("agent.manage")
+              ? `<button type="button" class="secondary btn-manage-skills" data-agent-id="${escapeHtml(a.id)}" style="margin-top:.5rem">Manage skills</button>`
+              : "";
+            return `<div class="agent-card" data-agent-id="${escapeHtml(a.id)}">
           <h4><span class="status-dot ${a.status !== "active" ? "inactive" : ""}"></span>${escapeHtml(a.name)}</h4>
           <div class="muted" style="font-size:.8rem">${escapeHtml(a.status)} · autonomy ${escapeHtml(a.autonomy || "")}</div>
-          <div style="margin-top:.4rem">${(a.skills || []).slice(0, 5).map((s) => `<span class="tag">${escapeHtml(s)}</span>`).join("")}</div>
-        </div>`
+          <div style="margin-top:.4rem;display:flex;flex-wrap:wrap;gap:.25rem">${skillChips || `<span class="muted" style="font-size:.8rem">No skills</span>`}</div>
+          ${manageBtn}
+        </div>`;
+          }
           )
           .join("") || `<div class="empty">No agents hired yet.</div>`;
       const accessAgent = $("accessAgentSelect");
