@@ -8,19 +8,42 @@ from sqlalchemy.orm import Session
 from app.models.entities import AgentSkill, Skill
 
 
-def list_available_skills(db: Session, company_id: str) -> list[Skill]:
-    """Platform skills + company skills, one row per slug (company overrides platform)."""
-    rows = list(
-        db.scalars(
-            select(Skill).where(
-                Skill.is_active.is_(True),
-                or_(
-                    Skill.company_id.is_(None),
-                    Skill.company_id == company_id,
-                ),
-            ).order_by(Skill.slug)
-        ).all()
-    )
+def list_available_skills(
+    db: Session,
+    company_id: str,
+    *,
+    scope: str = "deduped",
+) -> list[Skill]:
+    """List skills for a company.
+
+    scope:
+      - deduped (default): one row per slug, company overrides platform
+      - all: platform + company rows (may duplicate slugs)
+      - platform: only company_id IS NULL
+      - company: only this company's skills
+    """
+    scope = (scope or "deduped").strip().lower()
+    if scope not in {"deduped", "all", "platform", "company"}:
+        scope = "deduped"
+
+    q = select(Skill).where(Skill.is_active.is_(True))
+    if scope == "platform":
+        q = q.where(Skill.company_id.is_(None))
+    elif scope == "company":
+        q = q.where(Skill.company_id == company_id)
+    else:
+        q = q.where(
+            or_(
+                Skill.company_id.is_(None),
+                Skill.company_id == company_id,
+            )
+        )
+    rows = list(db.scalars(q.order_by(Skill.slug)).all())
+
+    if scope in {"all", "platform", "company"}:
+        return rows
+
+    # deduped
     by_slug: dict[str, Skill] = {}
     for skill in rows:
         slug = skill.slug or skill.id
@@ -28,7 +51,6 @@ def list_available_skills(db: Session, company_id: str) -> list[Skill]:
         if prev is None:
             by_slug[slug] = skill
             continue
-        # Prefer company-scoped over platform (company_id IS NULL)
         if skill.company_id is not None and prev.company_id is None:
             by_slug[slug] = skill
     return sorted(by_slug.values(), key=lambda s: (s.slug or ""))

@@ -2584,6 +2584,7 @@ async function loadDepartments() {
   }
   let _skillsCache = [];
   let _skillsDomainFilter = "all";
+  let _skillsScope = "deduped";
 
 
   function renderSkillsList(list) {
@@ -2723,7 +2724,7 @@ async function loadDepartments() {
       $("skillAssignCard").classList.toggle("hidden", !hasPermission("agent.manage"));
     }
     try {
-      const list = await api(`/companies/${state.companyId}/skills`);
+      const list = await api(`/companies/${state.companyId}/skills?scope=${encodeURIComponent(_skillsScope || "deduped")}`);
       _skillsCache = list || [];
       renderSkillsList(_skillsCache);
       fillSkillAssignSelects(_skillsCache);
@@ -2734,6 +2735,16 @@ async function loadDepartments() {
   }
 
   if ($("btnRefreshSkills")) $("btnRefreshSkills").onclick = loadSkills;
+  
+  document.querySelectorAll(".skill-scope-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".skill-scope-chip").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      _skillsScope = btn.getAttribute("data-scope") || "deduped";
+      loadSkills();
+    });
+  });
+
   document.querySelectorAll(".skill-domain-chip").forEach((btn) => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".skill-domain-chip").forEach((b) => b.classList.remove("active"));

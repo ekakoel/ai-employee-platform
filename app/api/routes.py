@@ -1133,7 +1133,8 @@ def list_company_skills(
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.read")
-    return list_available_skills(db, company_id)
+    scope: str = "deduped",
+    return list_available_skills(db, company_id, scope=scope)
 
 
 @router.post(
