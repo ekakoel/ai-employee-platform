@@ -7,35 +7,33 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base, get_db
+from app.core.security import create_access_token
 from app.llm.base import LLMResponse
 from app.main import app
-from app.models.entities import AgentInstance, AgentSubscription, AuditLog, AuthSession, Company, Conversation, KnowledgeItem, Message, Task, User
+from app.models.entities import (
+    AgentInstance,
+    AgentSubscription,
+    AuditLog,
+    AuthSession,
+    Company,
+    Conversation,
+    KnowledgeItem,
+    Message,
+    Task,
+    User,
+)
 from app.services.conversation import clean_chat_content, list_messages
 from app.services.seed import get_or_create_role
 
-# Job 87: chat fixture uses legacy X-User-ID only; issue Bearer tokens for seeded users.
-from app.core.security import create_access_token
 
-def _bearer(db_session_factory, user_id: str, company_id: str) -> dict:
-    """Issue access token with a real AuthSession row (session validation required)."""
-    sid = f"chat-{user_id}"
-    with db_session_factory() as db:
-        existing = db.get(AuthSession, sid)
-        if existing is None:
-            db.add(AuthSession(
-                id=sid,
-                user_id=user_id,
-                company_id=company_id,
-                auth_version=1,
-                absolute_expires_at=datetime.now(timezone.utc) + timedelta(hours=12),
-            ))
-            db.commit()
+def _bearer(user_id: str, company_id: str) -> dict:
     tok = create_access_token(
-        subject=user_id, company_id=company_id,
-        session_id=sid, auth_version=1,
+        subject=user_id,
+        company_id=company_id,
+        session_id=f"chat-{user_id}",
+        auth_version=1,
     )
-    return {"Authorization": f"Bearer {tok}", "X-User-ID": user_id}", "X-User-ID": user_id}
-
+    return {"Authorization": f"Bearer {tok}", "X-User-ID": user_id}
 
 
 @pytest.fixture
@@ -53,8 +51,21 @@ def chat_fixture(monkeypatch):
             User(id="alice", company_id="one", name="Alice", email="alice@test.local", role_id=role.id),
             User(id="bob", company_id="one", name="Bob", email="bob@test.local", role_id=role.id),
             User(id="eve", company_id="two", name="Eve", email="eve@test.local", role_id=role.id),
-            AgentInstance(id="agent", company_id="one", name="Analyst", catalog_agent_id="catalog", subscription_id="subscription", scope=["reports", "budget"]),
-            KnowledgeItem(id="budget", company_id="one", title="Budget", content="The company budget is 500.", category="report"),
+            AgentInstance(
+                id="agent",
+                company_id="one",
+                name="Analyst",
+                catalog_agent_id="catalog",
+                subscription_id="subscription",
+                scope=["reports", "budget"],
+            ),
+            KnowledgeItem(
+                id="budget",
+                company_id="one",
+                title="Budget",
+                content="The company budget is 500.",
+                category="report",
+            ),
         ])
         db.flush()
         exp = datetime.now(timezone.utc) + timedelta(hours=12)
@@ -69,7 +80,10 @@ def chat_fixture(monkeypatch):
     class Provider:
         def chat(self, messages, **kwargs):
             calls.append((messages, kwargs))
-            return LLMResponse(content='{"citations":[{"source_id":"knowledge:budget","quote":"The company budget is 500."}]}', model="test")
+            return LLMResponse(
+                content='{"citations":[{"source_id":"knowledge:budget","quote":"The company budget is 500."}]}',
+                model="test",
+            )
 
     monkeypatch.setattr("app.runtime.factory.create_llm_provider", lambda: Provider())
 
@@ -82,7 +96,7 @@ def chat_fixture(monkeypatch):
     try:
         client = TestClient(app)
         base = "/api/v1/companies/one/conversations"
-        headers = _bearer(sessions, "alice", "one")
+        headers = _bearer("alice", "one")
         response = client.post(base, headers=headers, json={"agent_instance_id": "agent", "title": "Budget"})
         assert response.status_code == 201, response.text
         yield client, sessions, calls, base, headers, response.json()["id"]
@@ -92,7 +106,6 @@ def chat_fixture(monkeypatch):
         else:
             app.dependency_overrides[get_db] = previous
         engine.dispose()
-
 
 def test_chat_api_followups_and_action_history(chat_fixture):
     client, sessions, calls, base, headers, conversation_id = chat_fixture
