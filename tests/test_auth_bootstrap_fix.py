@@ -1,124 +1,123 @@
 
-"""Regression: first user bootstrap must work even with stale auth headers."""
+"""Regression tests for authenticated bootstrap and employee creation."""
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
+from app.api import (
+    admin_routes,
+    auth_routes,
+    company_onboarding_routes,
+    inbox_routes,
+    result_routes,
+    routes,
+)
 from app.core.database import Base, get_db
-from app.main import app
+from app.main import app as production_app
 from app.services.seed import seed_catalog
 from tests.helpers import provision_company
 
 
 @pytest.fixture()
-def client(tmp_path):
-    # Use a disposable database outside the project workspace.
-    database_path = (tmp_path / "auth_bootstrap.sqlite3").resolve()
+def client():
+    """Use an isolated app and in-memory SQLite without production lifespan."""
     engine = create_engine(
-        f"sqlite:///{database_path.as_posix()}",
+        "sqlite://",
         connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
     )
+
     SessionLocal = sessionmaker(
         bind=engine,
         autoflush=False,
         autocommit=False,
+        expire_on_commit=False,
     )
+
+    test_app = FastAPI()
+
+    for api_router in (
+        auth_routes.router,
+        company_onboarding_routes.router,
+        admin_routes.router,
+        routes.router,
+        result_routes.router,
+        inbox_routes.router,
+    ):
+        test_app.include_router(api_router)
 
     Base.metadata.create_all(bind=engine)
 
     with SessionLocal() as db:
         seed_catalog(db)
 
-    def override():
-        db = SessionLocal()
-        try:
+    def override_get_db():
+        with SessionLocal() as db:
             yield db
-        finally:
-            db.close()
 
-    previous_override = app.dependency_overrides.get(get_db)
-    app.dependency_overrides[get_db] = override
+    test_app.dependency_overrides[get_db] = override_get_db
 
     try:
-        with TestClient(app) as test_client:
+        with TestClient(test_app) as test_client:
             yield test_client
     finally:
-        if previous_override is None:
-            app.dependency_overrides.pop(get_db, None)
-        else:
-            app.dependency_overrides[get_db] = previous_override
-
+        test_app.dependency_overrides.clear()
         Base.metadata.drop_all(bind=engine)
         engine.dispose()
 
 
 def test_first_user_with_stale_x_user_header(client):
-    # Use the supported demo bootstrap flow.
-    company_id, _owner_id, _headers, _demo = provision_company(client)
+    """A stale X-User-ID must not override a valid Bearer identity."""
+    company_id, owner_id, headers, _demo = provision_company(client)
 
-    # A stale user ID must not prevent the first user from being created.
-    user = client.post(
-        f"/api/v1/companies/{company_id}/users",
+    response = client.get(
+        "/api/v1/auth/me",
         headers={
-            "X-User-ID": "00000000-0000-0000-0000-000000000000"
-        },
-        json={
-            "name": "Owner",
-            "email": "owner@fresh.test",
-            "role": "owner",
-            "password": "secret123",
+            **headers,
+            "X-User-ID": "00000000-0000-0000-0000-000000000000",
         },
     )
 
-    assert user.status_code == 201, user.text
-    assert user.json()["email"] == "owner@fresh.test"
-
-    login = client.post(
-        "/api/v1/auth/login",
-        json={
-            "company_id": company_id,
-            "email": "owner@fresh.test",
-            "password": "secret123",
-        },
-    )
-
-    assert login.status_code == 200, login.text
+    assert response.status_code == 200, response.text
+    assert response.json()["user_id"] == owner_id
+    assert response.json()["company_id"] == company_id
 
 
 def test_second_user_requires_auth(client):
-    # Bootstrap the company and its initial owner.
-    company_id, _owner_id, _headers, _demo = provision_company(client)
+    """Employee creation requires authentication and uses invitations."""
+    company_id, _owner_id, headers, _demo = provision_company(client)
 
-    # The first user can be created through the bootstrap flow.
-    first = client.post(
+    payload = {
+        "name": "Member",
+        "email": "m1@two.test",
+        "role": "member",
+    }
+
+    anonymous = client.post(
         f"/api/v1/companies/{company_id}/users",
-        json={
-            "name": "Owner",
-            "email": "o1@two.test",
-            "role": "owner",
-            "password": "secret123",
-        },
+        json=payload,
     )
 
-    assert first.status_code == 201, first.text
+    assert anonymous.status_code == 401, anonymous.text
 
-    # An unauthenticated request must not create a second user.
-    second = client.post(
+    authenticated = client.post(
         f"/api/v1/companies/{company_id}/users",
-        json={
-            "name": "Member",
-            "email": "m1@two.test",
-            "role": "member",
-        },
+        headers=headers,
+        json=payload,
     )
 
-    assert second.status_code == 401, second.text
+    assert authenticated.status_code == 410, authenticated.text
+    assert "invitations" in authenticated.json()["detail"].lower()
 
 
 def test_workspace_has_clear_session():
-    html = TestClient(app).get("/workspace").content
+    """Check the production workspace page without starting its lifespan."""
+    response = TestClient(production_app).get("/workspace")
 
-    assert b"btnClearSession" in html
-    assert b"btnQuickStart" in html
+    assert response.status_code == 200
+    assert b"btnClearSession" in response.content
+    assert b"btnQuickStart" in response.content
