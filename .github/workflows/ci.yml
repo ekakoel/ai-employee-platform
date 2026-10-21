@@ -40,7 +40,7 @@ jobs:
           # Avoid external LLM calls in CI
           OLLAMA_HOST: ""
         run: |
-          pytest -q --tb=line -m "not integration"
+          pytest -q --tb=line -m "not integration" --ignore=tests/test_auth_p0_isolated.py --ignore=tests/test_auth_sessions_isolated.py
 
       - name: Smoke E2E (Job 54)
         env:
@@ -95,3 +95,29 @@ jobs:
             tests/test_admin_job23.py \
             tests/test_alembic_job24.py \
             tests/test_smoke_e2e_job54.py
+
+  test-auth-isolated:
+    name: Pytest (isolated auth)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: P0 isolated auth (own process)
+        env:
+          DATABASE_URL: sqlite://
+          OLLAMA_HOST: ""
+        run: pytest -q tests/test_auth_p0_isolated.py --tb=short
+      - name: Session isolated auth (own process)
+        env:
+          DATABASE_URL: sqlite://
+          OLLAMA_HOST: ""
+        run: pytest -q tests/test_auth_sessions_isolated.py --tb=short
