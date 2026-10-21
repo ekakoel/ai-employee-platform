@@ -42,7 +42,7 @@ def client():
 
 def setup_two_agents(client):
     # auth-hardened: demo bootstrap instead of public company create
-    _cid, _oid, _hdrs, _demo = provision_company(client)
+    _cid, _oid, _hdrs, _demo = provision_company(client, hire_agents=False)
     co = {"id": _cid}
     owner = {"id": _oid, "email": _demo.get("owner_email")}
     headers = _hdrs

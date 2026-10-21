@@ -45,7 +45,7 @@ def client():
 
 def setup_two_agents(client):
     # auth-hardened: demo bootstrap instead of public company create
-    _cid, _oid, _hdrs, _demo = provision_company(client)
+    _cid, _oid, _hdrs, _demo = provision_company(client, hire_agents=False)
     co = {"id": _cid}
     owner = {"id": _oid, "email": _demo.get("owner_email")}
     catalog = client.get("/api/v1/agent-catalog").json()
@@ -63,7 +63,7 @@ def setup_two_agents(client):
         headers=_hdrs,
     )
     assert h2.status_code == 201, h2.text
-    return co["id"], owner["id"], h1.json()["id"], h2.json()["id"]
+    return co["id"], owner["id"], h1.json()["id"], h2.json()["id"], _hdrs
 
 
 def test_build_capabilities():
@@ -80,7 +80,7 @@ def test_build_capabilities():
 
 
 def test_directory_lists_hired_agents(client):
-    company_id, owner_id, a1, a2 = setup_two_agents(client)
+    company_id, owner_id, a1, a2, _hdrs = setup_two_agents(client)
     resp = client.get(
         f"/api/v1/companies/{company_id}/directory",
         headers=_hdrs,
@@ -94,7 +94,7 @@ def test_directory_lists_hired_agents(client):
 
 
 def test_discover_by_skill(client):
-    company_id, owner_id, a1, a2 = setup_two_agents(client)
+    company_id, owner_id, a1, a2, _hdrs = setup_two_agents(client)
     resp = client.get(
         f"/api/v1/companies/{company_id}/directory/search",
         headers=_hdrs,
@@ -107,7 +107,7 @@ def test_discover_by_skill(client):
 
 
 def test_validate_target_success(client):
-    company_id, owner_id, a1, a2 = setup_two_agents(client)
+    company_id, owner_id, a1, a2, _hdrs = setup_two_agents(client)
     resp = client.post(
         f"/api/v1/companies/{company_id}/directory/validate-target",
         headers=_hdrs,
@@ -138,7 +138,7 @@ def test_validate_target_rejects_self(client):
 
 
 def test_validate_missing_capability(client):
-    company_id, owner_id, a1, a2 = setup_two_agents(client)
+    company_id, owner_id, a1, a2, _hdrs = setup_two_agents(client)
     resp = client.post(
         f"/api/v1/companies/{company_id}/directory/validate-target",
         headers=_hdrs,
@@ -153,7 +153,7 @@ def test_validate_missing_capability(client):
 
 
 def test_create_delegation_request(client):
-    company_id, owner_id, a1, a2 = setup_two_agents(client)
+    company_id, owner_id, a1, a2, _hdrs = setup_two_agents(client)
     resp = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests",
         headers=_hdrs,
@@ -180,7 +180,7 @@ def test_create_delegation_request(client):
 
 
 def test_delegation_rejects_invalid_target(client):
-    company_id, owner_id, a1, a2 = setup_two_agents(client)
+    company_id, owner_id, a1, a2, _hdrs = setup_two_agents(client)
     resp = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests",
         headers=_hdrs,

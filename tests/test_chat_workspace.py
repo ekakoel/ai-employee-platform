@@ -13,6 +13,17 @@ from app.models.entities import AgentInstance, AgentSubscription, AuditLog, Comp
 from app.services.conversation import clean_chat_content, list_messages
 from app.services.seed import get_or_create_role
 
+# Job 87: chat fixture uses legacy X-User-ID only; issue Bearer tokens for seeded users.
+from app.core.security import create_access_token
+
+def _bearer(user_id: str, company_id: str) -> dict:
+    tok = create_access_token(
+        subject=user_id, company_id=company_id,
+        session_id=f"chat-{user_id}", auth_version=1,
+    )
+    return {"Authorization": f"Bearer {tok}", "X-User-ID": user_id}
+
+
 
 @pytest.fixture
 def chat_fixture(monkeypatch):
@@ -50,7 +61,7 @@ def chat_fixture(monkeypatch):
     try:
         client = TestClient(app)
         base = "/api/v1/companies/one/conversations"
-        headers = {"X-User-ID": "alice"}
+        headers = _bearer("alice", "one")
         response = client.post(base, headers=headers, json={"agent_instance_id": "agent", "title": "Budget"})
         assert response.status_code == 201, response.text
         yield client, sessions, calls, base, headers, response.json()["id"]
@@ -107,7 +118,7 @@ def test_recent_transcript_window_preserves_order(chat_fixture):
 def test_chat_rejects_empty_closed_and_cross_tenant_requests(chat_fixture):
     client, sessions, _, base, headers, conversation_id = chat_fixture
     path = f"{base}/{conversation_id}/messages"
-    assert client.get(path, headers={"X-User-ID": "eve"}).status_code == 403
+    assert client.get(path, headers=_bearer("eve", "two")).status_code == 403
     assert client.post(path, headers=headers, json={"content": " "}).status_code in (400, 422)
     with sessions() as db:
         db.get(Conversation, conversation_id).status = "closed"
@@ -174,7 +185,7 @@ def test_sender_attribution_is_per_message_not_conversation_owner(chat_fixture):
         db.add(User(id="bob", company_id="one", name="Bob", email="bob@test.local", role_id=owner.role_id))
         db.commit()
     path = f"{base}/{conversation_id}/messages"
-    response = client.post(path, headers={"X-User-ID": "bob"}, json={"content": "Bob's question"})
+    response = client.post(path, headers=_bearer("bob", "one"), json={"content": "Bob's question"})
     assert response.status_code == 200, response.text
     assert response.json()["human"]["sender_name"] == "Bob"
     assert response.json()["human"]["sender_user_id"] == "bob"

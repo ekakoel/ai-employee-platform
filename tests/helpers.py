@@ -36,12 +36,12 @@ def login_headers(client: TestClient, email: str, password: str = DEMO_PASSWORD)
     return headers
 
 
-def provision_company(client: TestClient, *, role: str = "owner") -> tuple[str, str, dict[str, str], dict]:
+def provision_company(client: TestClient, *, role: str = "owner", hire_agents: bool = True) -> tuple[str, str, dict[str, str], dict]:
     """Return (company_id, user_id, headers, demo_body) for a persona.
 
     role: owner | ai_admin | reservation | manager | contract_manager | administration | member
     """
-    demo = bootstrap_demo(client)
+    demo = bootstrap_demo(client, hire_agents=hire_agents)
     users = demo.get("users") or []
     person = next((u for u in users if u.get("role") == role), None)
     if person is None and role == "owner":
@@ -70,3 +70,13 @@ def owner_setup(client: TestClient) -> tuple[str, str, dict[str, str]]:
 
 # Job 86: any local setup() that calls provision_company must RETURN headers
 # e.g. return company_id, owner_id, agent_id, headers
+
+
+def persona_headers(client: TestClient, demo: dict, role: str) -> tuple[str, dict[str, str]]:
+    """Login as a bootstrap persona role; return (user_id, headers)."""
+    users = demo.get("users") or []
+    person = next((u for u in users if u.get("role") == role), None)
+    if person is None:
+        raise AssertionError(f"persona role {role!r} missing from bootstrap users")
+    headers = login_headers(client, person["email"])
+    return headers["X-User-ID"], headers

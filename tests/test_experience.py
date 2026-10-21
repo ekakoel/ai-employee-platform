@@ -191,7 +191,7 @@ def test_member_cannot_validate(client):
     ).json()
     resp = client.post(
         f"/api/v1/companies/{company_id}/experiences/{cand['id']}/validate",
-        headers={"X-User-ID": member["id"]},
+        headers=member_headers,
         json={"approve": True},
     )
     assert resp.status_code == 403
