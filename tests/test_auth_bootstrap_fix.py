@@ -1,27 +1,33 @@
+
 """Regression: first user bootstrap must work even with stale auth headers."""
 
 import pytest
 from fastapi.testclient import TestClient
-
-from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base, get_db
 from app.main import app
 from app.services.seed import seed_catalog
-
-engine = create_engine(
-    "sqlite:///./test_auth_bootstrap.db",
-    connect_args={"check_same_thread": False},
-)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+from tests.helpers import provision_company
 
 
 @pytest.fixture()
-def client():
-    Base.metadata.drop_all(bind=engine)
+def client(tmp_path):
+    # Use a disposable database outside the project workspace.
+    database_path = (tmp_path / "auth_bootstrap.sqlite3").resolve()
+    engine = create_engine(
+        f"sqlite:///{database_path.as_posix()}",
+        connect_args={"check_same_thread": False},
+    )
+    SessionLocal = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+    )
+
     Base.metadata.create_all(bind=engine)
+
     with SessionLocal() as db:
         seed_catalog(db)
 
@@ -32,20 +38,32 @@ def client():
         finally:
             db.close()
 
+    previous_override = app.dependency_overrides.get(get_db)
     app.dependency_overrides[get_db] = override
-    with TestClient(app) as c:
-        yield c
-    app.dependency_overrides.pop(get_db, None)
+
+    try:
+        with TestClient(app) as test_client:
+            yield test_client
+    finally:
+        if previous_override is None:
+            app.dependency_overrides.pop(get_db, None)
+        else:
+            app.dependency_overrides[get_db] = previous_override
+
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
 
 
 def test_first_user_with_stale_x_user_header(client):
-    # auth-hardened: demo bootstrap instead of public company create
-    _cid, _oid, _hdrs, _demo = provision_company(client)
-    co = {"id": _cid}
-    # Stale user id from another session must not block first user
+    # Use the supported demo bootstrap flow.
+    company_id, _owner_id, _headers, _demo = provision_company(client)
+
+    # A stale user ID must not prevent the first user from being created.
     user = client.post(
-        f"/api/v1/companies/{co['id']}/users",
-        headers={"X-User-ID": "00000000-0000-0000-0000-000000000000"},
+        f"/api/v1/companies/{company_id}/users",
+        headers={
+            "X-User-ID": "00000000-0000-0000-0000-000000000000"
+        },
         json={
             "name": "Owner",
             "email": "owner@fresh.test",
@@ -53,26 +71,29 @@ def test_first_user_with_stale_x_user_header(client):
             "password": "secret123",
         },
     )
+
     assert user.status_code == 201, user.text
     assert user.json()["email"] == "owner@fresh.test"
 
     login = client.post(
         "/api/v1/auth/login",
         json={
-            "company_id": co["id"],
+            "company_id": company_id,
             "email": "owner@fresh.test",
             "password": "secret123",
         },
     )
-    assert login.status_code == 200
+
+    assert login.status_code == 200, login.text
 
 
 def test_second_user_requires_auth(client):
-    # auth-hardened: demo bootstrap instead of public company create
-    _cid, _oid, _hdrs, _demo = provision_company(client)
-    co = {"id": _cid}
+    # Bootstrap the company and its initial owner.
+    company_id, _owner_id, _headers, _demo = provision_company(client)
+
+    # The first user can be created through the bootstrap flow.
     first = client.post(
-        f"/api/v1/companies/{co['id']}/users",
+        f"/api/v1/companies/{company_id}/users",
         json={
             "name": "Owner",
             "email": "o1@two.test",
@@ -80,19 +101,24 @@ def test_second_user_requires_auth(client):
             "password": "secret123",
         },
     )
-    assert first.status_code == 201
+
+    assert first.status_code == 201, first.text
+
+    # An unauthenticated request must not create a second user.
     second = client.post(
-        f"/api/v1/companies/{co['id']}/users",
+        f"/api/v1/companies/{company_id}/users",
         json={
             "name": "Member",
             "email": "m1@two.test",
             "role": "member",
         },
     )
-    assert second.status_code == 401
+
+    assert second.status_code == 401, second.text
 
 
 def test_workspace_has_clear_session():
     html = TestClient(app).get("/workspace").content
+
     assert b"btnClearSession" in html
     assert b"btnQuickStart" in html
