@@ -14,6 +14,9 @@ from app.services.grounding import (
     GROUNDING_INSTRUCTIONS, GroundingError, MISSING_INFORMATION,
     general_reply, required_action_tool, requires_action, source_message, sources, validated_answer,
 )
+from app.agents.profile_prompt import (
+    build_agent_instructions,
+)
 
 
 @dataclass(frozen=True)
@@ -65,6 +68,9 @@ class AgentRuntime:
 
         agent = context.to_dict()["agent"]
         company = context.to_dict()["company"]
+        profile_instructions = build_agent_instructions(
+            context.configuration
+        )
 
         return LLMMessage(
             role="system",
@@ -81,8 +87,12 @@ class AgentRuntime:
                 "in the provided context or returned by an approved "
                 "tool."
                 + "\n" + GROUNDING_INSTRUCTIONS
-                + "\nAssigned company instructions:\n" + str(context.configuration.get("instructions", ""))
-                + "\nAssigned skill instructions and workflows:\n" + json.dumps(context.assigned_skills)
+                + "\nAssigned company instructions:\n"
+                + str(context.configuration.get("instructions", ""))
+                + "\nAI Employee Job Profile:\n"
+                + profile_instructions
+                + "\nAssigned skill instructions and workflows:\n"
+                + json.dumps(context.assigned_skills)
             ),
         )
 
