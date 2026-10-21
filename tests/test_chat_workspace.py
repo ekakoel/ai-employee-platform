@@ -152,7 +152,7 @@ def test_recent_transcript_window_preserves_order(chat_fixture):
 def test_chat_rejects_empty_closed_and_cross_tenant_requests(chat_fixture):
     client, sessions, _, base, headers, conversation_id = chat_fixture
     path = f"{base}/{conversation_id}/messages"
-    assert client.get(path, headers=_bearer(sessions, "eve", "two")).status_code == 403
+    assert client.get(path, headers=_bearer("eve", "two")).status_code == 403
     assert client.post(path, headers=headers, json={"content": " "}).status_code in (400, 422)
     with sessions() as db:
         db.get(Conversation, conversation_id).status = "closed"
@@ -214,12 +214,8 @@ def test_saved_results_legacy_content_and_unknown_actor(chat_fixture):
 
 def test_sender_attribution_is_per_message_not_conversation_owner(chat_fixture):
     client, sessions, _, base, headers, conversation_id = chat_fixture
-    with sessions() as db:
-        owner = db.get(User, "alice")
-        db.add(User(id="bob", company_id="one", name="Bob", email="bob@test.local", role_id=owner.role_id))
-        db.commit()
     path = f"{base}/{conversation_id}/messages"
-    response = client.post(path, headers=_bearer(sessions, "bob", "one"), json={"content": "Bob's question"})
+    response = client.post(path, headers=_bearer("bob", "one"), json={"content": "Bob's question"})
     assert response.status_code == 200, response.text
     assert response.json()["human"]["sender_name"] == "Bob"
     assert response.json()["human"]["sender_user_id"] == "bob"
