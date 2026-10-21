@@ -2,6 +2,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from dataclasses import replace
 from app.agents.context import AgentContext
 from app.llm.base import LLMMessage, LLMResponse
 from app.runtime.agent_runtime import AgentRuntime
@@ -534,3 +535,52 @@ def test_continue_with_tool_result_preserves_allowed_tools():
     ]
 
     assert "delete_contract" not in tool_names
+
+
+def test_runtime_includes_agent_profile_in_system_message():
+    context = replace(
+        make_context(),
+        configuration={
+            "instructions": "Ikuti kebijakan perusahaan.",
+            "job_description": (
+                "Menganalisis dan mengelola kontrak."
+            ),
+            "responsibilities": [
+                "Memeriksa isi kontrak",
+                "Mengidentifikasi risiko",
+            ],
+            "sop": [
+                "Baca kontrak",
+                "Validasi tanggal dan pihak terkait",
+            ],
+            "rules": [
+                "Jangan mengarang isi kontrak",
+            ],
+            "success_criteria": [
+                "Setiap temuan memiliki dasar informasi",
+            ],
+        },
+    )
+
+    runtime = AgentRuntime(Mock())
+    message = runtime.build_system_message(context)
+
+    assert message.role == "system"
+
+    # Profil pekerjaan
+    assert "Menganalisis dan mengelola kontrak." in message.content
+
+    # Tanggung jawab
+    assert "Memeriksa isi kontrak" in message.content
+    assert "Mengidentifikasi risiko" in message.content
+
+    # SOP
+    assert "Baca kontrak" in message.content
+    assert "Validasi tanggal dan pihak terkait" in message.content
+
+    # Aturan dan kriteria keberhasilan
+    assert "Jangan mengarang isi kontrak" in message.content
+    assert "Setiap temuan memiliki dasar informasi" in message.content
+
+    # Instruksi perusahaan yang sudah ada harus tetap dipertahankan
+    assert "Ikuti kebijakan perusahaan." in message.content
