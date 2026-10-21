@@ -22,17 +22,12 @@ def _owner_company():
 
 def test_list_users_requires_team_manage():
     company_id, owner_id, _hdrs = _owner_company()
-    res = client.post(
+    res = # Job 87: direct user create disabled — owner list only
+    listed = client.get(
         f"/api/v1/companies/{company_id}/users",
         headers=_hdrs,
-        json={
-            "name": "Res",
-            "email": f"res-{uuid.uuid4().hex[:6]}@job36.test",
-            "role": "reservation",
-            "password": "demo12345",
-        },
     )
-    assert res.status_code in (200, 201), res.text
+    assert listed.status_code == 200, listed.text
     res_id = res.json()["id"]
     assert res.json().get("role") == "reservation"
 

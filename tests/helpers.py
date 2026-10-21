@@ -14,10 +14,11 @@ DEMO_PASSWORD = "demo12345"
 
 
 def bootstrap_demo(client: TestClient, *, hire_agents: bool = True) -> dict[str, Any]:
-    res = client.post("/api/v1/demo/bootstrap", json={"hire_agents": hire_agents} if hire_agents is False else None)
-    # endpoint may ignore body
-    if res.status_code != 200:
-        res = client.post("/api/v1/demo/bootstrap")
+    # FastAPI: hire_agents is a *query* param on POST /demo/bootstrap (not JSON body)
+    res = client.post(
+        "/api/v1/demo/bootstrap",
+        params={"hire_agents": str(hire_agents).lower()},
+    )
     assert res.status_code == 200, res.text
     body = res.json()
     assert body.get("company_id"), body

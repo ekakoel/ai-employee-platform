@@ -179,6 +179,10 @@ def test_tenant_isolation(client):
 
 def test_member_cannot_validate(client):
     company_id, owner_id, agent_id, task_id, _hdrs = setup(client)
+    # reservation persona cannot validate experiences
+    _cid, member_id, member_headers, _demo = provision_company(
+        client, role="reservation", hire_agents=False
+    )
     member = client.post(
         f"/api/v1/companies/{company_id}/users",
         headers=_hdrs,
