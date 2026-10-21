@@ -73,7 +73,7 @@ def test_conditions_match_amount():
 
 
 def test_low_risk_automatic_allow(client):
-    company_id, owner_id, _, agent_id = setup_company(client)
+    company_id, owner_id, _, agent_id, _hdrs = setup_company(client)
     client.post(
         f"/api/v1/companies/{company_id}/policies",
         headers=_hdrs,
@@ -99,7 +99,7 @@ def test_low_risk_automatic_allow(client):
 
 
 def test_approval_required(client):
-    company_id, owner_id, _, agent_id = setup_company(client)
+    company_id, owner_id, _, agent_id, _hdrs = setup_company(client)
     client.post(
         f"/api/v1/companies/{company_id}/policies",
         headers=_hdrs,
@@ -126,7 +126,7 @@ def test_approval_required(client):
 
 
 def test_denial(client):
-    company_id, owner_id, _, agent_id = setup_company(client)
+    company_id, owner_id, _, agent_id, _hdrs = setup_company(client)
     client.post(
         f"/api/v1/companies/{company_id}/policies",
         headers=_hdrs,
@@ -150,7 +150,7 @@ def test_denial(client):
 
 
 def test_conditional_amount(client):
-    company_id, owner_id, _, agent_id = setup_company(client)
+    company_id, owner_id, _, agent_id, _hdrs = setup_company(client)
     # low amounts auto, high amounts approval
     client.post(
         f"/api/v1/companies/{company_id}/policies",
@@ -200,7 +200,7 @@ def test_conditional_amount(client):
 
 
 def test_agent_policies_fallback(client):
-    company_id, owner_id, _, agent_id = setup_company(client)
+    company_id, owner_id, _, agent_id, _hdrs = setup_company(client)
     with SessionLocal() as db:
         agent = db.get(AgentInstance, agent_id)
         agent.policies = {"send_quotation": "approval"}
@@ -241,7 +241,7 @@ def test_unauthorized_approver_denied(client):
 
 
 def test_priority_prefers_higher(client):
-    company_id, owner_id, _, agent_id = setup_company(client)
+    company_id, owner_id, _, agent_id, _hdrs = setup_company(client)
     client.post(
         f"/api/v1/companies/{company_id}/policies",
         headers=_hdrs,

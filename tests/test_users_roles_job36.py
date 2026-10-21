@@ -21,7 +21,7 @@ def _owner_company():
 
 
 def test_list_users_requires_team_manage():
-    company_id, owner_id = _owner_company()
+    company_id, owner_id, _hdrs = _owner_company()
     res = client.post(
         f"/api/v1/companies/{company_id}/users",
         headers=_hdrs,
@@ -52,7 +52,7 @@ def test_list_users_requires_team_manage():
 
 
 def test_patch_user_role():
-    company_id, owner_id = _owner_company()
+    company_id, owner_id, _hdrs = _owner_company()
     member = client.post(
         f"/api/v1/companies/{company_id}/users",
         headers=_hdrs,

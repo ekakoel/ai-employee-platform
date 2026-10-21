@@ -124,7 +124,7 @@ def test_search_finds_relevant_chunk(client):
 
 
 def test_tenant_isolation_search(client):
-    c1, o1, _ = setup(client)
+    c1, o1, _, _hdrs = setup(client)
     client.post(
         f"/api/v1/companies/{c1}/knowledge",
         headers={"X-User-ID": o1},

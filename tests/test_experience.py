@@ -149,7 +149,7 @@ def test_reject_experience(client):
 
 
 def test_tenant_isolation(client):
-    c1, o1, a1, t1 = setup(client)
+    c1, o1, a1, t1, _hdrs = setup(client)
     cand = client.post(
         f"/api/v1/companies/{c1}/tasks/{t1}/experiences",
         headers={"X-User-ID": o1},

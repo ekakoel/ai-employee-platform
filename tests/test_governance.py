@@ -129,7 +129,7 @@ def test_governance_experiences_and_audit(client):
 
 
 def test_governance_approvals_endpoint(client):
-    company_id, owner_id, _, _ = setup(client)
+    company_id, owner_id, _, _, _hdrs = setup(client)
     resp = client.get(
         f"/api/v1/companies/{company_id}/governance/approvals",
         headers=_hdrs,
