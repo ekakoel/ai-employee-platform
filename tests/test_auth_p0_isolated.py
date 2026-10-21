@@ -5,6 +5,7 @@ The global application engine is guarded against any accidental connection.
 """
 
 import ast
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -25,7 +26,8 @@ def memory_only_sqlite(event_name, arguments):
         raise AssertionError("P0 tests cannot open any file-backed SQLite database")
 
 
-sys.addaudithook(memory_only_sqlite)
+if os.environ.get("AUTH_ISOLATED_GUARDS", "0") == "1":
+    sys.addaudithook(memory_only_sqlite)
 
 from app.api import admin_routes, auth_routes, company_onboarding_routes, inbox_routes, result_routes, routes
 from app.core.config import Settings, settings

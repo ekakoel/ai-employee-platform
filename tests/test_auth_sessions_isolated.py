@@ -7,6 +7,7 @@ import hmac
 import importlib.util
 import json
 from pathlib import Path
+import os
 import sys
 from threading import Barrier
 from types import SimpleNamespace
@@ -35,7 +36,8 @@ def disposable_connections(event_name, arguments):
         raise AssertionError("Session tests must never open workspace SQLite files")
 
 
-sys.addaudithook(disposable_connections)
+if os.environ.get("AUTH_ISOLATED_GUARDS", "0") == "1":
+    sys.addaudithook(disposable_connections)
 
 from app.api import auth_routes, admin_routes, routes, result_routes, inbox_routes
 from app.core.config import Settings, settings

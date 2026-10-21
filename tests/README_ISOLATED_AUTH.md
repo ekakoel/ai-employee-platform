@@ -1,26 +1,31 @@
 # Isolated auth tests (Job 85)
 
-These modules register **process-wide** `sys.addaudithook` guards that block
-any file-backed SQLite connection. They must **not** be collected with the
-main suite.
+These modules can register process-wide `sys.addaudithook` SQLite guards.
+They are **ignored by default** (`pytest.ini`).
 
-| File | Guard message |
-|------|----------------|
-| `test_auth_p0_isolated.py` | P0 tests cannot open any file-backed SQLite database |
-| `test_auth_sessions_isolated.py` | Session tests must never open workspace SQLite files |
+| File | Notes |
+|------|--------|
+| `test_auth_p0_isolated.py` | P0 memory-only auth |
+| `test_auth_sessions_isolated.py` | Session lifecycle + audit hook |
+| `test_auth_sessions_postgres.py` | Imports sessions_isolated — also ignored |
 
-## Default suite (safe)
+## Main suite
 
 ```bash
 pytest -q -m "not integration"
-# pytest.ini already ignores the two files above
 ```
 
-## Run isolated suites (separate process)
+## Isolated runs (enable guards)
 
 ```bash
+# Windows PowerShell
+$env:AUTH_ISOLATED_GUARDS="1"
 pytest -q tests/test_auth_p0_isolated.py --tb=short
 pytest -q tests/test_auth_sessions_isolated.py --tb=short
+
+# Linux/macOS
+AUTH_ISOLATED_GUARDS=1 pytest -q tests/test_auth_p0_isolated.py --tb=short
 ```
 
-Do not combine them with the rest of `tests/` in one pytest invocation.
+Guards only register when `AUTH_ISOLATED_GUARDS=1`, so accidental imports
+cannot poison the main suite.

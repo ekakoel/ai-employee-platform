@@ -40,7 +40,8 @@ jobs:
           # Avoid external LLM calls in CI
           OLLAMA_HOST: ""
         run: |
-          pytest -q --tb=line -m "not integration" --ignore=tests/test_auth_p0_isolated.py --ignore=tests/test_auth_sessions_isolated.py
+          pytest -q --tb=line -m "not integration" --ignore=tests/test_auth_p0_isolated.py --ignore=tests/test_auth_sessions_isolated.py \
+            --ignore=tests/test_auth_sessions_postgres.py
 
       - name: Smoke E2E (Job 54)
         env:
@@ -115,9 +116,13 @@ jobs:
         env:
           DATABASE_URL: sqlite://
           OLLAMA_HOST: ""
+        env:
+          AUTH_ISOLATED_GUARDS: "1"
         run: pytest -q tests/test_auth_p0_isolated.py --tb=short
       - name: Session isolated auth (own process)
         env:
           DATABASE_URL: sqlite://
           OLLAMA_HOST: ""
+        env:
+          AUTH_ISOLATED_GUARDS: "1"
         run: pytest -q tests/test_auth_sessions_isolated.py --tb=short
