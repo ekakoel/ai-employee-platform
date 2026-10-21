@@ -58,11 +58,11 @@ def setup(client):
         headers=_hdrs,
     )
     assert hire.status_code == 201
-    return co["id"], owner["id"], hire.json()["id"]
+    return co["id"], owner["id"], hire.json()["id"], _hdrs
 
 
 def test_schedule_tick_creates_task(client):
-    company_id, owner_id, agent_id = setup(client)
+    company_id, owner_id, agent_id, _hdrs = setup(client)
     past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
     rule = client.post(
         f"/api/v1/companies/{company_id}/automations",
@@ -101,7 +101,7 @@ def test_schedule_tick_creates_task(client):
 
 
 def test_event_trigger_idempotency(client):
-    company_id, owner_id, agent_id = setup(client)
+    company_id, owner_id, agent_id, _hdrs = setup(client)
     rule = client.post(
         f"/api/v1/companies/{company_id}/automations",
         headers=_hdrs,
@@ -147,7 +147,7 @@ def test_event_trigger_idempotency(client):
 
 
 def test_retry_failed_run(client):
-    company_id, owner_id, agent_id = setup(client)
+    company_id, owner_id, agent_id, _hdrs = setup(client)
     rule = client.post(
         f"/api/v1/companies/{company_id}/automations",
         headers=_hdrs,
@@ -194,7 +194,7 @@ def test_retry_failed_run(client):
 
 
 def test_list_rules_and_runs(client):
-    company_id, owner_id, agent_id = setup(client)
+    company_id, owner_id, agent_id, _hdrs = setup(client)
     client.post(
         f"/api/v1/companies/{company_id}/automations",
         headers=_hdrs,
@@ -228,7 +228,7 @@ def test_list_rules_and_runs(client):
 
 
 def test_schedule_requires_interval(client):
-    company_id, owner_id, agent_id = setup(client)
+    company_id, owner_id, agent_id, _hdrs = setup(client)
     resp = client.post(
         f"/api/v1/companies/{company_id}/automations",
         headers=_hdrs,

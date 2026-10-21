@@ -17,7 +17,7 @@ def _owner_company():
     _cid, _oid, _hdrs, _demo = provision_company(client)
     co = {"id": _cid}
     owner = {"id": _oid, "email": _demo.get("owner_email")}
-    return co["id"], owner["id"]
+    return co["id"], owner["id"], _hdrs
 
 
 def test_list_users_requires_team_manage():

@@ -67,3 +67,6 @@ def owner_setup(client: TestClient) -> tuple[str, str, dict[str, str]]:
     """Legacy-compatible: (company_id, owner_id, headers)."""
     cid, uid, headers, _ = provision_company(client, role="owner")
     return cid, uid, headers
+
+# Job 86: any local setup() that calls provision_company must RETURN headers
+# e.g. return company_id, owner_id, agent_id, headers

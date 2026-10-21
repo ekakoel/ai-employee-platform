@@ -58,7 +58,7 @@ def setup_company(client):
         headers=_hdrs,
     )
     assert hire.status_code == 201, hire.text
-    return co["id"], owner["id"], member["id"], hire.json()["id"]
+    return co["id"], owner["id"], member["id"], hire.json()["id"], _hdrs
 
 
 def test_conditions_match_amount():
@@ -216,7 +216,7 @@ def test_agent_policies_fallback(client):
 
 
 def test_unauthorized_approver_denied(client):
-    company_id, owner_id, member_id, agent_id = setup_company(client)
+    company_id, owner_id, member_id, agent_id, _hdrs = setup_company(client)
     # member can use but not approve
     client.post(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/access",

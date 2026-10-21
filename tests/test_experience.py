@@ -65,11 +65,11 @@ def setup(client):
         },
     )
     assert task.status_code == 201, task.text
-    return co["id"], owner["id"], hire.json()["id"], task.json()["id"]
+    return co["id"], owner["id"], hire.json()["id"], task.json()["id"], _hdrs
 
 
 def test_create_candidate_from_task(client):
-    company_id, owner_id, agent_id, task_id = setup(client)
+    company_id, owner_id, agent_id, task_id, _hdrs = setup(client)
     resp = client.post(
         f"/api/v1/companies/{company_id}/tasks/{task_id}/experiences",
         headers=_hdrs,
@@ -89,7 +89,7 @@ def test_create_candidate_from_task(client):
 
 
 def test_validate_and_search(client):
-    company_id, owner_id, agent_id, task_id = setup(client)
+    company_id, owner_id, agent_id, task_id, _hdrs = setup(client)
     cand = client.post(
         f"/api/v1/companies/{company_id}/tasks/{task_id}/experiences",
         headers=_hdrs,
@@ -133,7 +133,7 @@ def test_validate_and_search(client):
 
 
 def test_reject_experience(client):
-    company_id, owner_id, agent_id, task_id = setup(client)
+    company_id, owner_id, agent_id, task_id, _hdrs = setup(client)
     cand = client.post(
         f"/api/v1/companies/{company_id}/tasks/{task_id}/experiences",
         headers=_hdrs,
@@ -178,7 +178,7 @@ def test_tenant_isolation(client):
 
 
 def test_member_cannot_validate(client):
-    company_id, owner_id, agent_id, task_id = setup(client)
+    company_id, owner_id, agent_id, task_id, _hdrs = setup(client)
     member = client.post(
         f"/api/v1/companies/{company_id}/users",
         headers=_hdrs,

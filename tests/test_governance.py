@@ -66,11 +66,11 @@ def setup(client):
         },
     )
     assert task.status_code == 201
-    return co["id"], owner["id"], hire.json()["id"], task.json()["id"]
+    return co["id"], owner["id"], hire.json()["id"], task.json()["id"], _hdrs
 
 
 def test_governance_overview(client):
-    company_id, owner_id, agent_id, task_id = setup(client)
+    company_id, owner_id, agent_id, task_id, _hdrs = setup(client)
     resp = client.get(
         f"/api/v1/companies/{company_id}/governance/overview",
         headers=_hdrs,
@@ -85,7 +85,7 @@ def test_governance_overview(client):
 
 
 def test_governance_agents(client):
-    company_id, owner_id, agent_id, task_id = setup(client)
+    company_id, owner_id, agent_id, task_id, _hdrs = setup(client)
     resp = client.get(
         f"/api/v1/companies/{company_id}/governance/agents",
         headers=_hdrs,
@@ -98,7 +98,7 @@ def test_governance_agents(client):
 
 
 def test_governance_experiences_and_audit(client):
-    company_id, owner_id, agent_id, task_id = setup(client)
+    company_id, owner_id, agent_id, task_id, _hdrs = setup(client)
     # create + validate experience
     cand = client.post(
         f"/api/v1/companies/{company_id}/tasks/{task_id}/experiences",

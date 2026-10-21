@@ -60,7 +60,7 @@ def setup(client):
         headers=_hdrs,
     )
     assert hire.status_code == 201
-    return co["id"], owner["id"], hire.json()["id"]
+    return co["id"], owner["id"], hire.json()["id"], _hdrs
 
 
 def test_chunk_text_splits_long_content():
@@ -71,7 +71,7 @@ def test_chunk_text_splits_long_content():
 
 
 def test_knowledge_create_indexes_chunks(client):
-    company_id, owner_id, agent_id = setup(client)
+    company_id, owner_id, agent_id, _hdrs = setup(client)
     body = {
         "title": "Pricing Rules",
         "content": (
@@ -102,7 +102,7 @@ def test_knowledge_create_indexes_chunks(client):
 
 
 def test_search_finds_relevant_chunk(client):
-    company_id, owner_id, agent_id = setup(client)
+    company_id, owner_id, agent_id, _hdrs = setup(client)
     client.post(
         f"/api/v1/companies/{company_id}/knowledge",
         headers=_hdrs,
@@ -147,7 +147,7 @@ def test_tenant_isolation_search(client):
 
 
 def test_agent_memory_lifecycle(client):
-    company_id, owner_id, agent_id = setup(client)
+    company_id, owner_id, agent_id, _hdrs = setup(client)
     created = client.post(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/memories",
         headers=_hdrs,
@@ -181,7 +181,7 @@ def test_agent_memory_lifecycle(client):
 
 
 def test_expired_memory_not_listed(client):
-    company_id, owner_id, agent_id = setup(client)
+    company_id, owner_id, agent_id, _hdrs = setup(client)
     past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
     created = client.post(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/memories",

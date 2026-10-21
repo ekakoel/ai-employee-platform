@@ -59,7 +59,7 @@ def setup(client):
         headers=_hdrs,
     )
     assert hire.status_code == 201
-    return co["id"], owner["id"], hire.json()["id"]
+    return co["id"], owner["id"], hire.json()["id"], _hdrs
 
 
 def test_is_read_only_tool():
@@ -70,7 +70,7 @@ def test_is_read_only_tool():
 
 
 def test_create_consult_task_and_run(client):
-    company_id, owner_id, agent_id = setup(client)
+    company_id, owner_id, agent_id, _hdrs = setup(client)
     # seed some knowledge for rationale
     client.post(
         f"/api/v1/companies/{company_id}/knowledge",
@@ -111,7 +111,7 @@ def test_create_consult_task_and_run(client):
 
 
 def test_consult_endpoint_rejects_execute_mode(client):
-    company_id, owner_id, agent_id = setup(client)
+    company_id, owner_id, agent_id, _hdrs = setup(client)
     task = client.post(
         f"/api/v1/companies/{company_id}/tasks",
         headers=_hdrs,
@@ -130,7 +130,7 @@ def test_consult_endpoint_rejects_execute_mode(client):
 
 
 def test_tool_executor_blocks_side_effect_in_consult(client):
-    company_id, owner_id, agent_id = setup(client)
+    company_id, owner_id, agent_id, _hdrs = setup(client)
     task = client.post(
         f"/api/v1/companies/{company_id}/tasks",
         headers=_hdrs,
@@ -158,7 +158,7 @@ def test_tool_executor_blocks_side_effect_in_consult(client):
 
 
 def test_default_mode_is_execute(client):
-    company_id, owner_id, agent_id = setup(client)
+    company_id, owner_id, agent_id, _hdrs = setup(client)
     task = client.post(
         f"/api/v1/companies/{company_id}/tasks",
         headers=_hdrs,

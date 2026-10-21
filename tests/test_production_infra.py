@@ -70,7 +70,10 @@ def test_request_id_header():
 
 
 def test_jwt_roundtrip():
-    token = create_access_token(subject="user-1", company_id="co-1")
+    token = create_access_token(
+        subject="user-1", company_id="co-1",
+        session_id="sess-test-1", auth_version=1,
+    )
     payload = decode_access_token(token)
     assert payload["sub"] == "user-1"
     assert payload["company_id"] == "co-1"

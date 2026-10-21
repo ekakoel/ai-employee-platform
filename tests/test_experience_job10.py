@@ -63,7 +63,7 @@ def setup(client):
             "instruction": "Customer wants refund after late cancel",
         },
     )
-    return co["id"], owner["id"], hire.json()["id"], task.json()["id"]
+    return co["id"], owner["id"], hire.json()["id"], _hdrs, task.json()["id"], _hdrs
 
 
 def validated_experience(client, company_id, owner_id, task_id):
@@ -86,7 +86,7 @@ def validated_experience(client, company_id, owner_id, task_id):
 
 
 def test_job10_matrix_candidate_validate_retrieve_confidence_feedback(client):
-    company_id, owner_id, agent_id, task_id = setup(client)
+    company_id, owner_id, agent_id, task_id, _hdrs = setup(client)
     exp = validated_experience(client, company_id, owner_id, task_id)
     assert exp["validation_status"] == "validated"
     assert exp["confidence"] == 0.8
@@ -117,7 +117,7 @@ def test_job10_matrix_candidate_validate_retrieve_confidence_feedback(client):
 
 
 def test_unhelpful_feedback_lowers_confidence(client):
-    company_id, owner_id, agent_id, task_id = setup(client)
+    company_id, owner_id, agent_id, task_id, _hdrs = setup(client)
     exp = validated_experience(client, company_id, owner_id, task_id)
     before = exp["confidence"]
     fb = client.post(
@@ -130,7 +130,7 @@ def test_unhelpful_feedback_lowers_confidence(client):
 
 
 def test_feedback_only_on_validated(client):
-    company_id, owner_id, agent_id, task_id = setup(client)
+    company_id, owner_id, agent_id, task_id, _hdrs = setup(client)
     cand = client.post(
         f"/api/v1/companies/{company_id}/tasks/{task_id}/experiences",
         headers=_hdrs,
@@ -145,7 +145,7 @@ def test_feedback_only_on_validated(client):
 
 
 def test_reuse_bumps_success_count(client):
-    company_id, owner_id, agent_id, task_id = setup(client)
+    company_id, owner_id, agent_id, task_id, _hdrs = setup(client)
     exp = validated_experience(client, company_id, owner_id, task_id)
     r1 = client.post(
         f"/api/v1/companies/{company_id}/experiences/{exp['id']}/reuse",
@@ -163,7 +163,7 @@ def test_reuse_bumps_success_count(client):
 
 
 def test_archive_hides_from_search(client):
-    company_id, owner_id, agent_id, task_id = setup(client)
+    company_id, owner_id, agent_id, task_id, _hdrs = setup(client)
     exp = validated_experience(client, company_id, owner_id, task_id)
     arch = client.post(
         f"/api/v1/companies/{company_id}/experiences/{exp['id']}/archive",
@@ -182,7 +182,7 @@ def test_archive_hides_from_search(client):
 
 
 def test_get_experience(client):
-    company_id, owner_id, agent_id, task_id = setup(client)
+    company_id, owner_id, agent_id, task_id, _hdrs = setup(client)
     exp = validated_experience(client, company_id, owner_id, task_id)
     got = client.get(
         f"/api/v1/companies/{company_id}/experiences/{exp['id']}",
@@ -194,7 +194,7 @@ def test_get_experience(client):
 
 def test_manual_candidate_create_fixed(client):
     """Regression: POST /experiences must not crash (signature fix)."""
-    company_id, owner_id, agent_id, task_id = setup(client)
+    company_id, owner_id, agent_id, task_id, _hdrs = setup(client)
     resp = client.post(
         f"/api/v1/companies/{company_id}/experiences",
         headers=_hdrs,
