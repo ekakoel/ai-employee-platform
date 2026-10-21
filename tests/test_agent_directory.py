@@ -124,7 +124,7 @@ def test_validate_target_success(client):
 
 
 def test_validate_target_rejects_self(client):
-    company_id, owner_id, a1, _ = setup_two_agents(client)
+    company_id, owner_id, a1, _, _hdrs = setup_two_agents(client)
     resp = client.post(
         f"/api/v1/companies/{company_id}/directory/validate-target",
         headers=_hdrs,

@@ -48,9 +48,9 @@ def chat_fixture(monkeypatch):
         db.add(AgentSubscription(id="subscription", company_id="one", catalog_agent_id="catalog"))
         db.flush()
         db.add_all([
-            User(id="alice", company_id="one", name="Alice", email="alice@test.local", role_id=role.id),
-            User(id="bob", company_id="one", name="Bob", email="bob@test.local", role_id=role.id),
-            User(id="eve", company_id="two", name="Eve", email="eve@test.local", role_id=role.id),
+            User(id="alice", company_id="one", name="Alice", email="alice@test.local", role_id=role.id, auth_version=1),
+            User(id="bob", company_id="one", name="Bob", email="bob@test.local", role_id=role.id, auth_version=1),
+            User(id="eve", company_id="two", name="Eve", email="eve@test.local", role_id=role.id, auth_version=1),
             AgentInstance(
                 id="agent",
                 company_id="one",
