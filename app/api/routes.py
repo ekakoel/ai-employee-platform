@@ -821,6 +821,26 @@ def update_company_agent(
         instance.name = payload.name
     if payload.instructions is not None:
         instance.instructions = payload.instructions
+    profile_fields = (
+        "job_description",
+        "responsibilities",
+        "sop",
+        "rules",
+        "success_criteria",
+    )
+
+    configuration = dict(instance.configuration or {})
+    profile_changed = False
+
+    for field in profile_fields:
+        value = getattr(payload, field)
+
+        if value is not None:
+            configuration[field] = value
+            profile_changed = True
+
+    if profile_changed:
+        instance.configuration = configuration
     if payload.autonomy is not None:
         instance.autonomy = payload.autonomy
     if payload.policies is not None:

@@ -10,6 +10,9 @@ from sqlalchemy.orm import sessionmaker
 from app.core.database import Base, get_db
 from app.main import app
 from app.services.seed import seed_catalog
+from app.core.passwords import hash_password
+from app.models.entities import User, EmailClaim
+from app.services.seed import get_or_create_role
 
 engine = create_engine(
     "sqlite:///./test_agent_access.db",
@@ -42,52 +45,119 @@ def client():
         app.dependency_overrides[get_db] = prev
 
 
+# def setup_company(client):
+#     # auth-hardened: demo bootstrap instead of public company create
+#     _cid, _oid, _hdrs, _demo = provision_company(client)
+#     co = {"id": _cid}
+#     owner = {"id": _oid, "email": _demo.get("owner_email")}
+#     member = {"id": None}  # invite-only API; use bootstrap personas
+#     catalog = client.get("/api/v1/agent-catalog").json()
+#     res = next(i for i in catalog if i["slug"] == "reservation")
+#     hire = client.post(
+#         f"/api/v1/companies/{co['id']}/agents/{res['id']}/hire",
+#         json={"name": "Desk AI"},
+#         headers=_hdrs,
+#     )
+#     assert hire.status_code == 201, hire.text
+#     return co["id"], owner["id"], member["id"], hire.json()["id"]
+
 def setup_company(client):
-    # auth-hardened: demo bootstrap instead of public company create
-    _cid, _oid, _hdrs, _demo = provision_company(client)
-    co = {"id": _cid}
-    owner = {"id": _oid, "email": _demo.get("owner_email")}
-    member = {"id": None}  # invite-only API; use bootstrap personas
+    # Siapkan company dan autentikasi owner.
+    company_id, owner_id, owner_headers, demo = provision_company(client)
+
     catalog = client.get("/api/v1/agent-catalog").json()
-    res = next(i for i in catalog if i["slug"] == "reservation")
+    reservation = next(
+        item for item in catalog if item["slug"] == "reservation"
+    )
+
     hire = client.post(
-        f"/api/v1/companies/{co['id']}/agents/{res['id']}/hire",
+        f"/api/v1/companies/{company_id}/agents/{reservation['id']}/hire",
         json={"name": "Desk AI"},
-        headers=_hdrs,
+        headers=owner_headers,
     )
     assert hire.status_code == 201, hire.text
-    return co["id"], owner["id"], member["id"], hire.json()["id"]
+
+    
+    # Buat member setelah agen di-hire agar setup test ini
+    # tidak memberikan grant akses operasional secara otomatis.
+    member_email = f"member-{owner_id}@test.local"
+
+    with SessionLocal() as db:
+        role = get_or_create_role(db, "member")
+
+        if db.get(EmailClaim, member_email) is None:
+            db.add(EmailClaim(email=member_email))
+            db.flush()
+
+        member = User(
+            company_id=company_id,
+            name="Test Member",
+            email=member_email,
+            role_id=role.id,
+            password_hash=hash_password("test-password-123"),
+            email_verified=True,
+            status="active",
+        )
+        db.add(member)
+        db.commit()
+        db.refresh(member)
+        member_id = member.id
+
+    member_headers = login_headers(
+        client,
+        member_email,
+        password="test-password-123",
+    )
+
+    return (
+        company_id,
+        owner_id,
+        owner_headers,
+        member_id,
+        member_headers,
+        hire.json()["id"],
+    )
+
+
 
 
 def test_hire_auto_grants_supervisor_access(client):
-    company_id, owner_id, _, agent_id = setup_company(client)
+    company_id, owner_id, owner_headers, member_id, member_headers, agent_id = (
+        setup_company(client)
+    )
     access = client.get(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/access",
-        headers=_hdrs,
+        headers=owner_headers,
     )
     assert access.status_code == 200
     grants = access.json()
-    assert len(grants) == 1
-    g = grants[0]
-    assert g["user_id"] == owner_id
-    assert g["can_use"] is True
-    assert g["can_manage"] is True
-    assert g["can_approve"] is True
-    assert g["is_supervisor"] is True
+
+    owner_grant = next(
+        (grant for grant in grants if grant["user_id"] == owner_id),
+        None,
+    )
+
+    assert owner_grant is not None
+    assert owner_grant["can_use"] is True
+    assert owner_grant["can_manage"] is True
+    assert owner_grant["can_approve"] is True
+    assert owner_grant["is_supervisor"] is True
 
     inst = client.get(
         f"/api/v1/companies/{company_id}/agents",
-        headers=_hdrs,
+        headers=owner_headers,
     ).json()
     row = next(i for i in inst if i["id"] == agent_id)
     assert row["supervisor_user_id"] == owner_id
 
 
 def test_member_without_access_cannot_create_task(client):
-    company_id, owner_id, member_id, agent_id = setup_company(client)
+    company_id, owner_id, owner_headers, member_id, member_headers, agent_id = (
+        setup_company(client)
+    )
     resp = client.post(
         f"/api/v1/companies/{company_id}/tasks",
-        headers={"X-User-ID": member_id},
+        headers=member_headers,
         json={
             "agent_instance_id": agent_id,
             "title": "Hello",
@@ -98,10 +168,12 @@ def test_member_without_access_cannot_create_task(client):
 
 
 def test_member_with_use_access_can_create_task(client):
-    company_id, owner_id, member_id, agent_id = setup_company(client)
+    company_id, owner_id, owner_headers, member_id, member_headers, agent_id = (
+        setup_company(client)
+    )
     assign = client.post(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/access",
-        headers=_hdrs,
+        headers=owner_headers,
         json={
             "user_id": member_id,
             "can_use": True,
@@ -113,7 +185,7 @@ def test_member_with_use_access_can_create_task(client):
 
     resp = client.post(
         f"/api/v1/companies/{company_id}/tasks",
-        headers={"X-User-ID": member_id},
+        headers=member_headers,
         json={
             "agent_instance_id": agent_id,
             "title": "Hello",
@@ -124,30 +196,34 @@ def test_member_with_use_access_can_create_task(client):
 
 
 def test_member_cannot_configure_without_manage(client):
-    company_id, owner_id, member_id, agent_id = setup_company(client)
+    company_id, owner_id, owner_headers, member_id, member_headers, agent_id = (
+        setup_company(client)
+    )
     client.post(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/access",
-        headers=_hdrs,
+        headers=owner_headers,
         json={"user_id": member_id, "can_use": True, "can_manage": False},
     )
     resp = client.patch(
         f"/api/v1/companies/{company_id}/agents/{agent_id}",
-        headers={"X-User-ID": member_id},
+        headers=member_headers,
         json={"instructions": "hacked"},
     )
     assert resp.status_code == 403
 
 
 def test_member_with_manage_can_configure(client):
-    company_id, owner_id, member_id, agent_id = setup_company(client)
+    company_id, owner_id, owner_headers, member_id, member_headers, agent_id = (
+        setup_company(client)
+    )
     client.post(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/access",
-        headers=_hdrs,
+        headers=owner_headers,
         json={"user_id": member_id, "can_use": True, "can_manage": True},
     )
     resp = client.patch(
         f"/api/v1/companies/{company_id}/agents/{agent_id}",
-        headers={"X-User-ID": member_id},
+        headers=member_headers,
         json={"instructions": "Company custom instructions"},
     )
     assert resp.status_code == 200, resp.text

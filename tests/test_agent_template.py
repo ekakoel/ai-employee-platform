@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
+from tests.helpers import provision_company
 from app.core.database import Base, get_db
 from app.main import app
 from app.models.entities import AgentCatalog, AgentInstance
@@ -47,25 +48,27 @@ def client():
         app.dependency_overrides[get_db] = previous
 
 
+# def _create_company_with_owner(client: TestClient):
+#     company = client.post(
+#         "/api/v1/companies",
+#         json={"name": "Template Co"},
+#     )
+#     assert company.status_code == 201, company.text
+#     company_id = company.json()["id"]
+
+#     user = client.post(
+#         f"/api/v1/companies/{company_id}/users",
+#         json={
+#             "name": "Owner",
+#             "email": "owner@template.test",
+#             "role": "owner",
+#         },
+#     )
+#     assert user.status_code == 201, user.text
+#     return company_id, user.json()["id"]
 def _create_company_with_owner(client: TestClient):
-    company = client.post(
-        "/api/v1/companies",
-        json={"name": "Template Co"},
-    )
-    assert company.status_code == 201, company.text
-    company_id = company.json()["id"]
-
-    user = client.post(
-        f"/api/v1/companies/{company_id}/users",
-        json={
-            "name": "Owner",
-            "email": "owner@template.test",
-            "role": "owner",
-        },
-    )
-    assert user.status_code == 201, user.text
-    return company_id, user.json()["id"]
-
+    company_id, user_id, headers, _ = provision_company(client)
+    return company_id, user_id, headers
 
 def test_catalog_exposes_template_fields(client: TestClient):
     response = client.get("/api/v1/agent-catalog")
@@ -83,7 +86,7 @@ def test_catalog_exposes_template_fields(client: TestClient):
 
 
 def test_hire_snapshots_template_version_and_defaults(client: TestClient):
-    company_id, user_id = _create_company_with_owner(client)
+    company_id, user_id, headers = _create_company_with_owner(client)
 
     catalog = client.get("/api/v1/agent-catalog").json()
     reservation = next(i for i in catalog if i["slug"] == "reservation")
@@ -91,7 +94,7 @@ def test_hire_snapshots_template_version_and_defaults(client: TestClient):
     hire = client.post(
         f"/api/v1/companies/{company_id}/agents/{reservation['id']}/hire",
         json={"name": "Front Desk AI"},
-        headers={"X-User-ID": user_id},
+        headers=headers,
     )
     assert hire.status_code == 201, hire.text
     instance = hire.json()
@@ -109,7 +112,7 @@ def test_hire_snapshots_template_version_and_defaults(client: TestClient):
 
 
 def test_catalog_mutation_does_not_change_existing_instance(client: TestClient):
-    company_id, user_id = _create_company_with_owner(client)
+    company_id, user_id, headers = _create_company_with_owner(client)
 
     catalog_items = client.get("/api/v1/agent-catalog").json()
     reservation = next(i for i in catalog_items if i["slug"] == "reservation")
@@ -117,7 +120,7 @@ def test_catalog_mutation_does_not_change_existing_instance(client: TestClient):
     hire = client.post(
         f"/api/v1/companies/{company_id}/agents/{reservation['id']}/hire",
         json={"name": "Pinned AI"},
-        headers={"X-User-ID": user_id},
+        headers=headers,
     )
     assert hire.status_code == 201
     instance_id = hire.json()["id"]
@@ -145,7 +148,7 @@ def test_catalog_mutation_does_not_change_existing_instance(client: TestClient):
 
 
 def test_unpublished_catalog_not_hireable(client: TestClient):
-    company_id, user_id = _create_company_with_owner(client)
+    company_id, user_id, headers = _create_company_with_owner(client)
 
     with TestingSessionLocal() as db:
         cat = db.scalar(
@@ -158,20 +161,20 @@ def test_unpublished_catalog_not_hireable(client: TestClient):
     hire = client.post(
         f"/api/v1/companies/{company_id}/agents/{catalog_id}/hire",
         json={"name": "Should Fail"},
-        headers={"X-User-ID": user_id},
+        headers=headers,
     )
     assert hire.status_code == 404
 
 
 def test_patch_instance_customization(client: TestClient):
-    company_id, user_id = _create_company_with_owner(client)
+    company_id, user_id, headers = _create_company_with_owner(client)
     catalog = client.get("/api/v1/agent-catalog").json()
     reservation = next(i for i in catalog if i["slug"] == "reservation")
 
     hire = client.post(
         f"/api/v1/companies/{company_id}/agents/{reservation['id']}/hire",
         json={"name": "Customizable AI"},
-        headers={"X-User-ID": user_id},
+        headers=headers,
     )
     assert hire.status_code == 201
     instance_id = hire.json()["id"]
@@ -183,10 +186,84 @@ def test_patch_instance_customization(client: TestClient):
             "autonomy": "2",
             "policies": {"send_quotation": "deny"},
         },
-        headers={"X-User-ID": user_id},
+        headers=headers,
     )
     assert updated.status_code == 200, updated.text
     body = updated.json()
     assert body["instructions"] == "Custom company instructions"
     assert body["autonomy"] == "2"
     assert body["policies"]["send_quotation"] == "deny"
+
+
+def test_patch_instance_profile_configuration(client: TestClient):
+    company_id, user_id, headers = _create_company_with_owner(client)
+    catalog = client.get("/api/v1/agent-catalog").json()
+    reservation = next(i for i in catalog if i["slug"] == "reservation")
+
+    hire = client.post(
+        f"/api/v1/companies/{company_id}/agents/{reservation['id']}/hire",
+        json={"name": "Profile Test AI"},
+        headers=headers,
+    )
+    assert hire.status_code == 201, hire.text
+    instance_id = hire.json()["id"]
+
+    original_configuration = hire.json()["configuration"] or {}
+
+    profile = {
+        "job_description": "Mengelola reservasi pelanggan.",
+        "responsibilities": [
+            "Memeriksa ketersediaan kamar",
+            "Mencatat permintaan pelanggan",
+        ],
+        "sop": [
+            "Verifikasi tanggal menginap",
+            "Konfirmasi ketersediaan sebelum memberi jawaban",
+        ],
+        "rules": [
+            "Jangan menjanjikan kamar tanpa data ketersediaan",
+        ],
+        "success_criteria": [
+            "Informasi reservasi akurat dan dapat diverifikasi",
+        ],
+    }
+
+    updated = client.patch(
+        f"/api/v1/companies/{company_id}/agents/{instance_id}",
+        json=profile,
+        headers=headers,
+    )
+    assert updated.status_code == 200, updated.text
+
+    configuration = updated.json()["configuration"]
+
+    for field, expected_value in profile.items():
+        assert configuration[field] == expected_value
+
+    # Konfigurasi lama yang bukan bagian dari profil tetap terjaga.
+    for key, value in original_configuration.items():
+        if key not in profile:
+            assert configuration[key] == value
+
+    # Pembaruan field lain tidak boleh menghapus profil.
+    second_update = client.patch(
+        f"/api/v1/companies/{company_id}/agents/{instance_id}",
+        json={"instructions": "Instruksi tambahan perusahaan."},
+        headers=headers,
+    )
+    assert second_update.status_code == 200, second_update.text
+
+    final_body = second_update.json()
+    assert final_body["instructions"] == "Instruksi tambahan perusahaan."
+
+    for field, expected_value in profile.items():
+        assert final_body["configuration"][field] == expected_value
+
+    # List kosong dapat digunakan untuk menghapus isi suatu bagian profil.
+    clear_response = client.patch(
+        f"/api/v1/companies/{company_id}/agents/{instance_id}",
+        json={"responsibilities": []},
+        headers=headers,
+    )
+    assert clear_response.status_code == 200, clear_response.text
+    assert clear_response.json()["configuration"]["responsibilities"] == []

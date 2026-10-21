@@ -73,6 +73,11 @@ class AgentInstanceUpdate(BaseModel):
 
     name: str | None = Field(default=None, min_length=2, max_length=200)
     instructions: str | None = None
+    job_description: str | None = None
+    responsibilities: list[str] | None = None
+    sop: list[str] | None = None
+    rules: list[str] | None = None
+    success_criteria: list[str] | None = None
     autonomy: str | None = Field(default=None, pattern="^[0-3]$")
     policies: dict | None = None
     department_id: str | None = None
