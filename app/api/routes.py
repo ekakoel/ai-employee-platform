@@ -780,10 +780,74 @@ def list_company_agents(
     return list(db.scalars(q).all())
 
 
+
+def _set_agent_supervisor(
+    db: Session,
+    *,
+    company_id: str,
+    agent: AgentInstance,
+    supervisor_user_id: str | None,
+) -> None:
+    """Validate and synchronize an agent's primary supervisor and access grant."""
+
+    target = None
+
+    if supervisor_user_id:
+        target = db.scalar(
+            select(User).where(
+                User.id == supervisor_user_id,
+                User.company_id == company_id,
+                User.status == "active",
+            )
+        )
+
+        if target is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Supervisor must be an active user in this company",
+            )
+
+    grants = list(
+        db.scalars(
+            select(AgentAccess).where(
+                AgentAccess.company_id == company_id,
+                AgentAccess.agent_instance_id == agent.id,
+            )
+        ).all()
+    )
+
+    if target is not None:
+        target_access = next(
+            (grant for grant in grants if grant.user_id == target.id),
+            None,
+        )
+
+        if target_access is None:
+            target_access = grant_access(
+                db,
+                company_id=company_id,
+                agent_instance_id=agent.id,
+                user_id=target.id,
+                can_use=True,
+                can_manage=False,
+                can_approve=False,
+                is_supervisor=True,
+            )
+            grants.append(target_access)
+
+    for grant in grants:
+        grant.is_supervisor = (
+            target is not None and grant.user_id == target.id
+        )
+
+    agent.supervisor_user_id = target.id if target is not None else None
+
+
 @router.patch(
     "/companies/{company_id}/agents/{agent_instance_id}",
     response_model=AgentInstanceRead,
 )
+
 def update_company_agent(
     company_id: str,
     agent_instance_id: str,
@@ -827,6 +891,9 @@ def update_company_agent(
         "sop",
         "rules",
         "success_criteria",
+        "llm_provider",
+        "llm_model",
+        "llm_temperature",
     )
 
     configuration = dict(instance.configuration or {})
@@ -861,8 +928,14 @@ def update_company_agent(
                     detail="Department not found in company",
                 )
             instance.department_id = payload.department_id
-    if payload.supervisor_user_id is not None:
-        instance.supervisor_user_id = payload.supervisor_user_id or None
+    if "supervisor_user_id" in payload.model_fields_set:
+        _set_agent_supervisor(
+            db,
+            company_id=company_id,
+            agent=instance,
+            supervisor_user_id=payload.supervisor_user_id or None,
+        )
+
 
     record_audit(
         db,
@@ -1018,8 +1091,22 @@ def assign_agent_access(
         is_supervisor=payload.is_supervisor,
     )
 
+    
     if payload.is_supervisor:
-        agent.supervisor_user_id = target.id
+        _set_agent_supervisor(
+            db,
+            company_id=company_id,
+            agent=agent,
+            supervisor_user_id=target.id,
+        )
+    elif agent.supervisor_user_id == target.id:
+        _set_agent_supervisor(
+            db,
+            company_id=company_id,
+            agent=agent,
+            supervisor_user_id=None,
+        )
+
 
     record_audit(
         db,
@@ -1075,8 +1162,25 @@ def update_agent_access(
     for key, value in data.items():
         setattr(access, key, value)
 
+    
     if data.get("is_supervisor") is True:
-        agent.supervisor_user_id = access.user_id
+        _set_agent_supervisor(
+            db,
+            company_id=company_id,
+            agent=agent,
+            supervisor_user_id=access.user_id,
+        )
+    elif (
+        data.get("is_supervisor") is False
+        and agent.supervisor_user_id == access.user_id
+    ):
+        _set_agent_supervisor(
+            db,
+            company_id=company_id,
+            agent=agent,
+            supervisor_user_id=None,
+        )
+
 
     record_audit(
         db,
@@ -1121,8 +1225,18 @@ def revoke_agent_access(
     if not access:
         raise HTTPException(status_code=404, detail="Access grant not found")
 
-    if agent.supervisor_user_id == access.user_id:
-        agent.supervisor_user_id = None
+    
+    if (
+        agent.supervisor_user_id == access.user_id
+        or access.is_supervisor
+    ):
+        _set_agent_supervisor(
+            db,
+            company_id=company_id,
+            agent=agent,
+            supervisor_user_id=None,
+        )
+
 
     record_audit(
         db,

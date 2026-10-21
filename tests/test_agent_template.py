@@ -267,3 +267,84 @@ def test_patch_instance_profile_configuration(client: TestClient):
     )
     assert clear_response.status_code == 200, clear_response.text
     assert clear_response.json()["configuration"]["responsibilities"] == []
+
+
+def test_patch_instance_llm_configuration(client: TestClient):
+    # 1. Buat perusahaan dan dapatkan autentikasi pemilik.
+    company_id, user_id, headers = _create_company_with_owner(client)
+
+    # 2. Cari template agen yang tersedia.
+    catalog = client.get("/api/v1/agent-catalog")
+    assert catalog.status_code == 200, catalog.text
+
+    items = catalog.json()
+    reservation = next(
+        item for item in items if item["slug"] == "reservation"
+    )
+
+    # 3. Rekrut agen agar memiliki agent instance ID.
+    hire = client.post(
+        f"/api/v1/companies/{company_id}/agents/{reservation['id']}/hire",
+        json={"name": "LLM Configuration Test AI"},
+        headers=headers,
+    )
+    assert hire.status_code == 201, hire.text
+
+    agent_id = hire.json()["id"]
+
+    # 4. Atur konfigurasi LLM pada agen tersebut.
+    llm_configuration = {
+        "llm_provider": "openai",
+        "llm_model": "gpt-4.1-mini",
+        "llm_temperature": 0.1,
+    }
+
+    response = client.patch(
+        f"/api/v1/companies/{company_id}/agents/{agent_id}",
+        headers=headers,
+        json=llm_configuration,
+    )
+
+    # 5. Pastikan API menerima dan menyimpan konfigurasi.
+    assert response.status_code == 200, response.text
+
+    configuration = response.json()["configuration"]
+
+    assert configuration["llm_provider"] == "openai"
+    assert configuration["llm_model"] == "gpt-4.1-mini"
+    assert configuration["llm_temperature"] == 0.1
+
+
+def test_patch_instance_rejects_unknown_llm_provider(
+    client: TestClient,
+):
+    # 1. Buat perusahaan dan dapatkan autentikasi pemilik.
+    company_id, user_id, headers = _create_company_with_owner(client)
+
+    # 2. Cari template agen yang tersedia.
+    catalog = client.get("/api/v1/agent-catalog")
+    assert catalog.status_code == 200, catalog.text
+
+    items = catalog.json()
+    reservation = next(
+        item for item in items if item["slug"] == "reservation"
+    )
+
+    # 3. Rekrut agen terlebih dahulu.
+    hire = client.post(
+        f"/api/v1/companies/{company_id}/agents/{reservation['id']}/hire",
+        json={"name": "Invalid LLM Provider Test AI"},
+        headers=headers,
+    )
+    assert hire.status_code == 201, hire.text
+
+    agent_id = hire.json()["id"]
+
+    # 4. Provider yang tidak didukung harus ditolak oleh validasi API.
+    response = client.patch(
+        f"/api/v1/companies/{company_id}/agents/{agent_id}",
+        headers=headers,
+        json={"llm_provider": "unknown-provider"},
+    )
+
+    assert response.status_code == 422, response.text

@@ -78,6 +78,21 @@ class AgentInstanceUpdate(BaseModel):
     sop: list[str] | None = None
     rules: list[str] | None = None
     success_criteria: list[str] | None = None
+    # LLM assignment for this AI Employee.
+    llm_provider: str | None = Field(
+        default=None,
+        pattern="^(ollama|openai)$",
+    )
+    llm_model: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+    )
+    llm_temperature: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=2.0,
+    )
     autonomy: str | None = Field(default=None, pattern="^[0-3]$")
     policies: dict | None = None
     department_id: str | None = None

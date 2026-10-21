@@ -3,6 +3,8 @@ import json
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from app.llm.base import LLMProvider
+from app.runtime.factory import create_llm_provider
 from app.agents.context import load_agent_context
 from app.models.entities import (
     AgentInstance,
@@ -19,8 +21,7 @@ from app.runtime.executor import (
 from app.services.audit import record_audit
 from app.models.entities import NotificationType
 from app.services.notifications import emit_notification
-from app.llm.base import LLMProvider
-from app.runtime.factory import create_llm_provider
+
 from app.runtime.agent_runtime import AgentRuntimeResult
 
 
@@ -70,7 +71,11 @@ class TaskRuntimeService:
         provider: LLMProvider | None = None,
     ):
         self.executor = executor or AgentExecutor()
-        self.provider = provider or create_llm_provider()
+
+        # Provider yang diinjeksi tetap dipakai, misalnya oleh unit test.
+        # Jika None, provider dipilih berdasarkan konfigurasi agen saat eksekusi.
+        self.provider = provider
+
 
     def execute(
         self,
@@ -430,30 +435,19 @@ class TaskRuntimeService:
         db.refresh(task)
 
         return task
+    
     def execute_with_llm(
         self,
         db: Session,
         *,
         company_id: str,
         task_id: str,
-        temperature: float = 0.0,
+        temperature: float | None = None,
         max_tool_iterations: int = 5,
     ) -> Task:
         """
-        Execute a task using the configured LLM runtime.
-
-        TaskRuntimeService owns the Task lifecycle. Therefore an
-        approval request raised by the LLM runtime is converted into
-        WAITING_APPROVAL here.
-
-        AgentExecutor remains responsible only for runtime execution
-        and propagates runtime exceptions.
+        Execute a task using the LLM configured for its AI Employee.
         """
-
-        if self.provider is None:
-            raise ValueError(
-                "LLM provider is not configured."
-            )
 
         task = db.scalar(
             select(Task).where(
@@ -463,16 +457,24 @@ class TaskRuntimeService:
         )
 
         if task is None:
-            raise ValueError(
-                "Task not found for this company."
+            raise ValueError("Task not found for this company.")
+
+        claim = db.execute(
+            update(Task)
+            .where(
+                Task.id == task_id,
+                Task.company_id == company_id,
+                Task.status == TaskStatus.PENDING.value,
             )
-        claim = db.execute(update(Task).where(
-            Task.id == task_id, Task.company_id == company_id,
-            Task.status == TaskStatus.PENDING.value,
-        ).values(status=TaskStatus.PLANNING.value))
+            .values(status=TaskStatus.PLANNING.value)
+        )
+
         if claim.rowcount != 1:
             db.rollback()
-            raise ValueError(f"Task cannot be executed from status '{task.status}'.")
+            raise ValueError(
+                f"Task cannot be executed from status '{task.status}'."
+            )
+
         db.commit()
 
         agent = db.scalar(
@@ -485,13 +487,34 @@ class TaskRuntimeService:
         try:
             if agent is None:
                 raise ValueError("Agent instance not found for this company.")
+
             context = load_agent_context(db, agent, task)
+
+            # Gunakan provider yang diinjeksi untuk pengujian atau integrasi.
+            # Jika tidak ada, pilih provider dari konfigurasi agen.
+            provider = self.provider or create_llm_provider(
+                context.configuration
+            )
+
+            configured_temperature = context.configuration.get(
+                "llm_temperature",
+                0.0,
+            )
+
+            selected_temperature = (
+                float(configured_temperature)
+                if temperature is None
+                else temperature
+            )
+
+            if not 0.0 <= selected_temperature <= 2.0:
+                raise ValueError(
+                    "LLM temperature must be between 0.0 and 2.0."
+                )
+
         except Exception as exc:
             return self._fail(db, company_id, task_id, exc)
 
-        # ---------------------------------------------------------
-        # RUNNING
-        # ---------------------------------------------------------
         task.status = TaskStatus.RUNNING.value
 
         record_audit(
@@ -509,18 +532,14 @@ class TaskRuntimeService:
                 "execution_mode": "llm",
             },
         )
-
         db.commit()
 
-        # ---------------------------------------------------------
-        # LLM EXECUTION
-        # ---------------------------------------------------------
         try:
             runtime_result = self.executor.execute_with_llm(
                 db,
                 context=context,
-                provider=self.provider,
-                temperature=temperature,
+                provider=provider,
+                temperature=selected_temperature,
                 max_tool_iterations=max_tool_iterations,
             )
 
@@ -532,13 +551,21 @@ class TaskRuntimeService:
             )
 
             if task is None:
-                raise ValueError(
-                    "Task not found after LLM execution."
+                raise ValueError("Task not found after LLM execution.")
+
+            if (
+                not isinstance(runtime_result.output, dict)
+                or runtime_result.output.get("status") != "verified"
+            ):
+                raise RuntimeExecutionError(
+                    "Execution did not produce a verified persisted output."
                 )
 
-            if not isinstance(runtime_result.output, dict) or runtime_result.output.get("status") != "verified":
-                raise RuntimeExecutionError("Execution did not produce a verified persisted output.")
-            task.result = json.dumps(runtime_result.output, ensure_ascii=True, allow_nan=False)
+            task.result = json.dumps(
+                runtime_result.output,
+                ensure_ascii=True,
+                allow_nan=False,
+            )
             task.status = TaskStatus.COMPLETED.value
 
             record_audit(
@@ -550,23 +577,15 @@ class TaskRuntimeService:
                 resource_type="task",
                 resource_id=task.id,
                 status="success",
-                details={
-                    "execution_mode": "llm",
-                },
+                details={"execution_mode": "llm"},
             )
 
             db.commit()
             db.refresh(task)
-
             return task
 
         except RuntimeApprovalRequiredError as exc:
-            # IMPORTANT:
-            # ApprovalService.create_request() already commits the
-            # Approval before RuntimeApprovalRequiredError is raised.
-            #
-            # Therefore we must NOT rollback here, otherwise the
-            # newly-created approval could be lost.
+            # Approval sudah dibuat dan di-commit oleh alur approval.
             task = db.scalar(
                 select(Task).where(
                     Task.id == task_id,
@@ -578,7 +597,6 @@ class TaskRuntimeService:
                 raise
 
             task.status = TaskStatus.WAITING_APPROVAL.value
-
             task.result = (
                 "Task is waiting for human approval.\n"
                 f"Approval ID: {exc.approval_id}\n"
@@ -603,7 +621,6 @@ class TaskRuntimeService:
 
             db.commit()
             db.refresh(task)
-
             return task
 
         except Exception as exc:
@@ -640,8 +657,11 @@ class TaskRuntimeService:
 
             db.commit()
             db.refresh(task)
-
             return task
+
+
+
+        
     def resume_after_approval(
         self,
         db: Session,

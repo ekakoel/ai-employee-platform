@@ -1,22 +1,48 @@
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+
 from app.core.config import settings
 from app.llm.base import LLMProvider
 from app.llm.ollama import OllamaProvider
 
 
-def create_llm_provider() -> LLMProvider:
+def create_llm_provider(
+    configuration: Mapping[str, Any] | None = None,
+) -> LLMProvider:
     """
-    Create the configured LLM provider for the application.
+    Create an LLM provider using application or agent-specific settings.
 
-    Provider selection is controlled by Settings so API routes
-    and runtime services do not depend directly on a specific
-    LLM implementation.
+    Supported agent configuration:
+        llm_provider: Provider name, for example "ollama".
+        llm_model: Optional model override for this agent.
+
+    The global application settings are not modified.
     """
+    config = configuration or {}
 
-    provider_name = settings.llm_provider.strip().lower()
+    provider_name = str(
+        config.get("llm_provider") or settings.llm_provider
+    ).strip().lower()
 
     if provider_name == "ollama":
-        return OllamaProvider(settings)
+        raw_model = config.get("llm_model")
+        model: str | None = None
+
+        if raw_model is not None:
+            normalized_model = str(raw_model).strip()
+            if normalized_model:
+                model = normalized_model
+
+        return OllamaProvider(settings, model=model)
+
+    if provider_name == "openai":
+        raise ValueError(
+            "OpenAI is not enabled until tool calling is ready."
+        )
 
     raise ValueError(
-        f"Unsupported LLM provider: '{settings.llm_provider}'."
+        f"Unsupported LLM provider: '{provider_name}'."
     )

@@ -1,4 +1,4 @@
-from unittest.mock import patch
+﻿from unittest.mock import patch
 import pytest
 
 from fastapi.testclient import TestClient
@@ -23,6 +23,7 @@ from app.models.entities import (
     TaskStatus,
     User,
 )
+from app.core.passwords import hash_password
 from app.services.seed import seed_catalog
 from app.tools.contract import SearchContractTool
 
@@ -107,10 +108,14 @@ def create_approval_case(
         # ---------------------------------------------------------
         # USER
         # ---------------------------------------------------------
+        test_password = "ApprovalTest123!"
+
         user = User(
             company_id=company.id,
             email=user_email,
             name=f"{company_name} Manager",
+            password_hash=hash_password(test_password),
+            email_verified=True,
             role_id=role.id,
             status="active",
         )
@@ -205,11 +210,31 @@ def create_approval_case(
         db.add(task)
         db.commit()
 
+        login_response = client.post(
+            "/api/v1/auth/login",
+            json={
+                "email": user_email,
+                "password": test_password,
+            },
+        )
+
+        assert login_response.status_code == 200, (
+            "Test user login failed: "
+            f"{login_response.status_code} "
+            f"{login_response.text}"
+        )
+
+        access_token = login_response.json()["access_token"]
+
         return {
             "company_id": company.id,
             "user_id": user.id,
             "agent_id": agent.id,
             "task_id": task.id,
+            "headers": {
+                "Authorization": f"Bearer {access_token}",
+                "X-User-ID": user.id,
+            },
         }
 
 
@@ -257,9 +282,7 @@ def test_tool_requires_approval_and_task_waits():
     response = client.post(
         f"/api/v1/companies/{case['company_id']}/tasks/"
         f"{case['task_id']}/execute",
-        headers={
-            "X-User-ID": case["user_id"],
-        },
+        headers=case["headers"],
     )
 
     assert response.status_code == 200
@@ -301,9 +324,7 @@ def test_approval_approve_resumes_task_executes_tool_and_completes():
     response = client.post(
         f"/api/v1/companies/{case['company_id']}/tasks/"
         f"{case['task_id']}/execute",
-        headers={
-            "X-User-ID": case["user_id"],
-        },
+        headers=case["headers"],
     )
 
     assert response.status_code == 200
@@ -325,9 +346,7 @@ def test_approval_approve_resumes_task_executes_tool_and_completes():
     response = client.post(
         f"/api/v1/companies/{case['company_id']}/approvals/"
         f"{approval_id}/approve",
-        headers={
-            "X-User-ID": case["user_id"],
-        },
+        headers=case["headers"],
         json={
             "comment": "Approved for execution.",
         },
@@ -386,9 +405,7 @@ def test_rejected_approval_stops_task_without_executing_tool():
     response = client.post(
         f"/api/v1/companies/{case['company_id']}/tasks/"
         f"{case['task_id']}/execute",
-        headers={
-            "X-User-ID": case["user_id"],
-        },
+        headers=case["headers"],
     )
 
     assert response.status_code == 200
@@ -420,9 +437,7 @@ def test_rejected_approval_stops_task_without_executing_tool():
         response = client.post(
             f"/api/v1/companies/{case['company_id']}/approvals/"
             f"{approval_id}/reject",
-            headers={
-                "X-User-ID": case["user_id"],
-            },
+            headers=case["headers"],
             json={
                 "comment": "Rejected by manager.",
             },
@@ -480,9 +495,7 @@ def test_company_cannot_approve_another_company_approval():
     response = client.post(
         f"/api/v1/companies/{company_a['company_id']}/tasks/"
         f"{company_a['task_id']}/execute",
-        headers={
-            "X-User-ID": company_a["user_id"],
-        },
+        headers=company_a["headers"],
     )
 
     assert response.status_code == 200
@@ -502,9 +515,7 @@ def test_company_cannot_approve_another_company_approval():
     response = client.post(
         f"/api/v1/companies/{company_b['company_id']}/approvals/"
         f"{approval.id}/approve",
-        headers={
-            "X-User-ID": company_b["user_id"],
-        },
+        headers=company_b["headers"],
         json={
             "comment": "Unauthorized cross-company approval attempt.",
         },
@@ -553,9 +564,7 @@ def test_approval_cannot_be_reviewed_twice():
     response = client.post(
         f"/api/v1/companies/{case['company_id']}/tasks/"
         f"{case['task_id']}/execute",
-        headers={
-            "X-User-ID": case["user_id"],
-        },
+        headers=case["headers"],
     )
 
     assert response.status_code == 200
@@ -576,9 +585,7 @@ def test_approval_cannot_be_reviewed_twice():
     response = client.post(
         f"/api/v1/companies/{case['company_id']}/approvals/"
         f"{approval_id}/approve",
-        headers={
-            "X-User-ID": case["user_id"],
-        },
+        headers=case["headers"],
         json={
             "comment": "First approval.",
         },
@@ -600,9 +607,7 @@ def test_approval_cannot_be_reviewed_twice():
     response = client.post(
         f"/api/v1/companies/{case['company_id']}/approvals/"
         f"{approval_id}/approve",
-        headers={
-            "X-User-ID": case["user_id"],
-        },
+        headers=case["headers"],
         json={
             "comment": "Replay approval attempt.",
         },
@@ -744,9 +749,10 @@ def test_concurrent_approval_does_not_execute_tool_twice():
     # -------------------------------------------------------------
     def approve():
         response = client.post(
-            f'/api/v1/companies/{company_id}/approvals/{approval_id}/approve',
-            headers={'X-User-ID': user_id},
-            json={'comment': 'Concurrent approval test.'},
+            f"/api/v1/companies/{company_id}/approvals/"
+            f"{approval_id}/approve",
+            headers=case["headers"],
+            json={"comment": "Concurrent approval test."},
         )
         return response.status_code
 
@@ -984,6 +990,7 @@ def test_llm_runtime_requires_approval_and_moves_task_to_waiting_approval():
         context.agent_instance_id = case["agent_id"]
         context.agent_name = "Contract AI LLM"
         context.knowledge = []
+        context.configuration = {}
 
         with patch(
             "app.services.task_runtime.load_agent_context",
@@ -996,7 +1003,11 @@ def test_llm_runtime_requires_approval_and_moves_task_to_waiting_approval():
             )
 
         assert result.id == case["task_id"]
-        assert result.status == TaskStatus.WAITING_APPROVAL.value
+        assert result.status == TaskStatus.WAITING_APPROVAL.value, (
+            f"Task gagal masuk status waiting_approval. "
+            f"Status aktual: {result.status}; "
+            f"Detail: {result.result}"
+        )
         assert "approval-llm-1" in result.result
         assert "Tool 'search_contract' requires approval." in result.result
 
@@ -1235,9 +1246,7 @@ def test_execute_task_llm_endpoint_delegates_to_llm_runtime(monkeypatch):
     response = client.post(
         f"/api/v1/companies/{case['company_id']}/tasks/"
         f"{case['task_id']}/execute-llm",
-        headers={
-            "X-User-ID": case["user_id"],
-        },
+        headers=case["headers"],
     )
 
     assert response.status_code == 200
@@ -1301,9 +1310,7 @@ def test_execute_task_llm_endpoint_runs_real_llm_runtime():
         response = client.post(
             f"/api/v1/companies/{case['company_id']}/tasks/"
             f"{case['task_id']}/execute-llm",
-            headers={
-                "X-User-ID": case["user_id"],
-            },
+            headers=case["headers"],
         )
 
     assert response.status_code == 200
@@ -1325,3 +1332,4 @@ def test_execute_task_llm_endpoint_runs_real_llm_runtime():
     assert approval.action == "search_contract"
 
     assert provider.chat.call_count == 1
+

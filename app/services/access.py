@@ -223,6 +223,7 @@ def grant_all_agents_to_user(
     return n
 
 
+
 def require_agent_manage(
     db: Session,
     user: User,
@@ -230,10 +231,22 @@ def require_agent_manage(
     company_id: str,
     agent_instance_id: str,
 ) -> None:
-    """User must have can_manage on the agent, or company-level agent.manage."""
+    """Require an active company user with agent-management authority."""
+    if (
+        user.company_id != company_id
+        or user.status != "active"
+        or user.company is None
+        or not user.company.is_active
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="User is not active in this company",
+        )
+
     keys = user_permission_keys(user)
     if "agent.manage" in keys:
         return
+
     access = get_agent_access(
         db,
         company_id=company_id,
@@ -242,6 +255,7 @@ def require_agent_manage(
     )
     if access and access.can_manage:
         return
+
     raise HTTPException(
         status_code=403,
         detail="You are not allowed to configure this AI Employee",
@@ -255,10 +269,22 @@ def require_agent_approve(
     company_id: str,
     agent_instance_id: str,
 ) -> None:
-    """User must have can_approve on the agent, or company-level approval.manage."""
+    """Require an active company user with approval authority."""
+    if (
+        user.company_id != company_id
+        or user.status != "active"
+        or user.company is None
+        or not user.company.is_active
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="User is not active in this company",
+        )
+
     keys = user_permission_keys(user)
     if "approval.manage" in keys:
         return
+
     access = get_agent_access(
         db,
         company_id=company_id,
@@ -267,10 +293,12 @@ def require_agent_approve(
     )
     if access and access.can_approve:
         return
+
     raise HTTPException(
         status_code=403,
         detail="You are not allowed to approve actions for this AI Employee",
     )
+
 
 
 def grant_access(

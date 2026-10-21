@@ -3,6 +3,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base, get_db
 from app.main import app
@@ -10,8 +11,9 @@ from app.services.seed import seed_catalog
 
 
 engine = create_engine(
-    "sqlite:///./test_ai_employee.db",
+    "sqlite://",
     connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
 )
 
 TestingSessionLocal = sessionmaker(
@@ -54,28 +56,92 @@ def isolate_database_override():
 client = TestClient(app)
 
 
+
 def make_company_and_owner(name: str):
-    company = client.post(
-        "/api/v1/companies",
-        json={"name": name},
-    )
+    email = f"{name.lower().replace(' ', '.')}@test.local"
+    password = "test-owner-password-123"
 
-    assert company.status_code == 201
-
-    company_data = company.json()
-
-    owner = client.post(
-        f"/api/v1/companies/{company_data['id']}/users",
+    # 1. Daftarkan perusahaan dan akun owner.
+    registration = client.post(
+        "/api/v1/auth/register",
         json={
-            "name": "Owner",
-            "email": f"{name.lower().replace(' ', '.')}@test.local",
-            "role": "owner",
+            "company_name": name,
+            "owner_name": "Owner",
+            "email": email,
+            "password": password,
         },
     )
 
-    assert owner.status_code == 201
+    assert registration.status_code == 201, (
+        f"Registration failed: {registration.status_code} "
+        f"{registration.text}"
+    )
 
-    return company_data, owner.json()
+    registration_data = registration.json()
+    company_id = registration_data["company_id"]
+    verification_token = registration_data.get("verification_token")
+
+    assert verification_token, (
+        "Verification token is missing. "
+        "Test environment must expose development verification tokens."
+    )
+
+    # 2. Verifikasi email owner.
+    verification = client.post(
+        "/api/v1/auth/verify-email",
+        json={"token": verification_token},
+    )
+
+    assert verification.status_code == 200, (
+        f"Email verification failed: {verification.status_code} "
+        f"{verification.text}"
+    )
+
+    # 3. Login untuk mendapatkan Bearer access token.
+    login = client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": email,
+            "password": password,
+        },
+    )
+
+    assert login.status_code == 200, (
+        f"Login failed: {login.status_code} {login.text}"
+    )
+
+    login_data = login.json()
+    headers = {
+        "Authorization": f"Bearer {login_data['access_token']}",
+    }
+
+    # 4. Lengkapi profil agar workspace perusahaan dapat digunakan.
+    profile = client.put(
+        f"/api/v1/companies/{company_id}/profile",
+        headers=headers,
+        json={
+            "name": name,
+            "contact_email": email,
+            "industry": "Technology",
+        },
+    )
+
+    assert profile.status_code == 200, (
+        f"Company profile completion failed: "
+        f"{profile.status_code} {profile.text}"
+    )
+
+    company_data = profile.json()
+
+    owner_data = {
+        "id": login_data["user_id"],
+        "email": email,
+        "access_token": login_data["access_token"],
+        "company_id": company_id,
+    }
+
+    return company_data, owner_data
+
 
 
 def test_health():
@@ -89,7 +155,7 @@ def test_company_hires_agent_and_can_create_task_and_audit():
     company, owner = make_company_and_owner("Bali Kami Test")
 
     headers = {
-        "X-User-ID": owner["id"],
+        "Authorization": f"Bearer {owner['access_token']}",
     }
 
     catalog = client.get(
@@ -163,20 +229,29 @@ def test_company_cannot_create_task_with_other_company_agent():
     )
 
     headers_a = {
-        "X-User-ID": owner_a["id"],
+        "Authorization": f"Bearer {owner_a['access_token']}",
     }
 
     headers_b = {
-        "X-User-ID": owner_b["id"],
+        "Authorization": f"Bearer {owner_b['access_token']}",
     }
 
-    hired = client.post(
+    
+    hire_response = client.post(
         f"/api/v1/companies/{company_b['id']}/agents/{reservation['id']}/hire",
         json={
             "name": "Company B Reservation",
         },
         headers=headers_b,
-    ).json()
+    )
+
+    assert hire_response.status_code == 201, (
+        f"Agent hire failed: {hire_response.status_code} "
+        f"{hire_response.text}"
+    )
+
+    hired = hire_response.json()
+
 
     response = client.post(
         f"/api/v1/companies/{company_a['id']}/tasks",
@@ -198,7 +273,7 @@ def test_user_cannot_access_another_company():
     response = client.get(
         f"/api/v1/companies/{company_b['id']}/agents",
         headers={
-            "X-User-ID": owner_a["id"],
+            "Authorization": f"Bearer {owner_a['access_token']}",
         },
     )
 
@@ -211,7 +286,7 @@ def test_cancelling_subscription_deactivates_agent():
     )
 
     headers = {
-        "X-User-ID": owner["id"],
+        "Authorization": f"Bearer {owner['access_token']}",
     }
 
     reservation = next(
@@ -257,7 +332,7 @@ def test_cancelled_agent_cannot_receive_new_task():
     )
 
     headers = {
-        "X-User-ID": owner["id"],
+        "Authorization": f"Bearer {owner['access_token']}",
     }
 
     reservation = next(
@@ -304,11 +379,11 @@ def test_company_cannot_access_another_company_knowledge():
     )
 
     headers_a = {
-        "X-User-ID": owner_a["id"],
+        "Authorization": f"Bearer {owner_a['access_token']}",
     }
 
     headers_b = {
-        "X-User-ID": owner_b["id"],
+        "Authorization": f"Bearer {owner_b['access_token']}",
     }
 
     knowledge_a = client.post(
