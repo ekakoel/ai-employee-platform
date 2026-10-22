@@ -43,19 +43,17 @@ def client():
 
 
 def setup(client):
-    # auth-hardened: demo bootstrap instead of public company create
-    _cid, _oid, _hdrs, _demo = provision_company(client)
-    co = {"id": _cid}
-    owner = {"id": _oid, "email": _demo.get("owner_email")}
+    _cid, _oid, _hdrs, _demo = provision_company(client, hire_agents=False)
     catalog = client.get("/api/v1/agent-catalog").json()
     res = next(i for i in catalog if i["slug"] == "reservation")
     hire = client.post(
-        f"/api/v1/companies/{co['id']}/agents/{res['id']}/hire",
+        f"/api/v1/companies/{_cid}/agents/{res['id']}/hire",
         json={"name": "J10 AI"},
         headers=_hdrs,
     )
+    assert hire.status_code == 201, hire.text
     task = client.post(
-        f"/api/v1/companies/{co['id']}/tasks",
+        f"/api/v1/companies/{_cid}/tasks",
         headers=_hdrs,
         json={
             "agent_instance_id": hire.json()["id"],
@@ -63,31 +61,35 @@ def setup(client):
             "instruction": "Customer wants refund after late cancel",
         },
     )
-    return co["id"], owner["id"], hire.json()["id"], _hdrs, task.json()["id"], _hdrs
+    assert task.status_code == 201, task.text
+    return _cid, _oid, hire.json()["id"], task.json()["id"], _hdrs
 
 
-def validated_experience(client, company_id, owner_id, task_id):
+
+def validated_experience(client, company_id, owner_id, task_id, headers):
     cand = client.post(
         f"/api/v1/companies/{company_id}/tasks/{task_id}/experiences",
-        headers=_hdrs,
+        headers=headers,
         json={
             "decision": "Escalate refund",
             "lesson": "Late cancel needs manager",
             "confidence": 0.5,
         },
-    ).json()
-    val = client.post(
-        f"/api/v1/companies/{company_id}/experiences/{cand['id']}/validate",
-        headers=_hdrs,
-        json={"approve": True, "confidence": 0.8, "lesson": "Late cancel needs manager"},
     )
-    assert val.status_code == 200
+    assert cand.status_code == 201, cand.text
+    body = cand.json()
+    val = client.post(
+        f"/api/v1/companies/{company_id}/experiences/{body['id']}/validate",
+        headers=headers,
+        json={"confidence": 0.85},
+    )
+    assert val.status_code == 200, val.text
     return val.json()
 
 
 def test_job10_matrix_candidate_validate_retrieve_confidence_feedback(client):
     company_id, owner_id, agent_id, task_id, _hdrs = setup(client)
-    exp = validated_experience(client, company_id, owner_id, task_id)
+    exp = validated_experience(client, company_id, owner_id, task_id, _hdrs)
     assert exp["validation_status"] == "validated"
     assert exp["confidence"] == 0.8
 
@@ -118,7 +120,7 @@ def test_job10_matrix_candidate_validate_retrieve_confidence_feedback(client):
 
 def test_unhelpful_feedback_lowers_confidence(client):
     company_id, owner_id, agent_id, task_id, _hdrs = setup(client)
-    exp = validated_experience(client, company_id, owner_id, task_id)
+    exp = validated_experience(client, company_id, owner_id, task_id, _hdrs)
     before = exp["confidence"]
     fb = client.post(
         f"/api/v1/companies/{company_id}/experiences/{exp['id']}/feedback",
@@ -146,7 +148,7 @@ def test_feedback_only_on_validated(client):
 
 def test_reuse_bumps_success_count(client):
     company_id, owner_id, agent_id, task_id, _hdrs = setup(client)
-    exp = validated_experience(client, company_id, owner_id, task_id)
+    exp = validated_experience(client, company_id, owner_id, task_id, _hdrs)
     r1 = client.post(
         f"/api/v1/companies/{company_id}/experiences/{exp['id']}/reuse",
         headers=_hdrs,
@@ -164,7 +166,7 @@ def test_reuse_bumps_success_count(client):
 
 def test_archive_hides_from_search(client):
     company_id, owner_id, agent_id, task_id, _hdrs = setup(client)
-    exp = validated_experience(client, company_id, owner_id, task_id)
+    exp = validated_experience(client, company_id, owner_id, task_id, _hdrs)
     arch = client.post(
         f"/api/v1/companies/{company_id}/experiences/{exp['id']}/archive",
         headers=_hdrs,
@@ -183,7 +185,7 @@ def test_archive_hides_from_search(client):
 
 def test_get_experience(client):
     company_id, owner_id, agent_id, task_id, _hdrs = setup(client)
-    exp = validated_experience(client, company_id, owner_id, task_id)
+    exp = validated_experience(client, company_id, owner_id, task_id, _hdrs)
     got = client.get(
         f"/api/v1/companies/{company_id}/experiences/{exp['id']}",
         headers=_hdrs,
