@@ -70,7 +70,9 @@ def setup(client):
 
 
 def test_tool_catalog_endpoint(client):
-    resp = client.get("/api/v1/tools")
+    # Catalog is authenticated (Bearer required)
+    _cid, _oid, headers, _demo = provision_company(client, hire_agents=False)
+    resp = client.get("/api/v1/tools", headers=headers)
     assert resp.status_code == 200, resp.text
     names = {t["name"] for t in resp.json()}
     assert "search_contract" in names
