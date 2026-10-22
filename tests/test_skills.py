@@ -84,7 +84,7 @@ def test_hire_auto_assigns_matching_skills(client):
 
 def test_create_company_skill_tenant_isolated(client):
     """Company roles may not create/upgrade skill catalog (platform-only)."""
-    company_id, agent_id, headers = setup(client)
+    company_id, owner_id, agent_id, headers = setup(client)
     skill = client.post(
         f"/api/v1/companies/{company_id}/skills",
         headers=headers,
@@ -101,7 +101,7 @@ def test_create_company_skill_tenant_isolated(client):
 
 def test_tool_requirement_enforcement(client):
     """Creating a skill with tools not on the agent is rejected (or skill create forbidden)."""
-    company_id, agent_id, headers = setup(client)
+    company_id, owner_id, agent_id, headers = setup(client)
     skill = client.post(
         f"/api/v1/companies/{company_id}/skills",
         headers=headers,
