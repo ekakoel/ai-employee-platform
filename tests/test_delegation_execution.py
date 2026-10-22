@@ -85,7 +85,7 @@ def create_req(client, company_id, a1, a2, headers, **extra):
 
 def test_execute_creates_child_task_and_completes(client):
     company_id, owner_id, a1, a2, _hdrs = setup_two_agents(client)
-    req = create_req(client, company_id, a1, a2, _hdrs, _hdrs)
+    req = create_req(client, company_id, a1, a2, _hdrs)
 
     run = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests/{req['id']}/execute",
@@ -111,7 +111,7 @@ def test_execute_creates_child_task_and_completes(client):
 
 def test_accept_and_reject(client):
     company_id, owner_id, a1, a2, _hdrs = setup_two_agents(client)
-    req = create_req(client, company_id, a1, a2, _hdrs, _hdrs)
+    req = create_req(client, company_id, a1, a2, _hdrs)
     acc = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests/{req['id']}/accept",
         headers=_hdrs,
@@ -131,7 +131,7 @@ def test_accept_and_reject(client):
 
 def test_cancel(client):
     company_id, owner_id, a1, a2, _hdrs = setup_two_agents(client)
-    req = create_req(client, company_id, a1, a2, _hdrs, _hdrs)
+    req = create_req(client, company_id, a1, a2, _hdrs)
     can = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests/{req['id']}/cancel",
         headers=_hdrs,
@@ -177,7 +177,7 @@ def test_execute_after_timeout_fails(client):
 
 def test_cannot_execute_twice(client):
     company_id, owner_id, a1, a2, _hdrs = setup_two_agents(client)
-    req = create_req(client, company_id, a1, a2, _hdrs, _hdrs)
+    req = create_req(client, company_id, a1, a2, _hdrs)
     first = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests/{req['id']}/execute",
         headers=_hdrs,
