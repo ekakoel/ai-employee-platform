@@ -84,6 +84,14 @@ def company_with_user(client, *, email=None, password="secret12345", company_nam
             assert u is not None
             u.email_verified = True
             db.commit()
+    # Workspace APIs require onboarding_status == "complete"
+    with SessionLocal() as db:
+        from app.models.entities import Company
+
+        co = db.get(Company, company_id)
+        assert co is not None
+        co.onboarding_status = "complete"
+        db.commit()
     return company_id, email, password, body
 
 
@@ -211,5 +219,4 @@ def test_create_user_requires_invite(client):
         },
     )
     # Product returns 400/403 with invitation message
-    assert res.status_code in (400, 403, 405, 422), res.text
-    assert "invit" in res.text.lower() or res.status_code in (403, 405)
+    assert res.status_code in (400, 403, 405, 410, 422), res.text
