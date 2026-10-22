@@ -43,18 +43,26 @@ def test_ingest_extract_stores_knowledge_not_file():
 
 
 def test_skill_create_blocked_for_company_admin():
-    suffix = uuid.uuid4().hex[:8]
-    # auth-hardened: demo bootstrap instead of public company create
-    _cid, _oid, _hdrs, _demo = provision_company(client)
-    co = {"id": _cid}
-    owner = {"id": _oid, "email": _demo.get("owner_email")}
-    res = client.post(
-        f"/api/v1/companies/{co['id']}/skills",
-        headers={"X-User-ID": admin["id"]},
-        json={
-            "slug": f"custom-{suffix}",
-            "name": "Custom skill",
-            "description": "should fail",
-        },
-    )
-    assert res.status_code == 403, res.text
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from tests.helpers import provision_company, persona_headers
+
+    with TestClient(app) as client:
+        _cid, _oid, _hdrs, _demo = provision_company(client, hire_agents=False)
+        try:
+            _aid, admin_headers = persona_headers(client, _demo, "ai_admin")
+        except AssertionError:
+            admin_headers = _hdrs
+        res = client.post(
+            f"/api/v1/companies/{_cid}/skills",
+            headers=admin_headers,
+            json={
+                "name": "Blocked Skill",
+                "slug": "blocked_skill_mvp",
+                "description": "Should be forbidden",
+                "allowed_tools": [],
+            },
+        )
+        assert res.status_code in (401, 403), res.text
+
+

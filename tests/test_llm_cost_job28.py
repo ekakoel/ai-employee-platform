@@ -64,10 +64,10 @@ def client():
 
 def setup(client):
     # auth-hardened: demo bootstrap instead of public company create
-    _cid, _oid, _hdrs, _demo = provision_company(client)
+    _cid, _oid, _hdrs, _demo = provision_company(client, hire_agents=False)
     co = {"id": _cid}
     owner = {"id": _oid, "email": _demo.get("owner_email")}
-    return co["id"], {"X-User-ID": owner["id"]}
+    return co["id"], _hdrs
 
 
 def test_estimate_and_record(client):

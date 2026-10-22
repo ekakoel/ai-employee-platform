@@ -8,8 +8,19 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base, get_db
 from app.main import app
+from app.core.security import create_access_token
+from app.models.entities import AuthSession
+from datetime import datetime, timedelta, timezone
 from app.models.entities import AgentInstance, Approval, AuditLog, Company, DelegationRequest, Task, User
 from app.services.seed import get_or_create_role
+
+
+def _bearer(user_id: str, company_id: str) -> dict:
+    tok = create_access_token(
+        subject=user_id, company_id=company_id,
+        session_id=f"inbox-{user_id}", auth_version=1,
+    )
+    return {"Authorization": f"Bearer {tok}", "X-User-ID": user_id}
 
 
 @pytest.fixture
@@ -23,9 +34,9 @@ def inbox_client():
         db.add_all([Company(id="one", name="One"), Company(id="two", name="Two")])
         db.flush()
         db.add_all([
-            User(id="alice", company_id="one", name="Alice", email="alice@test.local", role_id=owner.id),
-            User(id="member", company_id="one", name="Member", email="member@test.local", role_id=member.id),
-            User(id="eve", company_id="two", name="Private name", email="eve@test.local", role_id=owner.id),
+            User(id="alice", company_id="one", name="Alice", email="alice@test.local", role_id=owner.id, auth_version=1),
+            User(id="member", company_id="one", name="Member", email="member@test.local", role_id=member.id, auth_version=1),
+            User(id="eve", company_id="two", name="Private name", email="eve@test.local", role_id=owner.id, auth_version=1),
             AgentInstance(id="agent", company_id="one", name="Analyst", catalog_agent_id="catalog", subscription_id="subscription"),
         ])
         db.flush()
@@ -50,6 +61,13 @@ def inbox_client():
             db.add(AuditLog(id=event_id, company_id=company, resource_type=resource, resource_id=resource_id,
                 action=action, user_id=human, agent_instance_id=agent, status="success",
                 created_at=datetime(2026, 10, 9, hour, tzinfo=timezone.utc)))
+        db.flush()
+        exp = datetime.now(timezone.utc) + timedelta(hours=12)
+        db.add_all([
+            AuthSession(id="inbox-alice", user_id="alice", company_id="one", auth_version=1, absolute_expires_at=exp),
+            AuthSession(id="inbox-member", user_id="member", company_id="one", auth_version=1, absolute_expires_at=exp),
+            AuthSession(id="inbox-eve", user_id="eve", company_id="two", auth_version=1, absolute_expires_at=exp),
+        ])
         db.commit()
 
     def override():
@@ -69,7 +87,7 @@ def inbox_client():
 
 
 def test_latest_event_is_scoped_and_utc(inbox_client):
-    response = inbox_client.get("/api/v1/companies/one/inbox-attribution/task", headers={"X-User-ID": "member"})
+    response = inbox_client.get("/api/v1/companies/one/inbox-attribution/task", headers=_bearer("member", "one"))
     assert response.status_code == 200
     rows = {row["resource_id"]: row for row in response.json()}
     assert set(rows) == {"task", "unknown"}
@@ -83,7 +101,7 @@ def test_latest_event_is_scoped_and_utc(inbox_client):
 
 
 def test_human_actor_takes_precedence_over_assigned_agent(inbox_client):
-    headers = {"X-User-ID": "alice"}
+    headers = _bearer("alice", "one")
     handoff = inbox_client.get("/api/v1/companies/one/inbox-attribution/delegation", headers=headers).json()[0]
     assert (handoff["actor_type"], handoff["actor_name"]) == ("human", "Alice")
     approval = inbox_client.get("/api/v1/companies/one/inbox-attribution/approval", headers=headers).json()[0]
@@ -93,7 +111,7 @@ def test_human_actor_takes_precedence_over_assigned_agent(inbox_client):
 def test_attribution_keeps_resource_permissions_and_tenant_boundaries(inbox_client):
     path = "/api/v1/companies/one/inbox-attribution/"
     assert inbox_client.get(path + "task").status_code in (401, 403)
-    assert inbox_client.get(path + "task", headers={"X-User-ID": "eve"}).status_code == 403
-    assert inbox_client.get(path + "approval", headers={"X-User-ID": "member"}).status_code == 403
-    assert inbox_client.get(path + "delegation", headers={"X-User-ID": "member"}).status_code == 200
-    assert inbox_client.get(path + "unsupported", headers={"X-User-ID": "alice"}).status_code == 422
+    assert inbox_client.get(path + "task", headers=_bearer("eve", "two")).status_code == 403
+    assert inbox_client.get(path + "approval", headers=_bearer("member", "one")).status_code == 403
+    assert inbox_client.get(path + "delegation", headers=_bearer("member", "one")).status_code == 200
+    assert inbox_client.get(path + "unsupported", headers=_bearer("alice", "one")).status_code == 422
