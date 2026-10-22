@@ -182,7 +182,7 @@ def test_member_cannot_validate(client):
     denied = client.post(
         f"/api/v1/companies/{company_id}/experiences/{cand.json()['id']}/validate",
         headers=other_headers,
-        json={"confidence": 0.9},
+        json={"approve": True, "confidence": 0.9},
     )
     assert denied.status_code in (401, 403, 404), denied.text
 

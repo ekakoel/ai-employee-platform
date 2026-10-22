@@ -47,28 +47,25 @@ def client():
 
 
 def setup_two_agents(client):
-    # auth-hardened: demo bootstrap instead of public company create
     _cid, _oid, _hdrs, _demo = provision_company(client, hire_agents=False)
-    co = {"id": _cid}
-    owner = {"id": _oid, "email": _demo.get("owner_email")}
     catalog = client.get("/api/v1/agent-catalog").json()
     res = next(i for i in catalog if i["slug"] == "reservation")
     contract = next(i for i in catalog if i["slug"] == "contract-manager")
     h1 = client.post(
-        f"/api/v1/companies/{co['id']}/agents/{res['id']}/hire",
+        f"/api/v1/companies/{_cid}/agents/{res['id']}/hire",
         json={"name": "Res AI"},
         headers=_hdrs,
     )
     h2 = client.post(
-        f"/api/v1/companies/{co['id']}/agents/{contract['id']}/hire",
+        f"/api/v1/companies/{_cid}/agents/{contract['id']}/hire",
         json={"name": "Contract AI"},
         headers=_hdrs,
     )
-    assert h1.status_code == 201 and h2.status_code == 201
-    return co["id"], owner["id"], h1.json()["id"], h2.json()["id"], _hdrs
+    assert h1.status_code == 201 and h2.status_code == 201, (h1.text, h2.text)
+    return _cid, _oid, h1.json()["id"], h2.json()["id"], _hdrs
 
 
-def create_req(client, company_id, owner_id, a1, a2, _hdrs, headers, **extra):
+def create_req(client, company_id, a1, a2, headers, **extra):
     body = {
         "source_agent_instance_id": a1,
         "target_agent_instance_id": a2,
@@ -88,7 +85,7 @@ def create_req(client, company_id, owner_id, a1, a2, _hdrs, headers, **extra):
 
 def test_execute_creates_child_task_and_completes(client):
     company_id, owner_id, a1, a2, _hdrs = setup_two_agents(client)
-    req = create_req(client, company_id, owner_id, a1, a2, _hdrs, _hdrs)
+    req = create_req(client, company_id, a1, a2, _hdrs, _hdrs)
 
     run = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests/{req['id']}/execute",
@@ -114,7 +111,7 @@ def test_execute_creates_child_task_and_completes(client):
 
 def test_accept_and_reject(client):
     company_id, owner_id, a1, a2, _hdrs = setup_two_agents(client)
-    req = create_req(client, company_id, owner_id, a1, a2, _hdrs, _hdrs)
+    req = create_req(client, company_id, a1, a2, _hdrs, _hdrs)
     acc = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests/{req['id']}/accept",
         headers=_hdrs,
@@ -122,7 +119,7 @@ def test_accept_and_reject(client):
     assert acc.status_code == 200
     assert acc.json()["status"] == "accepted"
 
-    req2 = create_req(client, company_id, owner_id, a1, a2, _hdrs, title="Other")
+    req2 = create_req(client, company_id, a1, a2, _hdrs, title="Other")
     rej = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests/{req2['id']}/reject",
         headers=_hdrs,
@@ -134,7 +131,7 @@ def test_accept_and_reject(client):
 
 def test_cancel(client):
     company_id, owner_id, a1, a2, _hdrs = setup_two_agents(client)
-    req = create_req(client, company_id, owner_id, a1, a2, _hdrs, _hdrs)
+    req = create_req(client, company_id, a1, a2, _hdrs, _hdrs)
     can = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests/{req['id']}/cancel",
         headers=_hdrs,
@@ -145,8 +142,7 @@ def test_cancel(client):
 
 def test_timeout_marks_failed(client):
     company_id, owner_id, a1, a2, _hdrs = setup_two_agents(client)
-    req = create_req(
-        client, company_id, owner_id, a1, a2, timeout_seconds=1, title="Timeout me"
+    req = create_req(client, company_id, a1, a2, _hdrs, timeout_seconds=1, title="Timeout me"
     )
     with SessionLocal() as db:
         row = db.get(DelegationRequest, req["id"])
@@ -164,8 +160,7 @@ def test_timeout_marks_failed(client):
 
 def test_execute_after_timeout_fails(client):
     company_id, owner_id, a1, a2, _hdrs = setup_two_agents(client)
-    req = create_req(
-        client, company_id, owner_id, a1, a2, timeout_seconds=1, title="Late"
+    req = create_req(client, company_id, a1, a2, _hdrs, timeout_seconds=1, title="Late"
     )
     with SessionLocal() as db:
         row = db.get(DelegationRequest, req["id"])
@@ -182,7 +177,7 @@ def test_execute_after_timeout_fails(client):
 
 def test_cannot_execute_twice(client):
     company_id, owner_id, a1, a2, _hdrs = setup_two_agents(client)
-    req = create_req(client, company_id, owner_id, a1, a2, _hdrs, _hdrs)
+    req = create_req(client, company_id, a1, a2, _hdrs, _hdrs)
     first = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests/{req['id']}/execute",
         headers=_hdrs,
@@ -199,7 +194,7 @@ def test_cannot_execute_twice(client):
 
 def test_execute_mode_leaves_child_pending(client):
     company_id, owner_id, a1, a2, _hdrs = setup_two_agents(client)
-    req = create_req(client, company_id, owner_id, a1, a2, _hdrs, title="Exec mode")
+    req = create_req(client, company_id, a1, a2, _hdrs, title="Exec mode")
     run = client.post(
         f"/api/v1/companies/{company_id}/delegation-requests/{req['id']}/execute",
         headers=_hdrs,

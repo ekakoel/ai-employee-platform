@@ -65,7 +65,6 @@ def setup(client):
     return _cid, _oid, hire.json()["id"], task.json()["id"], _hdrs
 
 
-
 def validated_experience(client, company_id, owner_id, task_id, headers):
     cand = client.post(
         f"/api/v1/companies/{company_id}/tasks/{task_id}/experiences",
@@ -81,7 +80,7 @@ def validated_experience(client, company_id, owner_id, task_id, headers):
     val = client.post(
         f"/api/v1/companies/{company_id}/experiences/{body['id']}/validate",
         headers=headers,
-        json={"confidence": 0.85},
+        json={"approve": True, "confidence": 0.8, "lesson": "Late cancel needs manager"},
     )
     assert val.status_code == 200, val.text
     return val.json()
