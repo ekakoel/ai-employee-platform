@@ -45,10 +45,10 @@ def client():
 
 def setup(client):
     # auth-hardened: demo bootstrap instead of public company create
-    _cid, _oid, _hdrs, _demo = provision_company(client)
+    _cid, _oid, _hdrs, _demo = provision_company(client, hire_agents=False)
     co = {"id": _cid}
     owner = {"id": _oid, "email": _demo.get("owner_email")}
-    return co["id"], {"X-User-ID": owner["id"]}
+    return co["id"], _hdrs
 
 
 def test_list_public_templates(client):
@@ -155,7 +155,7 @@ def test_tenant_isolation_installations(client):
     co1, h1 = setup(client)
     # second company
     # auth-hardened: demo bootstrap instead of public company create
-    _cid, _oid, _hdrs, _demo = provision_company(client)
+    _cid, _oid, _hdrs, _demo = provision_company(client, hire_agents=False)
     co2 = {"id": _cid}
     owner2 = client.post(
         f"/api/v1/companies/{co2['id']}/users",
@@ -166,7 +166,7 @@ def test_tenant_isolation_installations(client):
             "password": "secret123",
         },
     ).json()
-    h2 = {"X-User-ID": owner2["id"]}
+    h2 = _hdrs  # overwritten below if second provision
 
     templates = client.get("/api/v1/marketplace/templates").json()
     catalog_id = templates[0]["id"]

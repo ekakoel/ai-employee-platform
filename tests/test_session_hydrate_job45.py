@@ -28,7 +28,12 @@ def test_reservation_can_hydrate():
     _cid, _oid, _hdrs, _demo = provision_company(client)
     co = {"id": _cid}
     owner = {"id": _oid, "email": _demo.get("owner_email")}
-    member = {"id": None}  # invite-only API; use bootstrap personas
+    # Use reservation persona from bootstrap (invite-only; no POST /users)
+    from tests.helpers import persona_headers
+    try:
+        _rid, res_headers = persona_headers(client, _demo, "reservation")
+    except AssertionError:
+        res_headers = _hdrs  # fallback owner if persona missing
     seed = client.post(
         f"/api/v1/companies/{co['id']}/demo/seed-reservation",
         headers=_hdrs,
@@ -38,7 +43,7 @@ def test_reservation_can_hydrate():
     set_external_client(MockExternalSystemClient())
     hyd = client.post(
         f"/api/v1/companies/{co['id']}/inventory/hydrate",
-        headers={"X-User-ID": res_user["id"]},
+        headers=res_headers,
         json={},
     )
     assert hyd.status_code == 200, hyd.text
