@@ -44,12 +44,21 @@ def deliver(email, subject, route, token):
     message["From"] = settings.smtp_from
     message["To"] = email
     message["Subject"] = subject
-    link = "%s%s%s" % (settings.public_base_url.rstrip("/"), route, token)
+    # Job 95 — numeric OTP in email body
     body = (
-        "Activate your AI Employee Platform account.\n\n"
-        "Open this link (valid 24 hours):\n"
-        + link
-        + "\n\nIf you did not register, ignore this email.\n"
+        "Your AI Employee Platform activation code is:
+
+"
+        f"    {token}
+
+"
+        "Enter this 6-digit code in the activation screen.
+"
+        "The code is valid for 24 hours.
+
+"
+        "If you did not register, ignore this email.
+"
     )
     message.set_content(body)
     try:
@@ -59,6 +68,8 @@ def deliver(email, subject, route, token):
             smtp.send_message(message)
     except (OSError, smtplib.SMTPException):
         raise auth_sessions.AuthError("Email delivery temporarily unavailable", 503) from None
+
+
 
 def claim_email(db, email):
     # The unique claim serializes concurrent registrations, including SQLite.
@@ -91,7 +102,7 @@ def register(db, *, company_name, owner_name, email, password):
     owner_name = owner_name.strip()
     if len(company_name) < 2 or not owner_name:
         raise auth_sessions.AuthError("Company and owner names are required", 400)
-    token = secrets.token_urlsafe(32)
+    token = f"{secrets.randbelow(1_000_000):06d}"  # Job 95: 6-digit OTP
     with identity_transaction(db):
         claim_email(db, email)
         role = get_or_create_role(db, "owner")
@@ -111,7 +122,7 @@ def register(db, *, company_name, owner_name, email, password):
         record_audit(db, company_id=company.id, user_id=user.id, action="auth.verification_requested",
                      resource_type="user", resource_id=user.id, status="success")
     deliver(email, "Activate your AI Employee Platform account", "/activate?token=", token)
-    return {"message": "Company created. Verify the owner email before signing in.",
+    return {"message": "Company created. Enter the 6-digit code we emailed you.",
             "company_id": company.id, "verification_token": development_token(token)}
 
 
@@ -121,7 +132,7 @@ def request_verification(db, email):
     user = db.scalar(select(User).where(User.email == email, User.email_verified.is_(False)))
     if not user:
         return {"message": "If the account needs verification, instructions were issued."}
-    token = secrets.token_urlsafe(32)
+    token = f"{secrets.randbelow(1_000_000):06d}"  # Job 95: 6-digit OTP
     with auth_sessions.transaction(db):
         db.add(EmailVerification(user_id=user.id, token_digest=auth_sessions.digest(token),
                                  expires_at=auth_sessions.now() + timedelta(hours=24)))
@@ -150,7 +161,7 @@ def verify_email(db, token):
         user.email_verified = True
         record_audit(db, company_id=user.company_id, user_id=user.id, action="auth.email_verified",
                      resource_type="user", resource_id=user.id, status="success")
-    return {"message": "Email verified. You can sign in."}
+    return {"message": "Account activated. You can sign in."}
 
 
 def _actor_permission_keys(actor) -> set:
@@ -203,7 +214,7 @@ def invite(db, actor, email, role_name: str = "member"):
     # Do not expose whether an arbitrary email already belongs to another tenant.
     if db.scalar(select(User.id).where(func.lower(User.email) == email).limit(1)):
         return {"message": "If eligible, an invitation has been created."}
-    token = secrets.token_urlsafe(32)
+    token = f"{secrets.randbelow(1_000_000):06d}"  # Job 95: 6-digit OTP
     with auth_sessions.transaction(db):
         invitation = CompanyInvitation(
             company_id=company.id,
