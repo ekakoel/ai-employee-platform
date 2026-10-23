@@ -1084,6 +1084,55 @@
     };
   }
 
+  
+  // Job 94 — brand orb follows pointer (subtle)
+  (function bindBrandOrb() {
+    const gate = document.getElementById("loginGate");
+    const orb = document.getElementById("brandOrb");
+    if (!gate || !orb) return;
+    let raf = 0;
+    let tx = 0, ty = 0, cx = 0, cy = 0;
+    function tick() {
+      cx += (tx - cx) * 0.12;
+      cy += (ty - cy) * 0.12;
+      gate.style.setProperty("--mx", cx.toFixed(4));
+      gate.style.setProperty("--my", cy.toFixed(4));
+      raf = requestAnimationFrame(tick);
+    }
+    gate.addEventListener("pointermove", (e) => {
+      const r = gate.getBoundingClientRect();
+      tx = ((e.clientX - r.left) / r.width - 0.5) * 2;
+      ty = ((e.clientY - r.top) / r.height - 0.5) * 2;
+      tx = Math.max(-1, Math.min(1, tx));
+      ty = Math.max(-1, Math.min(1, ty));
+    });
+    gate.addEventListener("pointerleave", () => { tx = 0; ty = 0; });
+    raf = requestAnimationFrame(tick);
+  })();
+
+  // Job 94 — smoother tab panel transitions
+  document.querySelectorAll(".login-tabs .tab, .auth-rail .tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      const name = tab.getAttribute("data-tab");
+      if (!name) return;
+      document.querySelectorAll(".tab-panel").forEach((p) => {
+        if (p.classList.contains("active")) {
+          p.classList.remove("active");
+        }
+      });
+      // re-trigger animation
+      requestAnimationFrame(() => {
+        const panel = document.getElementById("tab-" + name) || document.getElementById(name);
+        // registerSuccessPanel special
+        const target = document.getElementById("tab-" + name);
+        if (target) {
+          void target.offsetWidth;
+          target.classList.add("active");
+        }
+      });
+    });
+  });
+
   $("btnLogin").onclick = async () => {
     const log = $("loginLog");
     const btn = $("btnLogin");

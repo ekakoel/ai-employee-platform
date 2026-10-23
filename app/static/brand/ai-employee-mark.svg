@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="AI Employee Platform">
+  <defs>
+    <linearGradient id="ring" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#22d3ee"/>
+      <stop offset="45%" stop-color="#818cf8"/>
+      <stop offset="100%" stop-color="#e879f9"/>
+    </linearGradient>
+    <linearGradient id="face" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="45%" r="55%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="55%" stop-color="#e0f2fe" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#e0f2fe" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <circle cx="100" cy="96" r="88" fill="url(#glow)"/>
+  <path fill="url(#face)" stroke="url(#ring)" stroke-width="7" stroke-linejoin="round"
+        d="M100 28 C145 28 178 55 178 92 C178 122 152 148 118 154 L108 172 C106 176 102 176 100 172 L92 156 C62 148 40 124 40 92 C40 55 55 28 100 28 Z"/>
+  <rect x="68" y="78" width="18" height="28" rx="9" fill="#f8fafc"/>
+  <rect x="114" y="78" width="18" height="28" rx="9" fill="#f8fafc"/>
+  <ellipse cx="100" cy="70" rx="48" ry="18" fill="#ffffff" opacity="0.06"/>
+</svg>
