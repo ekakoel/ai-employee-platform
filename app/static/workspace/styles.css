@@ -3100,3 +3100,49 @@ textarea:focus {
   background: transparent; color: #f1f5f9;
   border: none; border-bottom: 1px solid rgba(148,163,184,0.35);
 }
+
+
+/* Job 96 — post-login onboarding must never be a blank white sheet */
+html, body {
+  background: #0b1220 !important;
+  color: #e2e8f0;
+}
+#app.hidden { display: none !important; }
+#onboardingWizard {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 9999 !important;
+  display: grid !important;
+  place-items: center !important;
+  min-height: 100vh !important;
+  background: #0b1220 !important;
+  color: #e2e8f0 !important;
+}
+#onboardingWizard.hidden {
+  display: none !important;
+}
+#onboardingWizard .onboard-card {
+  position: relative;
+  z-index: 1;
+  width: min(520px, 94vw) !important;
+  padding: 1.75rem !important;
+  border-radius: 16px !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  background: rgba(15, 23, 42, 0.92) !important;
+  backdrop-filter: blur(16px) !important;
+  color: #e2e8f0 !important;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45) !important;
+}
+#onboardingWizard h2 { color: #f8fafc !important; margin: 0.25rem 0 0.5rem; }
+#onboardingWizard .muted { color: #94a3b8 !important; }
+#onboardingWizard .primary.block {
+  margin-top: 1rem;
+  width: 100%;
+  border: none;
+  border-radius: 999px;
+  padding: 0.75rem 1rem;
+  font-weight: 600;
+  color: #0b1220;
+  cursor: pointer;
+  background: linear-gradient(120deg, #22d3ee, #818cf8 50%, #e879f9);
+}

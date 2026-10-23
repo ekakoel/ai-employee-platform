@@ -975,19 +975,51 @@
   }
   function showOnboardingWizard(step) {
     const w = $("onboardingWizard");
-    if (!w) return;
+    if (!w) {
+      console.warn("onboardingWizard missing");
+      return;
+    }
     w.classList.remove("hidden");
+    w.style.display = "grid";
+    w.style.visibility = "visible";
+    w.style.opacity = "1";
+    w.style.zIndex = "9999";
+    // Keep main workspace hidden until onboarding finishes
+    const app = $("app");
+    if (app) {
+      app.classList.add("hidden");
+      app.style.display = "none";
+    }
     setOnboardStep(step || 1);
   }
   function hideOnboardingWizard() {
     const w = $("onboardingWizard");
-    if (w) w.classList.add("hidden");
+    if (w) {
+      w.classList.add("hidden");
+      w.style.display = "none";
+    }
+    const app = $("app");
+    if (app && state.accessToken) {
+      app.classList.remove("hidden");
+      app.style.display = "";
+    }
   }
   async function routePostLoginOnboarding() {
     try {
-      if (!state.companyId) return;
-      const company = await api(`/companies/${state.companyId}`);
-      state.onboardingStatus = company.onboarding_status || "pending";
+      if (!state.companyId) {
+        // No company yet — still show step 1 if wizard exists
+        showOnboardingWizard(1);
+        return;
+      }
+      let company = null;
+      try {
+        company = await api(`/companies/${state.companyId}`);
+      } catch (e) {
+        console.warn("company fetch failed", e);
+        showOnboardingWizard(1);
+        return;
+      }
+      state.onboardingStatus = (company && company.onboarding_status) || "pending";
       if (state.onboardingStatus !== "complete") {
         showOnboardingWizard(1);
         return;
@@ -999,8 +1031,10 @@
         return;
       }
       hideOnboardingWizard();
-    } catch (_) {
-      /* non-blocking */
+      try { showView(defaultLandingView()); } catch (_) {}
+    } catch (err) {
+      console.warn("routePostLoginOnboarding", err);
+      showOnboardingWizard(1);
     }
   }
   if ($("btnOnboardGoCompany")) {
