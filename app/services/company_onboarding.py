@@ -44,22 +44,12 @@ def deliver(email, subject, route, token):
     message["From"] = settings.smtp_from
     message["To"] = email
     message["Subject"] = subject
-    # Job 95 — numeric OTP in email body
-    body = (
-        "Your AI Employee Platform activation code is:
-
-"
-        f"    {token}
-
-"
-        "Enter this 6-digit code in the activation screen.
-"
-        "The code is valid for 24 hours.
-
-"
-        "If you did not register, ignore this email.
-"
-    )
+    # Job 95 — 6-digit OTP in email (safe single-line strings only)
+    body = "Your AI Employee Platform activation code is:\n\n"
+    body += "    %s\n\n" % (token,)
+    body += "Enter this 6-digit code in the activation screen.\n"
+    body += "The code is valid for 24 hours.\n\n"
+    body += "If you did not register, ignore this email.\n"
     message.set_content(body)
     try:
         with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:
@@ -68,7 +58,6 @@ def deliver(email, subject, route, token):
             smtp.send_message(message)
     except (OSError, smtplib.SMTPException):
         raise auth_sessions.AuthError("Email delivery temporarily unavailable", 503) from None
-
 
 
 def claim_email(db, email):
