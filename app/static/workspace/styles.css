@@ -2558,3 +2558,93 @@ textarea:focus {
 .agent-pick .icon { font-size: 1.4rem; margin-bottom: 0.25rem; }
 .agent-pick strong { display: block; font-size: 0.9rem; }
 .agent-pick small { color: #94a3b8; font-size: 0.75rem; }
+
+
+/* Job 93 fix — flatter modern auth (minimal chrome, no heavy cards) */
+.login-gate {
+  background: #0b1220;
+}
+.login-card {
+  width: min(400px, 100%);
+  padding: 0.5rem 0.25rem 1rem;
+  border: none;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+  border-radius: 0;
+}
+.login-brand {
+  margin-bottom: 1.25rem;
+}
+.login-brand h1 {
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+.login-tabs {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+  padding-bottom: 0.65rem;
+  margin-bottom: 1.25rem;
+}
+.login-tabs .tab {
+  border: none;
+  background: transparent;
+  border-radius: 0;
+  padding: 0.35rem 0.5rem;
+  position: relative;
+}
+.login-tabs .tab.active {
+  background: transparent;
+  border: none;
+  color: #f8fafc;
+}
+.login-tabs .tab.active::after {
+  content: "";
+  position: absolute;
+  left: 0.4rem;
+  right: 0.4rem;
+  bottom: -0.65rem;
+  height: 2px;
+  background: linear-gradient(90deg, #0ea5e9, #818cf8);
+  border-radius: 2px;
+}
+.login-card input[type="text"],
+.login-card input[type="email"],
+.login-card input[type="password"],
+.login-card input:not([type]) {
+  border: none;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.55rem 0.15rem;
+}
+.login-card input:focus {
+  outline: none;
+  border-bottom-color: #38bdf8;
+}
+.login-card .primary.block {
+  margin-top: 1.25rem;
+  border-radius: 999px;
+  padding: 0.7rem 1.1rem;
+}
+.auth-notice {
+  text-align: center;
+  padding: 1rem 0.25rem 0.5rem;
+}
+.auth-notice-icon {
+  font-size: 2rem;
+  margin-bottom: 0.5rem;
+}
+.auth-notice h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.35rem;
+  letter-spacing: -0.02em;
+}
+/* Wizard: also flatter */
+.onboard-card {
+  border: none;
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+  width: min(440px, 94vw);
+}

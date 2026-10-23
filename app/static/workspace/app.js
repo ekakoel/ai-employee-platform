@@ -597,6 +597,17 @@
       $("registrationPassword").value = "";
       log.textContent = result.message || "Company created.";
       if ($("verificationPanel")) $("verificationPanel").classList.remove("hidden");
+      
+      // Job 93 fix — dedicated "check your email" notice + login CTA
+      try {
+        if ($("registerSuccessEmail")) $("registerSuccessEmail").textContent = email;
+        if ($("registerSuccessPanel")) {
+          document.querySelectorAll(".login-tabs .tab, .tab-panel").forEach((el) => el.classList.remove("active"));
+          $("registerSuccessPanel").classList.add("active");
+        }
+        if ($("verificationPanel")) $("verificationPanel").classList.add("hidden");
+      } catch (_) {}
+
       if ($("activationBanner")) {
         $("activationBanner").textContent =
           "We sent an activation link to " + email + ". Open it, then sign in. (Dev: token may appear in API logs.)";
@@ -1057,6 +1068,21 @@
     try { showView("home"); } catch (_) {}
   };
 
+
+
+  if ($("btnGoLoginAfterRegister")) {
+    $("btnGoLoginAfterRegister").onclick = () => {
+      if ($("registerSuccessPanel")) $("registerSuccessPanel").classList.remove("active");
+      openLoginTab("login");
+    };
+  }
+  if ($("btnResendFromNotice")) {
+    $("btnResendFromNotice").onclick = () => {
+      if ($("btnResendVerification")) $("btnResendVerification").click();
+      const log = $("registerSuccessLog");
+      if (log) log.textContent = "If the account needs activation, another email was requested.";
+    };
+  }
 
   $("btnLogin").onclick = async () => {
     const log = $("loginLog");

@@ -43,8 +43,32 @@ def deliver(email, subject, route, token):
     message = EmailMessage()
     message["From"] = settings.smtp_from
     message["To"] = email
+    link = f"{settings.public_base_url.rstrip('/')}{route}{token}"
     message["Subject"] = subject
-    message.set_content(f"Open {settings.public_base_url.rstrip('/')}{route}{token}")
+    message.set_content(
+        "Activate your AI Employee Platform account.
+
+"
+        f"Open this link (valid 24 hours):
+{link}
+
+"
+        "If you did not register, ignore this email.
+"
+    )
+    # legacy subject/body assignment below may duplicate Subject — guard
+    message["Subject"] = subject
+    message.set_content(
+        "Activate your AI Employee Platform account.
+
+"
+        f"Open this link (valid 24 hours):
+{settings.public_base_url.rstrip('/')}{route}{token}
+
+"
+        "If you did not register, ignore this email.
+"
+    )}{route}{token}")
     # SMTP failures are intentionally not logged with the message or token.
     try:
         with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:
@@ -105,7 +129,7 @@ def register(db, *, company_name, owner_name, email, password):
                      resource_type="company", resource_id=company.id, status="success")
         record_audit(db, company_id=company.id, user_id=user.id, action="auth.verification_requested",
                      resource_type="user", resource_id=user.id, status="success")
-    deliver(email, "Verify your company account", "/workspace?verify=", token)
+    deliver(email, "Activate your AI Employee Platform account", "/activate?token=", token)
     return {"message": "Company created. Verify the owner email before signing in.",
             "company_id": company.id, "verification_token": development_token(token)}
 
@@ -123,7 +147,7 @@ def request_verification(db, email):
         record_audit(db, company_id=user.company_id, user_id=user.id,
                      action="auth.verification_requested", resource_type="user", resource_id=user.id,
                      status="success")
-    deliver(email, "Verify your company account", "/workspace?verify=", token)
+    deliver(email, "Activate your AI Employee Platform account", "/activate?token=", token)
     return {"message": "If the account needs verification, instructions were issued.",
             "verification_token": development_token(token)}
 
