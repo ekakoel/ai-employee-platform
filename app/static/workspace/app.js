@@ -1086,6 +1086,28 @@
 
   
   // Job 94 — brand orb follows pointer (subtle)
+  
+  // Job 94 fix — pupils follow pointer inside brand orb
+  (function brandPupils() {
+    const orb = document.getElementById("brandOrb");
+    if (!orb) return;
+    const pupils = orb.querySelectorAll(".ae-pupil");
+    if (!pupils.length) return;
+    window.addEventListener("pointermove", (e) => {
+      const r = orb.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      let dx = (e.clientX - cx) / (r.width / 2);
+      let dy = (e.clientY - cy) / (r.height / 2);
+      dx = Math.max(-1, Math.min(1, dx)) * 2.5;
+      dy = Math.max(-1, Math.min(1, dy)) * 2;
+      pupils.forEach((p) => {
+        p.style.animation = "none";
+        p.setAttribute("transform", `translate(${dx}, ${dy})`);
+      });
+    });
+  })();
+
   (function bindBrandOrb() {
     const gate = document.getElementById("loginGate");
     const orb = document.getElementById("brandOrb");

@@ -2929,3 +2929,64 @@ textarea:focus {
   height: 64px;
   margin: 0 auto 0.75rem;
 }
+
+
+/* Job 94 fix — animated brand face */
+.brand-orb {
+  width: 92px;
+  height: 92px;
+  display: grid;
+  place-items: center;
+}
+.brand-orb .brand-svg {
+  width: 84px;
+  height: 84px;
+  display: block;
+  overflow: visible;
+}
+.brand-orb .ae-halo {
+  animation: ae-pulse 3.2s ease-in-out infinite;
+  transform-origin: 100px 96px;
+}
+@keyframes ae-pulse {
+  0%, 100% { opacity: 0.85; }
+  50% { opacity: 1; }
+}
+/* lids start open (scaleY 0), blink shut */
+.brand-orb .ae-lid {
+  transform-box: fill-box;
+  transform-origin: center top;
+  transform: scaleY(0);
+  animation: ae-blink 4.2s ease-in-out infinite;
+}
+.brand-orb .ae-eye-r .ae-lid {
+  animation-delay: 0.08s;
+}
+@keyframes ae-blink {
+  0%, 42%, 50%, 100% { transform: scaleY(0); }
+  45%, 47% { transform: scaleY(1); }
+}
+/* pupils look around */
+.brand-orb .ae-pupil {
+  animation: ae-look 5.5s ease-in-out infinite;
+}
+.brand-orb .ae-eye-r .ae-pupil {
+  animation-delay: 0.05s;
+}
+@keyframes ae-look {
+  0%, 100% { transform: translate(0, 0); }
+  20% { transform: translate(2px, 1px); }
+  40% { transform: translate(-2px, 0); }
+  60% { transform: translate(1px, -1px); }
+  80% { transform: translate(-1px, 1px); }
+}
+/* happy squint on hover */
+.brand-orb:hover .ae-lid {
+  animation: none;
+  transform: scaleY(0.35);
+  transform-origin: center bottom;
+}
+.brand-orb:hover .ae-pupil {
+  animation: none;
+  transform: translate(0, 3px);
+}
