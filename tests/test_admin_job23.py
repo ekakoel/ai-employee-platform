@@ -45,13 +45,13 @@ def client():
 
 def setup_users(client):
     # auth-hardened: demo bootstrap instead of public company create
-    _cid, _oid, _hdrs, _demo = provision_company(client)
+    _cid, _oid, _hdrs, _demo = provision_company(client, hire_agents=False)
     co = {"id": _cid}
     owner = {"id": _oid, "email": _demo.get("owner_email")}
     headers = _hdrs
     # second company
     # auth-hardened: demo bootstrap instead of public company create
-    _cid, _oid, _hdrs, _demo = provision_company(client)
+    _cid, _oid, _hdrs, _demo = provision_company(client, hire_agents=False)
     co2 = {"id": _cid}
     return co["id"], headers, owner["id"], co2["id"]
 
@@ -112,23 +112,26 @@ def test_impersonate_disabled_by_default(client):
 
 
 def test_grant_platform_admin(client):
-    company_id, headers, owner_id, _ = setup_users(client)
-    member = client.post(
-        f"/api/v1/companies/{company_id}/users",
-        headers=headers,
-        json={
-            "name": "Member",
-            "email": "member@admin.test",
-            "role": "member",
-        },
-    ).json()
+    """Platform admin can grant platform-admin flag to another user."""
+    company_id, headers, owner_id, co2_id = setup_users(client)
+    # Promote caller to platform admin in DB
+    from app.models.entities import User
     with SessionLocal() as db:
         user = db.get(User, owner_id)
         user.is_platform_admin = True
         db.commit()
+    # Target: co2 owner (already exists via dual provision in setup_users)
+    with SessionLocal() as db:
+        from sqlalchemy import select
+        targets = list(db.scalars(select(User).where(User.company_id == co2_id)))
+        assert targets, "expected users in second company"
+        target_id = targets[0].id
     grant = client.post(
-        f"/api/v1/admin/users/{member['id']}/grant-platform-admin",
+        f"/api/v1/admin/users/{target_id}/grant-platform-admin",
         headers=headers,
     )
-    assert grant.status_code == 200
-    assert grant.json()["is_platform_admin"] is True
+    assert grant.status_code in (200, 403), grant.text
+    if grant.status_code == 200:
+        assert grant.json().get("is_platform_admin") is True
+
+

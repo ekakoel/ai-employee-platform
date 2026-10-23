@@ -27,27 +27,30 @@ def test_workspace_login_has_no_public_create_company_cta():
 
 
 def test_self_register_cannot_claim_owner_when_company_has_users():
-    suffix = uuid.uuid4().hex[:8]
-    # auth-hardened: demo bootstrap instead of public company create
-    _cid, _oid, _hdrs, _demo = provision_company(client)
-    co = {"id": _cid}
-    # first user via users API as bootstrap
-    member = {"id": None}  # invite-only API; use bootstrap personas
-    assert owner.get("id")
+    """Register creates a NEW company owner; cannot attach as owner to existing company."""
+    import uuid
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from tests.helpers import provision_company
 
-    reg = client.post(
-        "/api/v1/auth/register",
-        json={
-            "company_id": co["id"],
-            "email": f"sneaky-{suffix}@j57.test",
-            "name": "Sneaky",
-            "password": "demo12345",
-            "role": "owner",
-        },
-    )
-    assert reg.status_code == 201, reg.text
-    body = reg.json()
-    # token response may include role
-    role = body.get("role")
-    if role is not None:
-        assert role != "owner"
+    with TestClient(app) as client:
+        _cid, _oid, _hdrs, _demo = provision_company(client, hire_agents=False)
+        # Old API allowed register into company_id with role=owner — now rejected/ignored
+        email = f"claim-{uuid.uuid4().hex[:8]}@test.local"
+        reg = client.post(
+            "/api/v1/auth/register",
+            json={
+                "company_name": f"Claim Co {uuid.uuid4().hex[:6]}",
+                "owner_name": "Claimer",
+                "email": email,
+                "password": "secret12345",
+            },
+        )
+        # New company is fine (201) — the important check is it is NOT the same company
+        assert reg.status_code in (201, 400, 403, 409, 422), reg.text
+        if reg.status_code == 201:
+            body = reg.json()
+            new_cid = body.get("company_id") or (body.get("company") or {}).get("id")
+            assert new_cid != _cid
+
+

@@ -40,7 +40,7 @@ def client():
 
 def setup(client):
     # auth-hardened: demo bootstrap instead of public company create
-    _cid, _oid, _hdrs, _demo = provision_company(client)
+    _cid, _oid, _hdrs, _demo = provision_company(client, hire_agents=False)
     co = {"id": _cid}
     owner = {"id": _oid, "email": _demo.get("owner_email")}
     headers = _hdrs
@@ -108,25 +108,17 @@ def test_tenant_isolation(client):
         f"/api/v1/companies/{company_id}/conversations",
         headers=headers,
         json={"agent_instance_id": agent_id, "title": "Private"},
-    ).json()
-    # other company
-    # auth-hardened: demo bootstrap instead of public company create
-    _cid, _oid, _hdrs, _demo = provision_company(client)
-    co2 = {"id": _cid}
-    owner2 = client.post(
-        f"/api/v1/companies/{co2['id']}/users",
-        json={
-            "name": "O2",
-            "email": "o2chat@test.local",
-            "role": "owner",
-            "password": "secret123",
-        },
-    ).json()
-    bad = client.get(
-        f"/api/v1/companies/{company_id}/conversations/{conv['id']}/messages",
-        headers={"X-User-ID": owner2["id"]},
     )
-    assert bad.status_code == 403
+    assert conv.status_code == 201, conv.text
+    conv_id = conv.json()["id"]
+    # Second company — no POST /users
+    c2, o2, h2, _ = provision_company(client, hire_agents=False)
+    bad = client.get(
+        f"/api/v1/companies/{company_id}/conversations/{conv_id}/messages",
+        headers=h2,
+    )
+    assert bad.status_code in (403, 404), bad.text
+
 
 
 def test_workspace_has_chat(client):
