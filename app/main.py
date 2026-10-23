@@ -60,6 +60,16 @@ if WORKSPACE_DIR.exists():
     )
 
 
+
+@app.get("/activate", response_class=HTMLResponse)
+@app.get("/activate/", response_class=HTMLResponse)
+def activate_account_page():
+    """Job 93 — email activation landing (token query param)."""
+    path = AUTH_DIR / "activate.html"
+    if path.is_file():
+        return HTMLResponse(path.read_text(encoding="utf-8"))
+    return HTMLResponse("<p>Activation page missing.</p>", status_code=404)
+
 @app.get("/workspace")
 @app.get("/workspace/")
 def human_ai_workspace():

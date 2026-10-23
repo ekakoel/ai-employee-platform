@@ -595,10 +595,17 @@
           owner_name: $("registrationName").value.trim(), email,
           password: $("registrationPassword").value }) });
       $("registrationPassword").value = "";
-      log.textContent = result.message;
-      $("verificationPanel").classList.remove("hidden");
-      if (result.verification_token) $("verificationToken").value = result.verification_token;
-      $("loginEmail").value = email;
+      log.textContent = result.message || "Company created.";
+      if ($("verificationPanel")) $("verificationPanel").classList.remove("hidden");
+      if ($("activationBanner")) {
+        $("activationBanner").textContent =
+          "We sent an activation link to " + email + ". Open it, then sign in. (Dev: token may appear in API logs.)";
+      }
+      // Dev convenience only — never block UI on token paste
+      if (result.verification_token && $("verificationToken")) {
+        $("verificationToken").value = result.verification_token;
+      }
+      if ($("loginEmail")) $("loginEmail").value = email;
     } catch (err) {
       log.textContent = err.message || "Registration failed";
     } finally {
@@ -943,6 +950,114 @@
     };
   }
 
+
+  // Job 93 — post-login onboarding wizard
+  let onboardHiredAgentId = null;
+  function setOnboardStep(n) {
+    document.querySelectorAll("#onboardingWizard .onboard-steps span").forEach((el) => {
+      el.classList.toggle("active", String(el.getAttribute("data-step")) === String(n));
+    });
+    ["1", "2", "3"].forEach((i) => {
+      const p = $("onboardPanel" + i);
+      if (p) p.classList.toggle("hidden", String(i) !== String(n));
+    });
+  }
+  function showOnboardingWizard(step) {
+    const w = $("onboardingWizard");
+    if (!w) return;
+    w.classList.remove("hidden");
+    setOnboardStep(step || 1);
+  }
+  function hideOnboardingWizard() {
+    const w = $("onboardingWizard");
+    if (w) w.classList.add("hidden");
+  }
+  async function routePostLoginOnboarding() {
+    try {
+      if (!state.companyId) return;
+      const company = await api(`/companies/${state.companyId}`);
+      state.onboardingStatus = company.onboarding_status || "pending";
+      if (state.onboardingStatus !== "complete") {
+        showOnboardingWizard(1);
+        return;
+      }
+      let agents = [];
+      try { agents = await api(`/companies/${state.companyId}/agents`); } catch (_) {}
+      if (!agents || !agents.length) {
+        showOnboardingWizard(2);
+        return;
+      }
+      hideOnboardingWizard();
+    } catch (_) {
+      /* non-blocking */
+    }
+  }
+  if ($("btnOnboardGoCompany")) {
+    $("btnOnboardGoCompany").onclick = () => {
+      hideOnboardingWizard();
+      try { showView("company"); } catch (_) {}
+    };
+  }
+  document.querySelectorAll("#onboardAgentGrid .agent-pick").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#onboardAgentGrid .agent-pick").forEach((b) => b.classList.remove("selected"));
+      btn.classList.add("selected");
+    });
+  });
+  if ($("btnOnboardHire")) {
+    $("btnOnboardHire").onclick = async () => {
+      const log = $("onboardHireLog");
+      const selected = document.querySelector("#onboardAgentGrid .agent-pick.selected");
+      if (!selected) {
+        if (log) log.textContent = "Select an AI Employee type";
+        return;
+      }
+      const slug = selected.getAttribute("data-slug");
+      try {
+        if (log) log.textContent = "Hiring…";
+        const catalog = await api("/agent-catalog");
+        const item = (catalog || []).find((c) => c.slug === slug) || (catalog || [])[0];
+        if (!item) throw new Error("Catalog empty");
+        const nameInput = $("onboardAgentName");
+        const hireName = (nameInput && nameInput.value.trim()) || selected.querySelector("strong")?.textContent || "AI Employee";
+        const hired = await api(`/companies/${state.companyId}/agents/${item.id}/hire`, {
+          method: "POST",
+          body: JSON.stringify({ name: hireName }),
+        });
+        onboardHiredAgentId = hired.id || hired.agent_instance_id;
+        if (log) log.textContent = "Hired. Configure next.";
+        if (nameInput) nameInput.value = hireName;
+        setOnboardStep(3);
+      } catch (err) {
+        if (log) log.textContent = err.message || "Hire failed";
+      }
+    };
+  }
+  async function finishOnboardConfig() {
+    const log = $("onboardConfigLog");
+    try {
+      const name = ($("onboardAgentName") && $("onboardAgentName").value.trim()) || "";
+      if (onboardHiredAgentId && name) {
+        try {
+          await api(`/companies/${state.companyId}/agents/${onboardHiredAgentId}`, {
+            method: "PATCH",
+            body: JSON.stringify({ name }),
+          });
+        } catch (_) { /* optional endpoint */ }
+      }
+      hideOnboardingWizard();
+      try { showView("home"); } catch (_) { try { showView("agents"); } catch (__) {} }
+    } catch (err) {
+      if (log) log.textContent = err.message || "Could not finish";
+    }
+  }
+  if ($("btnOnboardFinish")) $("btnOnboardFinish").onclick = () => finishOnboardConfig();
+  if ($("btnOnboardSkipConfig")) $("btnOnboardSkipConfig").onclick = () => {
+    hideOnboardingWizard();
+    try { showView("home"); } catch (_) {}
+  };
+
+
   $("btnLogin").onclick = async () => {
     const log = $("loginLog");
     const btn = $("btnLogin");
@@ -959,7 +1074,7 @@
       }
       const email = (($("loginEmail") && $("loginEmail").value) || "").trim();
       const password = ($("loginPassword") && $("loginPassword").value) || "";
-      if (!email || !password) throw new Error("Email and password are required");
+      if (!email || !password) throw new Error("Email/username/phone and password are required");
       const body = await api("/auth/login", {
         method: "POST",
         body: JSON.stringify({ email, password }),
@@ -975,6 +1090,7 @@
       } catch (_) {}
       if (log) log.textContent = "Welcome" + (body.name ? ", " + body.name : "");
       await applyAuthSession(body);
+      await routePostLoginOnboarding();
     } catch (err) {
       if (log) {
         log.classList.add("error");

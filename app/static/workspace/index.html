@@ -30,8 +30,8 @@
 
       <div id="tab-login" class="tab-panel active">
         <p class="muted">Sign in to your company workspace.</p>
-        <label for="loginEmail">Email
-          <input id="loginEmail" type="email" placeholder="you@company.com" autocomplete="username" required />
+        <label for="loginEmail">Email, username, or phone
+          <input id="loginEmail" type="text" placeholder="you@company.com / username / phone" autocomplete="username" required />
         </label>
         <label for="loginPassword">Password
           <div class="password-field">
@@ -69,24 +69,21 @@
       </div>
 
       <div id="tab-register" class="tab-panel user-only">
-        <p class="muted">Step 1 — Register your business. You become the <strong>Owner</strong>. After email verification, complete the company profile, then invite employees.</p>
-        <ol class="muted" style="margin:0 0 1rem 1.1rem;padding:0;font-size:.85rem;line-height:1.45">
-          <li>Create company + owner account</li>
-          <li>Verify email</li>
-          <li>Sign in → Company profile (industry &amp; contact)</li>
-          <li>Users &amp; Roles → invite staff and set job positions</li>
-        </ol>
+        <p class="muted">Create your company. You become the <strong>Owner</strong>. Activate via the link we email you — then sign in.</p>
         <label>Company name<input id="registrationCompany" maxlength="200" required /></label>
-        <label>Owner name<input id="registrationName" maxlength="200" required /></label>
-        <label>Owner email<input id="registrationEmail" type="email" autocomplete="email" required /></label>
+        <label>Your name<input id="registrationName" maxlength="200" required /></label>
+        <label>Work email<input id="registrationEmail" type="email" autocomplete="email" required /></label>
         <label>Password<input id="registrationPassword" type="password" minlength="8" autocomplete="new-password" required /></label>
         <button id="btnRegisterCompany" class="primary block">Create company</button>
         <p id="registrationLog" class="login-message" role="status"></p>
         <div id="verificationPanel" class="hidden">
-          <label>Verification token<input id="verificationToken" autocomplete="off" /></label>
-          <button id="btnVerifyEmail" class="secondary block">Verify email</button>
+          <div class="activation-banner" id="activationBanner">
+            Check your email for an activation link. After activating, sign in here.
+          </div>
+          <button id="btnResendVerification" class="link-btn" type="button">Resend activation email</button>
+          <input id="verificationToken" type="hidden" />
+          <button id="btnVerifyEmail" type="button" class="hidden" tabindex="-1" aria-hidden="true">Verify</button>
         </div>
-        <button id="btnResendVerification" class="link-btn" type="button">Request verification again</button>
       </div>
 
       <div id="tab-invite" class="tab-panel user-only">
@@ -1272,5 +1269,43 @@
   <script src="/workspace/assets/results.js"></script>
   <script src="/workspace/assets/sidebar.js"></script>
   <script src="/workspace/assets/app.js"></script>
+
+  <!-- Job 93 — post-login onboarding wizard -->
+  <div id="onboardingWizard" class="hidden" aria-live="polite">
+    <div class="onboard-card">
+      <div class="onboard-steps">
+        <span data-step="1" class="active">1 · Company</span>
+        <span data-step="2">2 · Hire AI</span>
+        <span data-step="3">3 · Configure</span>
+      </div>
+      <div id="onboardPanel1">
+        <h2>Set up your company</h2>
+        <p class="muted">A few details so your AI employees work in the right context.</p>
+        <p class="muted">Continue in <strong>Company profile</strong> — save name, contact, and industry.</p>
+        <button type="button" id="btnOnboardGoCompany" class="primary block">Open company profile</button>
+      </div>
+      <div id="onboardPanel2" class="hidden">
+        <h2>Hire your first AI Employee</h2>
+        <p class="muted">Pick a specialist. You can hire more later.</p>
+        <div class="agent-pick-grid" id="onboardAgentGrid">
+          <button type="button" class="agent-pick" data-slug="reservation"><div class="icon">🏨</div><strong>Reservation</strong><small>Booking &amp; availability</small></button>
+          <button type="button" class="agent-pick" data-slug="contract-manager"><div class="icon">📄</div><strong>Contracts</strong><small>Review &amp; obligations</small></button>
+          <button type="button" class="agent-pick" data-slug="quotation"><div class="icon">💰</div><strong>Quotation</strong><small>Pricing &amp; quotes</small></button>
+          <button type="button" class="agent-pick" data-slug="support"><div class="icon">💬</div><strong>Support</strong><small>Answers from knowledge</small></button>
+        </div>
+        <button type="button" id="btnOnboardHire" class="primary block">Hire selected</button>
+        <p id="onboardHireLog" class="login-message"></p>
+      </div>
+      <div id="onboardPanel3" class="hidden">
+        <h2>Configure your AI Employee</h2>
+        <p class="muted">Name them and open full settings anytime from AI Employees.</p>
+        <label>Display name<input id="onboardAgentName" maxlength="120" placeholder="e.g. Maya · Reservations" /></label>
+        <button type="button" id="btnOnboardFinish" class="primary block">Finish setup</button>
+        <button type="button" id="btnOnboardSkipConfig" class="link-btn">Skip for now</button>
+        <p id="onboardConfigLog" class="login-message"></p>
+      </div>
+    </div>
+  </div>
+
 </body>
 </html>

@@ -2381,3 +2381,180 @@ textarea:focus {
   }
 }
 
+
+/* ===== Job 93 — Aurora auth + centered onboarding card ===== */
+.login-gate {
+  position: relative;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  overflow: hidden;
+  background: #0b1220;
+}
+.login-gate::before {
+  content: "";
+  position: absolute;
+  inset: -40%;
+  background:
+    radial-gradient(ellipse 50% 40% at 20% 30%, rgba(56, 189, 248, 0.35), transparent 55%),
+    radial-gradient(ellipse 45% 35% at 80% 20%, rgba(167, 139, 250, 0.32), transparent 50%),
+    radial-gradient(ellipse 40% 40% at 60% 80%, rgba(45, 212, 191, 0.22), transparent 50%),
+    radial-gradient(ellipse 35% 30% at 30% 70%, rgba(251, 191, 36, 0.12), transparent 50%);
+  animation: aurora-drift 18s ease-in-out infinite alternate;
+  pointer-events: none;
+  z-index: 0;
+}
+@keyframes aurora-drift {
+  0%   { transform: translate3d(-2%, -1%, 0) scale(1); }
+  50%  { transform: translate3d(3%, 2%, 0) scale(1.05); }
+  100% { transform: translate3d(-1%, 3%, 0) scale(1.02); }
+}
+.login-card {
+  position: relative;
+  z-index: 1;
+  width: min(440px, 100%);
+  padding: 1.75rem 1.6rem 1.5rem;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(15, 23, 42, 0.72);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+  color: #e2e8f0;
+}
+.login-brand h1 { font-size: 1.25rem; letter-spacing: -0.02em; }
+.login-brand p { color: #94a3b8; font-size: 0.85rem; }
+.login-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 1rem 0 1.1rem;
+}
+.login-tabs .tab {
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: transparent;
+  color: #94a3b8;
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.8rem;
+}
+.login-tabs .tab.active {
+  color: #f8fafc;
+  border-color: rgba(56, 189, 248, 0.55);
+  background: rgba(14, 165, 233, 0.15);
+}
+.login-card label {
+  display: block;
+  font-size: 0.8rem;
+  color: #cbd5e1;
+  margin-bottom: 0.75rem;
+}
+.login-card input[type="text"],
+.login-card input[type="email"],
+.login-card input[type="password"],
+.login-card input:not([type]) {
+  width: 100%;
+  margin-top: 0.3rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.85);
+  color: #f1f5f9;
+}
+.login-card .primary.block {
+  width: 100%;
+  margin-top: 0.5rem;
+  border: none;
+  border-radius: 10px;
+  padding: 0.65rem 1rem;
+  font-weight: 600;
+  background: linear-gradient(135deg, #0ea5e9, #6366f1);
+  color: #fff;
+  cursor: pointer;
+}
+.login-card .primary.block:hover { filter: brightness(1.06); }
+.login-message { font-size: 0.85rem; color: #94a3b8; min-height: 1.2em; }
+.login-message.error { color: #fca5a5; }
+.activation-banner {
+  margin-top: 0.75rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: 10px;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #a7f3d0;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+/* Onboarding wizard (post-login, pre-home) */
+#onboardingWizard.hidden { display: none !important; }
+#onboardingWizard {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: #0b1220;
+}
+#onboardingWizard::before {
+  content: "";
+  position: absolute;
+  inset: -30%;
+  background:
+    radial-gradient(ellipse 50% 40% at 25% 35%, rgba(56, 189, 248, 0.3), transparent 55%),
+    radial-gradient(ellipse 40% 35% at 75% 25%, rgba(167, 139, 250, 0.28), transparent 50%),
+    radial-gradient(ellipse 40% 40% at 55% 75%, rgba(45, 212, 191, 0.2), transparent 50%);
+  animation: aurora-drift 18s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+.onboard-card {
+  position: relative;
+  z-index: 1;
+  width: min(520px, 94vw);
+  padding: 1.75rem;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(15, 23, 42, 0.78);
+  backdrop-filter: blur(16px);
+  color: #e2e8f0;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+}
+.onboard-steps {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+.onboard-steps span {
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+}
+.onboard-steps span.active {
+  color: #f8fafc;
+  border-color: rgba(56, 189, 248, 0.5);
+  background: rgba(14, 165, 233, 0.15);
+}
+.agent-pick-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+  margin: 1rem 0;
+}
+.agent-pick {
+  text-align: left;
+  padding: 0.85rem;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.6);
+  color: #e2e8f0;
+  cursor: pointer;
+}
+.agent-pick:hover, .agent-pick.selected {
+  border-color: rgba(56, 189, 248, 0.55);
+  background: rgba(14, 165, 233, 0.12);
+}
+.agent-pick .icon { font-size: 1.4rem; margin-bottom: 0.25rem; }
+.agent-pick strong { display: block; font-size: 0.9rem; }
+.agent-pick small { color: #94a3b8; font-size: 0.75rem; }

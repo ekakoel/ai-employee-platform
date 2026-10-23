@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Activate account — AI Employee Platform</title>
+  <style>
+    body { margin:0; font-family: system-ui, sans-serif; background:#0b1220; color:#e2e8f0; min-height:100vh; display:grid; place-items:center; }
+    body::before { content:""; position:fixed; inset:-40%;
+      background: radial-gradient(ellipse 50% 40% at 20% 30%, rgba(56,189,248,.35), transparent 55%),
+                  radial-gradient(ellipse 45% 35% at 80% 20%, rgba(167,139,250,.32), transparent 50%);
+      animation: a 18s ease-in-out infinite alternate; z-index:0; }
+    @keyframes a { from{transform:translate(-2%,0)} to{transform:translate(3%,2%)} }
+    .card { position:relative; z-index:1; width:min(420px,92vw); padding:1.75rem; border-radius:16px;
+      background:rgba(15,23,42,.78); border:1px solid rgba(255,255,255,.1); backdrop-filter:blur(16px); }
+    a { color:#7dd3fc; }
+    .ok { color:#6ee7b7; }
+    .err { color:#fca5a5; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Activate your account</h1>
+    <p id="msg">Activating…</p>
+    <p><a href="/workspace">Go to sign in</a></p>
+  </div>
+  <script>
+    (async () => {
+      const msg = document.getElementById("msg");
+      const params = new URLSearchParams(location.search);
+      const token = params.get("token") || params.get("verify") || "";
+      if (!token) {
+        msg.textContent = "Missing activation token. Open the link from your email.";
+        msg.className = "err";
+        return;
+      }
+      try {
+        const res = await fetch("/api/v1/auth/verify-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || data.message || res.statusText);
+        msg.textContent = data.message || "Email verified. You can sign in.";
+        msg.className = "ok";
+      } catch (e) {
+        msg.textContent = e.message || "Activation failed";
+        msg.className = "err";
+      }
+    })();
+  </script>
+</body>
+</html>
