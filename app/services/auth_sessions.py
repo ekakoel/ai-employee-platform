@@ -144,6 +144,11 @@ def login(db, email, password, company_id=None, request_id=None):
             security_failure("login.invalid_credentials")
             raise AuthError("Invalid email or password")
         user = lock_user(db, candidates[0].id)
+        if user and not user.email_verified:
+            raise AuthError(
+                "Account not activated. Enter the 6-digit code sent to your email.",
+                403,
+            )
         active_user(db, user)
         if not verify_password(password, user.password_hash):
             security_failure("login.invalid_credentials")
