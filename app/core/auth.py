@@ -52,10 +52,39 @@ def get_current_user(
     return _load_user(db, user_id)
 
 
-def get_authenticated_user_id(request: Request, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> str:
-    """Supply a verified ID to existing company handlers and their audit calls."""
+def get_authenticated_user_id(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> str:
+    """Supply a verified ID to existing company handlers and their audit calls.
+
+    While onboarding is incomplete, allow the minimum set of company routes
+    needed to finish setup (read company/agents, update profile, hire agents).
+    Everything else stays blocked until onboarding_status == complete.
+    """
     if request.url.path.startswith("/api/v1/companies/"):
         company = db.get(Company, user.company_id)
         if company and company.onboarding_status != "complete":
-            raise HTTPException(status_code=403, detail="Complete company profile before using the workspace")
+            path = request.url.path
+            method = request.method.upper()
+            cid = company.id
+            # Exact company resource
+            company_path = f"/api/v1/companies/{cid}"
+            allowed = False
+            if method == "GET":
+                # reads required by workspace shell + onboarding wizard
+                allowed = True
+            elif method in {"PATCH", "PUT"} and path.rstrip("/") == company_path:
+                allowed = True
+            elif method == "POST" and (
+                f"/companies/{cid}/agents/" in path and path.rstrip("/").endswith("/hire")
+                or path.rstrip("/").endswith(f"/companies/{cid}/agents")
+            ):
+                allowed = True
+            if not allowed:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Complete company profile before using the workspace",
+                )
     return user.id

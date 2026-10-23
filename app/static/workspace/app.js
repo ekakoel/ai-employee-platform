@@ -1131,13 +1131,15 @@
       const r = orb.getBoundingClientRect();
       const cx = r.left + r.width / 2;
       const cy = r.top + r.height / 2;
+      if (!r.width || !r.height) return;
       let dx = (e.clientX - cx) / (r.width / 2);
       let dy = (e.clientY - cy) / (r.height / 2);
+      if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
       dx = Math.max(-1, Math.min(1, dx)) * 2.5;
       dy = Math.max(-1, Math.min(1, dy)) * 2;
       pupils.forEach((p) => {
         p.style.animation = "none";
-        p.setAttribute("transform", `translate(${dx}, ${dy})`);
+        p.setAttribute("transform", "translate(" + dx + ", " + dy + ")");
       });
     });
   })();
