@@ -125,10 +125,15 @@
 
       
       
-      <div id="registerSuccessPanel" data-also="tab-activate" class="tab-panel user-only">
+      
+      <div id="tab-activate" class="tab-panel user-only">
         <div class="auth-notice">
           <h2>Activate your account</h2>
-          <p class="muted">Enter the <strong>6-digit code</strong> sent to<br><strong id="registerSuccessEmail"></strong></p>
+          <p class="muted">Enter the <strong>6-digit code</strong> we emailed you.</p>
+          <label class="auth-field" style="text-transform:none;letter-spacing:0;font-size:0.85rem;color:#94a3b8">
+            Email
+            <input id="activateEmail" type="email" placeholder="you@company.com" autocomplete="email" />
+          </label>
           <div class="otp-row" id="otpRow">
             <input class="otp-digit" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" aria-label="Digit 1" />
             <input class="otp-digit" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" aria-label="Digit 2" />
@@ -138,9 +143,10 @@
             <input class="otp-digit" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" aria-label="Digit 6" />
           </div>
           <button type="button" id="btnActivateOtp" class="primary block">Activate account</button>
-          <button type="button" id="btnResendFromNotice" class="link-btn" type="button">Resend code</button>
-          <button type="button" id="btnGoLoginAfterRegister" class="link-btn" type="button">Back to sign in</button>
+          <button type="button" id="btnResendFromNotice" class="link-btn">Resend code</button>
+          <button type="button" id="btnGoLoginAfterRegister" class="link-btn">Back to sign in</button>
           <p id="registerSuccessLog" class="login-message" role="status"></p>
+          <p id="registerSuccessEmail" class="hidden" aria-hidden="true"></p>
         </div>
       </div>
 

@@ -1155,6 +1155,103 @@
     });
   });
 
+  
+  function showActivatePanel(email) {
+    const em = (email || "").trim();
+    if (em && $("activateEmail")) $("activateEmail").value = em;
+    if (em && $("loginEmail")) $("loginEmail").value = em;
+    if (em && $("registerSuccessEmail")) $("registerSuccessEmail").textContent = em;
+    if (em && $("registrationEmail")) $("registrationEmail").value = em;
+    openLoginTab("activate");
+    const first = document.querySelector("#otpRow .otp-digit");
+    if (first) setTimeout(() => first.focus(), 50);
+  }
+  function collectOtpCode() {
+    return Array.from(document.querySelectorAll("#otpRow .otp-digit"))
+      .map((el) => (el.value || "").replace(/\D/g, ""))
+      .join("");
+  }
+  (function bindOtpDigitsOnce() {
+    if (window.__otpBound) return;
+    window.__otpBound = true;
+    const digits = () => Array.from(document.querySelectorAll("#otpRow .otp-digit"));
+    document.addEventListener("input", (e) => {
+      if (!e.target.classList.contains("otp-digit")) return;
+      const list = digits();
+      const idx = list.indexOf(e.target);
+      e.target.value = (e.target.value || "").replace(/\D/g, "").slice(0, 1);
+      if (e.target.value && idx >= 0 && idx < list.length - 1) list[idx + 1].focus();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (!e.target.classList.contains("otp-digit")) return;
+      const list = digits();
+      const idx = list.indexOf(e.target);
+      if (e.key === "Backspace" && !e.target.value && idx > 0) list[idx - 1].focus();
+    });
+    document.addEventListener("paste", (e) => {
+      if (!e.target.classList.contains("otp-digit")) return;
+      const nums = ((e.clipboardData || window.clipboardData).getData("text") || "").replace(/\D/g, "").slice(0, 6);
+      if (!nums) return;
+      e.preventDefault();
+      const list = digits();
+      nums.split("").forEach((ch, i) => { if (list[i]) list[i].value = ch; });
+      list[Math.min(nums.length, 6) - 1]?.focus();
+    });
+  })();
+
+  if ($("btnActivateOtp")) {
+    $("btnActivateOtp").onclick = async () => {
+      const log = $("registerSuccessLog");
+      const code = collectOtpCode();
+      if (code.length !== 6) {
+        if (log) { log.classList.add("error"); log.textContent = "Enter all 6 digits"; }
+        return;
+      }
+      try {
+        if (log) { log.classList.remove("error"); log.textContent = "Activating…"; }
+        const result = await api("/auth/verify-email", {
+          method: "POST", skipAuth: true,
+          body: JSON.stringify({ token: code }),
+        });
+        if (log) log.textContent = result.message || "Activated.";
+        openLoginTab("login");
+        if ($("loginLog")) $("loginLog").textContent = result.message || "Account activated. Sign in.";
+      } catch (err) {
+        if (log) { log.classList.add("error"); log.textContent = err.message || "Invalid or expired code"; }
+      }
+    };
+  }
+  if ($("btnGoLoginAfterRegister")) {
+    $("btnGoLoginAfterRegister").onclick = () => openLoginTab("login");
+  }
+  if ($("btnResendFromNotice")) {
+    $("btnResendFromNotice").onclick = async () => {
+      const log = $("registerSuccessLog");
+      const email = (
+        ($("activateEmail") && $("activateEmail").value) ||
+        ($("loginEmail") && $("loginEmail").value) ||
+        ($("registrationEmail") && $("registrationEmail").value) || ""
+      ).trim();
+      if (!email) {
+        if (log) { log.classList.add("error"); log.textContent = "Enter your email above, then resend."; }
+        return;
+      }
+      try {
+        const result = await api("/auth/request-verification", {
+          method: "POST", skipAuth: true,
+          body: JSON.stringify({ email }),
+        });
+        if (log) { log.classList.remove("error"); log.textContent = result.message || "Code sent if eligible."; }
+        if (result.verification_token && /^\d{6}$/.test(String(result.verification_token))) {
+          const list = document.querySelectorAll("#otpRow .otp-digit");
+          String(result.verification_token).split("").forEach((ch, i) => { if (list[i]) list[i].value = ch; });
+        }
+      } catch (err) {
+        if (log) { log.classList.add("error"); log.textContent = err.message || "Could not resend"; }
+      }
+    };
+  }
+
   $("btnLogin").onclick = async () => {
     const log = $("loginLog");
     const btn = $("btnLogin");
@@ -1192,6 +1289,9 @@
       if (log) {
         log.classList.add("error");
         log.textContent = err.message || "Sign in failed";
+        if (/not activated|6-digit|activation/i.test(String(err.message || ""))) {
+          showActivatePanel((($("loginEmail") && $("loginEmail").value) || "").trim());
+        }
       }
     } finally {
       if (btn) {

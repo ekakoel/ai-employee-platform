@@ -3082,3 +3082,21 @@ textarea:focus {
   50% { transform: translate(-1.2px, 0); }
   75% { transform: translate(0.8px, -0.8px); }
 }
+
+
+/* Activate panel must show when tab active */
+#tab-activate.tab-panel.active { display: block !important; opacity: 1 !important; transform: none !important; }
+.otp-row { display: flex; justify-content: center; gap: 0.45rem; margin: 1.2rem 0; flex-wrap: wrap; }
+.otp-digit {
+  width: 2.6rem !important; height: 3rem; text-align: center;
+  font-size: 1.35rem !important; font-weight: 600;
+  border: 1px solid rgba(148,163,184,0.35) !important; border-radius: 10px !important;
+  background: rgba(15,23,42,0.55) !important; color: #f8fafc !important;
+  -webkit-text-fill-color: #f8fafc !important;
+}
+.otp-digit:focus { border-color: #22d3ee !important; outline: none; }
+#tab-activate .auth-field input {
+  width: 100%; margin-top: 0.35rem;
+  background: transparent; color: #f1f5f9;
+  border: none; border-bottom: 1px solid rgba(148,163,184,0.35);
+}
