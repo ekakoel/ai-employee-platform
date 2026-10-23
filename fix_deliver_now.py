@@ -12,34 +12,31 @@ if start is None:
     raise SystemExit("def deliver not found")
 if end is None:
     end = len(lines)
-print("Replacing lines", start + 1, "-", end)
-new_fn = (
-    "def deliver(email, subject, route, token):\n"
-    "    if not mail_ready():\n"
-    "        return\n"
-    "    message = EmailMessage()\n"
-    '    message["From"] = settings.smtp_from\n'
-    '    message["To"] = email\n'
-    '    message["Subject"] = subject\n'
-    '    link = "%s%s%s" % (settings.public_base_url.rstrip("/"), route, token)\n'
-    "    body = (\n"
-    '        "Activate your AI Employee Platform account.\\n\\n"\n'
-    '        "Open this link (valid 24 hours):\\n"\n'
-    "        + link\n"
-    '        + "\\n\\nIf you did not register, ignore this email.\\n"\n'
-    "    )\n"
-    "    message.set_content(body)\n"
-    "    try:\n"
-    "        with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:\n"
-    "            if settings.smtp_username:\n"
-    "                smtp.login(settings.smtp_username, settings.smtp_password)\n"
-    "            smtp.send_message(message)\n"
-    "    except (OSError, smtplib.SMTPException):\n"
-    '        raise auth_sessions.AuthError("Email delivery temporarily unavailable", 503) from None\n'
-    "\n"
-)
-out = "".join(lines[:start]) + new_fn + "".join(lines[end:])
-out = out.replace("/workspace?verify=", "/activate?token=")
-path.write_text(out, encoding="utf-8")
+new_lines = [
+    "def deliver(email, subject, route, token):\n",
+    "    if not mail_ready():\n",
+    "        return\n",
+    "    message = EmailMessage()\n",
+    '    message["From"] = settings.smtp_from\n',
+    '    message["To"] = email\n',
+    '    message["Subject"] = subject\n',
+    "    # Job 95 — 6-digit OTP in email (safe single-line strings only)\n",
+    '    body = "Your AI Employee Platform activation code is:\\n\\n"\n',
+    '    body += "    %s\\n\\n" % (token,)\n',
+    '    body += "Enter this 6-digit code in the activation screen.\\n"\n',
+    '    body += "The code is valid for 24 hours.\\n\\n"\n',
+    '    body += "If you did not register, ignore this email.\\n"\n',
+    "    message.set_content(body)\n",
+    "    try:\n",
+    "        with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:\n",
+    "            if settings.smtp_username:\n",
+    "                smtp.login(settings.smtp_username, settings.smtp_password)\n",
+    "            smtp.send_message(message)\n",
+    "    except (OSError, smtplib.SMTPException):\n",
+    '        raise auth_sessions.AuthError("Email delivery temporarily unavailable", 503) from None\n',
+    "\n",
+    "\n",
+]
+path.write_text("".join(lines[:start] + new_lines + lines[end:]), encoding="utf-8")
 compile(path.read_text(encoding="utf-8"), str(path), "exec")
 print("REPAIRED OK")

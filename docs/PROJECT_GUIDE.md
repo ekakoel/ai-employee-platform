@@ -191,6 +191,9 @@ atau restore. Connector runtime dan data durable bukan hal yang sama.
 mengubah `data-workspace`. UI developer bukan grant admin dan tidak menggantikan
 permission check backend. Modul dashboard memiliki `reset()` dan guard request;
 controller auth juga menjaga respons terlambat agar tidak memulihkan session lama.
+Tombol tema tersedia sebelum dan sesudah login, berlaku untuk halaman login,
+onboarding, workspace, dan developer console, serta menyimpan pilihan terang/gelap
+di `localStorage` dengan key `ws_theme`.
 
 ## 8. Mencari lokasi perubahan
 

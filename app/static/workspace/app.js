@@ -1,5 +1,26 @@
 (function () {
   const $ = (id) => document.getElementById(id);
+  const themeToggle = $("btnThemeToggle");
+  const savedTheme = localStorage.getItem("ws_theme");
+  document.documentElement.dataset.theme = savedTheme === "dark" ? "dark" : "light";
+  function updateThemeToggle() {
+    const isDark = document.documentElement.dataset.theme === "dark";
+    const label = isDark ? "Use light theme" : "Use dark theme";
+    if (themeToggle) {
+      themeToggle.setAttribute("aria-label", label);
+      themeToggle.setAttribute("title", label);
+      themeToggle.setAttribute("aria-pressed", String(isDark));
+    }
+  }
+  updateThemeToggle();
+  if (themeToggle) {
+    themeToggle.onclick = () => {
+      const theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = theme;
+      localStorage.setItem("ws_theme", theme);
+      updateThemeToggle();
+    };
+  }
   const developerMode = document.body.dataset.workspace === "developer";
   const developerViews = new Set(["tools", "policies", "scopecheck"]);
   const consoleViews = new Set([...developerViews, "integrations", "workflows", "cost", "audit", "tasks", "result-preview"]);
@@ -98,14 +119,21 @@
     return canAccessView("home") ? "home" : "chat";
   }
 
+  function updateNavSections() {
+    document.querySelectorAll(".nav-section").forEach((section) => {
+      const buttons = Array.from(section.querySelectorAll(".nav-btn"));
+      const hasVisibleView = buttons.some((button) => !button.classList.contains("hidden"));
+      section.classList.toggle("hidden", !hasVisibleView);
+      if (!hasVisibleView) section.open = false;
+    });
+  }
+
   function applyNavGating() {
     if (developerMode) {
       document.querySelectorAll(".nav-btn").forEach((button) => {
         button.classList.toggle("hidden", !consoleViews.has(button.dataset.view));
       });
-      document.querySelectorAll(".nav-group").forEach((group) => {
-        group.classList.toggle("hidden", !group.classList.contains("developer-only"));
-      });
+      updateNavSections();
       const link = $("consoleLink");
       if (link) link.classList.remove("hidden");
       return;
@@ -114,15 +142,7 @@
       const view = button.dataset.view;
       button.classList.toggle("hidden", !canAccessView(view));
     });
-    document.querySelectorAll(".nav-group").forEach((group) => {
-      let el = group.nextElementSibling;
-      let any = false;
-      while (el && !el.classList.contains("nav-group")) {
-        if (el.classList.contains("nav-btn") && !el.classList.contains("hidden")) any = true;
-        el = el.nextElementSibling;
-      }
-      group.classList.toggle("hidden", !any);
-    });
+    updateNavSections();
     const link = $("consoleLink");
     if (link) link.classList.toggle("hidden", !state.isPlatformAdmin);
   }
@@ -236,6 +256,7 @@
 
   function clearSession() {
     sessionVersion++;
+    hideOnboardingWizard();
     chatWorkspace.reset();
     inboxDashboard.reset();
     contextualSidebar.reset();
@@ -394,7 +415,11 @@
     const view = $("view-" + name);
     if (view) view.classList.add("active");
     const btn = document.querySelector(`.nav-btn[data-view="${name}"]`);
-    if (btn) btn.classList.add("active");
+    if (btn) {
+      btn.classList.add("active");
+      const section = btn.closest(".nav-section");
+      if (section) section.open = true;
+    }
     const t = titles[name] || [name, ""];
     if ($("viewTitle")) $("viewTitle").textContent = t[0];
     if ($("viewSubtitle")) $("viewSubtitle").textContent = t[1];
@@ -487,6 +512,9 @@
       if ($("companyProfileNameInput")) $("companyProfileNameInput").value = company.name || "";
       if ($("companyContactEmail")) $("companyContactEmail").value = company.contact_email || "";
       if ($("companyIndustry")) $("companyIndustry").value = company.industry || "";
+      if ($("onboardCompanyName")) $("onboardCompanyName").value = company.name || "";
+      if ($("onboardCompanyEmail")) $("onboardCompanyEmail").value = company.contact_email || "";
+      if ($("onboardCompanyIndustry")) $("onboardCompanyIndustry").value = company.industry || "";
       if ($("btnSaveCompanyProfile")) $("btnSaveCompanyProfile").classList.remove("hidden");
     } else {
       if ($("companyReadName")) $("companyReadName").textContent = company.name || "—";
@@ -536,33 +564,43 @@
     }
   }
 
-  if ($("btnSaveCompanyProfile")) $("btnSaveCompanyProfile").onclick = async () => {
-    const log = $("companyProfileLog");
+  async function saveCompanyProfile(values, log) {
     if (state.role && state.role !== "owner") {
       if (log) log.textContent = "Only the company Owner can update the profile.";
-      return;
+      return false;
+    }
+    const name = String(values.name || "").trim();
+    const contactEmail = String(values.contact_email || "").trim();
+    const industry = String(values.industry || "").trim();
+    if (name.length < 2 || contactEmail.length < 3 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail) || industry.length < 2) {
+      if (log) log.textContent = "Enter a company name, valid contact email, and industry before continuing.";
+      return false;
     }
     try {
       await api(`/companies/${state.companyId}/profile`, { method: "PUT", body: JSON.stringify({
-        name: $("companyProfileNameInput").value.trim(),
-        contact_email: $("companyContactEmail").value.trim(),
-        industry: $("companyIndustry").value.trim(),
+        name,
+        contact_email: contactEmail,
+        industry,
       }) });
-      await loadCompanyProfile();
+      if (!await loadCompanyProfile()) throw new Error("Company profile was saved, but could not be reloaded. Please retry.");
       applyNavGating();
-      if (log) {
-        log.textContent =
-          state.onboardingStatus === "complete"
-            ? "Profile complete. Sidebar unlocked — open Users & positions to invite employees."
-            : "Company profile saved.";
+      if (log) log.textContent = "Company profile saved.";
+      if (state.onboardingStatus === "complete" && isCompanyProfileOwner({ owner_user_id: state.ownerUserId })) {
+        await routePostLoginOnboarding();
       }
-      if (state.onboardingStatus === "complete" && canAccessView("users")) {
-        // Soft highlight: land on users after first complete
-        try { showView("users"); } catch (_) {}
-      }
+      return true;
     } catch (err) {
       if (log) log.textContent = err.message || "Unable to save profile";
+      return false;
     }
+  }
+
+  if ($("btnSaveCompanyProfile")) $("btnSaveCompanyProfile").onclick = async () => {
+    await saveCompanyProfile({
+      name: $("companyProfileNameInput").value,
+      contact_email: $("companyContactEmail").value,
+      industry: $("companyIndustry").value,
+    }, $("companyProfileLog"));
   };
 
   document.querySelectorAll("[data-jump]").forEach((btn) => {
@@ -757,13 +795,19 @@
     if ($("userId")) $("userId").value = state.userId;
     if (!state.permissions.length && !await loadMeProfile()) return;
     if (version !== sessionVersion) return;
-    if (!await loadCompanyProfile() || version !== sessionVersion) return;
-    applyNavGating();
-    setConnected(true);
-    if (state.onboardingStatus !== "complete") {
-      showView("company");
+    const profileLoaded = await loadCompanyProfile();
+    if (version !== sessionVersion) return;
+    if (!profileLoaded) {
+      if (state.accessToken) {
+        setConnected(true);
+        showOnboardingRecovery("We could not load the company profile. Your workspace is still available; open Company profile to retry.");
+      }
       return;
     }
+    applyNavGating();
+    setConnected(true);
+    if (await routePostLoginOnboarding()) return;
+    if (version !== sessionVersion) return;
     await bootstrapSessionEnvironment();
     if (version !== sessionVersion) return;
     await refreshInboxBadge();
@@ -964,6 +1008,8 @@
 
   // Job 93 — post-login onboarding wizard
   let onboardHiredAgentId = null;
+  let onboardHiredAgentName = "";
+  let onboardCatalogItems = [];
   function setOnboardStep(n) {
     document.querySelectorAll("#onboardingWizard .onboard-steps span").forEach((el) => {
       el.classList.toggle("active", String(el.getAttribute("data-step")) === String(n));
@@ -984,12 +1030,16 @@
     w.style.visibility = "visible";
     w.style.opacity = "1";
     w.style.zIndex = "9999";
-    // Keep main workspace hidden until onboarding finishes
-    const app = $("app");
-    if (app) {
-      app.classList.add("hidden");
-      app.style.display = "none";
+    document.documentElement.classList.add("onboarding-open");
+    document.body.classList.add("onboarding-open");
+    const notice = $("onboardRecoveryNotice");
+    if (notice) {
+      notice.classList.add("hidden");
+      notice.textContent = "";
     }
+    // The workspace stays rendered behind the modal. This guarantees that a
+    // recoverable wizard/UI error can never leave an authenticated user on a
+    // blank page.
     setOnboardStep(step || 1);
   }
   function hideOnboardingWizard() {
@@ -998,43 +1048,43 @@
       w.classList.add("hidden");
       w.style.display = "none";
     }
-    const app = $("app");
-    if (app && state.accessToken) {
-      app.classList.remove("hidden");
-      app.style.display = "";
-    }
+    document.documentElement.classList.remove("onboarding-open");
+    document.body.classList.remove("onboarding-open");
+  }
+  function showOnboardingRecovery(message) {
+    showOnboardingWizard(1);
+    const notice = $("onboardRecoveryNotice");
+    if (!notice) return;
+    notice.classList.remove("hidden");
+    notice.textContent = message;
   }
   async function routePostLoginOnboarding() {
+    const version = sessionVersion;
+    const token = state.accessToken;
     try {
       if (!state.companyId) {
         // No company yet — still show step 1 if wizard exists
         showOnboardingWizard(1);
-        return;
+        return true;
       }
-      let company = null;
-      try {
-        company = await api(`/companies/${state.companyId}`);
-      } catch (e) {
-        console.warn("company fetch failed", e);
-        showOnboardingWizard(1);
-        return;
-      }
-      state.onboardingStatus = (company && company.onboarding_status) || "pending";
       if (state.onboardingStatus !== "complete") {
         showOnboardingWizard(1);
-        return;
+        return true;
       }
-      let agents = [];
-      try { agents = await api(`/companies/${state.companyId}/agents`); } catch (_) {}
+      const agents = await api(`/companies/${state.companyId}/agents`);
+      if (version !== sessionVersion || token !== state.accessToken) return true;
       if (!agents || !agents.length) {
         showOnboardingWizard(2);
-        return;
+        await loadOnboardingCatalog();
+        return true;
       }
       hideOnboardingWizard();
-      try { showView(defaultLandingView()); } catch (_) {}
+      return false;
     } catch (err) {
+      if (version !== sessionVersion || token !== state.accessToken) return true;
       console.warn("routePostLoginOnboarding", err);
-      showOnboardingWizard(1);
+      hideOnboardingWizard();
+      return false;
     }
   }
   if ($("btnOnboardGoCompany")) {
@@ -1043,52 +1093,106 @@
       try { showView("company"); } catch (_) {}
     };
   }
-  document.querySelectorAll("#onboardAgentGrid .agent-pick").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll("#onboardAgentGrid .agent-pick").forEach((b) => b.classList.remove("selected"));
-      btn.classList.add("selected");
+  if ($("btnOnboardSaveCompany")) {
+    $("btnOnboardSaveCompany").onclick = async () => {
+      const button = $("btnOnboardSaveCompany");
+      if (button) button.disabled = true;
+      try {
+        await saveCompanyProfile({
+          name: $("onboardCompanyName").value,
+          contact_email: $("onboardCompanyEmail").value,
+          industry: $("onboardCompanyIndustry").value,
+        }, $("onboardCompanyLog"));
+      } finally {
+        if (button) button.disabled = false;
+      }
+    };
+  }
+  async function loadOnboardingCatalog() {
+    const select = $("onboardAgentCatalog");
+    const description = $("onboardAgentDescription");
+    const log = $("onboardHireLog");
+    const hireButton = $("btnOnboardHire");
+    if (!select) return false;
+    const version = sessionVersion;
+    const token = state.accessToken;
+    if (hireButton) hireButton.disabled = true;
+    if (log) log.textContent = "Loading available AI employees…";
+    try {
+      const catalog = await api("/agent-catalog");
+      if (version !== sessionVersion || token !== state.accessToken) return false;
+      onboardCatalogItems = Array.isArray(catalog) ? catalog : [];
+      select.innerHTML = onboardCatalogItems.map((item) =>
+        `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`
+      ).join("");
+      if (onboardCatalogItems.length) {
+        select.value = onboardCatalogItems[0].id;
+        if (description) description.textContent = onboardCatalogItems[0].description || "";
+        if (hireButton) hireButton.disabled = false;
+        if (log) log.textContent = "";
+        return true;
+      }
+      if (description) description.textContent = "";
+      if (log) log.textContent = "No AI Employees are currently available in the catalog. Reload to try again.";
+      return false;
+    } catch (err) {
+      if (version !== sessionVersion || token !== state.accessToken) return false;
+      if (description) description.textContent = "";
+      if (log) log.textContent = `Could not load AI Employee catalog: ${err.message}. Reload to try again.`;
+      return false;
+    }
+  }
+  if ($("onboardAgentCatalog")) {
+    $("onboardAgentCatalog").addEventListener("change", () => {
+      const selected = onboardCatalogItems.find((item) => item.id === $("onboardAgentCatalog").value);
+      if ($("onboardAgentDescription")) $("onboardAgentDescription").textContent = selected?.description || "";
     });
-  });
+  }
+  if ($("btnOnboardRetryCatalog")) $("btnOnboardRetryCatalog").onclick = loadOnboardingCatalog;
   if ($("btnOnboardHire")) {
     $("btnOnboardHire").onclick = async () => {
       const log = $("onboardHireLog");
-      const selected = document.querySelector("#onboardAgentGrid .agent-pick.selected");
+      const button = $("btnOnboardHire");
+      const selected = onboardCatalogItems.find((item) => item.id === $("onboardAgentCatalog").value);
       if (!selected) {
-        if (log) log.textContent = "Select an AI Employee type";
+        if (log) log.textContent = "Choose an AI Employee from the available catalog.";
         return;
       }
-      const slug = selected.getAttribute("data-slug");
+      const version = sessionVersion;
+      const token = state.accessToken;
       try {
+        if (button) button.disabled = true;
         if (log) log.textContent = "Hiring…";
-        const catalog = await api("/agent-catalog");
-        const item = (catalog || []).find((c) => c.slug === slug) || (catalog || [])[0];
-        if (!item) throw new Error("Catalog empty");
         const nameInput = $("onboardAgentName");
-        const hireName = (nameInput && nameInput.value.trim()) || selected.querySelector("strong")?.textContent || "AI Employee";
-        const hired = await api(`/companies/${state.companyId}/agents/${item.id}/hire`, {
+        const hireName = (nameInput && nameInput.value.trim()) || selected.name;
+        const hired = await api(`/companies/${state.companyId}/agents/${selected.id}/hire`, {
           method: "POST",
           body: JSON.stringify({ name: hireName }),
         });
-        onboardHiredAgentId = hired.id || hired.agent_instance_id;
+        if (version !== sessionVersion || token !== state.accessToken) return;
+        onboardHiredAgentId = hired.id || hired.agent_instance_id || "";
+        if (!onboardHiredAgentId) throw new Error("Agent was hired, but the server response did not include its ID.");
+        onboardHiredAgentName = hireName;
         if (log) log.textContent = "Hired. Configure next.";
-        if (nameInput) nameInput.value = hireName;
+        if ($("onboardAgentNameAfterHire")) $("onboardAgentNameAfterHire").value = hireName;
         setOnboardStep(3);
       } catch (err) {
         if (log) log.textContent = err.message || "Hire failed";
+      } finally {
+        if (button && onboardCatalogItems.length) button.disabled = false;
       }
     };
   }
   async function finishOnboardConfig() {
     const log = $("onboardConfigLog");
     try {
-      const name = ($("onboardAgentName") && $("onboardAgentName").value.trim()) || "";
-      if (onboardHiredAgentId && name) {
-        try {
-          await api(`/companies/${state.companyId}/agents/${onboardHiredAgentId}`, {
-            method: "PATCH",
-            body: JSON.stringify({ name }),
-          });
-        } catch (_) { /* optional endpoint */ }
+      const name = ($("onboardAgentNameAfterHire") && $("onboardAgentNameAfterHire").value.trim()) || "";
+      if (onboardHiredAgentId && name && name !== onboardHiredAgentName) {
+        await api(`/companies/${state.companyId}/agents/${onboardHiredAgentId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ name }),
+        });
+        onboardHiredAgentName = name;
       }
       hideOnboardingWizard();
       try { showView("home"); } catch (_) { try { showView("agents"); } catch (__) {} }
@@ -1101,9 +1205,6 @@
     hideOnboardingWizard();
     try { showView("home"); } catch (_) {}
   };
-
-
-
   if ($("btnGoLoginAfterRegister")) {
     $("btnGoLoginAfterRegister").onclick = () => {
       if ($("registerSuccessPanel")) $("registerSuccessPanel").classList.remove("active");
@@ -1124,7 +1225,7 @@
   // Job 94 fix — pupils follow pointer inside brand orb
   (function brandPupils() {
     const orb = document.getElementById("brandOrb");
-    if (!orb) return;
+    if (!orb || typeof orb.querySelectorAll !== "function") return;
     const pupils = orb.querySelectorAll(".ae-pupil");
     if (!pupils.length) return;
     window.addEventListener("pointermove", (e) => {
@@ -1208,6 +1309,7 @@
       .join("");
   }
   (function bindOtpDigitsOnce() {
+    if (typeof window === "undefined" || typeof document.addEventListener !== "function") return;
     if (window.__otpBound) return;
     window.__otpBound = true;
     const digits = () => Array.from(document.querySelectorAll("#otpRow .otp-digit"));
@@ -1320,7 +1422,6 @@
       } catch (_) {}
       if (log) log.textContent = "Welcome" + (body.name ? ", " + body.name : "");
       await applyAuthSession(body);
-      await routePostLoginOnboarding();
     } catch (err) {
       if (log) {
         log.classList.add("error");
@@ -3547,13 +3648,18 @@ async function loadDepartments() {
     applyNavGating();
     if (state.accessToken) {
       if (!await loadMeProfile()) return;
-      if (!await loadCompanyProfile()) return;
-      applyNavGating();
-      setConnected(true);
-      if (state.onboardingStatus !== "complete") {
-        showView("company");
+      const profileLoaded = await loadCompanyProfile();
+      if (!profileLoaded) {
+        if (state.accessToken) {
+          setConnected(true);
+          showOnboardingRecovery("We could not load the company profile. Your workspace is still available; open Company profile to retry.");
+        }
         return;
       }
+      applyNavGating();
+      setConnected(true);
+      if (await routePostLoginOnboarding()) return;
+      if (version !== sessionVersion) return;
       await bootstrapSessionEnvironment();
       if (version !== sessionVersion) return;
       await refreshInboxBadge();

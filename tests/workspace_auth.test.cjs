@@ -7,7 +7,35 @@ const vm = require('node:vm');
 const root = path.join(__dirname, '../app/static/workspace');
 const source = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+const styles = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
 const settle = () => new Promise(resolve => setImmediate(resolve));
+
+function parentElements(markup, targetIds) {
+  const voidTags = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+    'link', 'meta', 'param', 'source', 'track', 'wbr']);
+  const stack = [];
+  const parents = {};
+  for (const match of markup.matchAll(/<\/?([a-z][\w:-]*)\b([^>]*)>/gi)) {
+    const [, tag, attributes] = match;
+    if (match[0].startsWith('</')) {
+      for (let i = stack.length - 1; i >= 0; i -= 1) {
+        if (stack[i].tag === tag.toLowerCase()) {
+          stack.length = i;
+          break;
+        }
+      }
+      continue;
+    }
+    const id = attributes.match(/\bid="([^"]+)"/i)?.[1] || '';
+    if (targetIds.includes(id)) {
+      parents[id] = stack.at(-1)?.tag || '';
+    }
+    if (!voidTags.has(tag.toLowerCase()) && !match[0].endsWith('/>')) {
+      stack.push({ tag: tag.toLowerCase(), id });
+    }
+  }
+  return parents;
+}
 
 function fixture({ saved = {}, respond, mode = 'user' } = {}) {
   const storage = new Map(Object.entries(saved));
@@ -17,19 +45,37 @@ function fixture({ saved = {}, respond, mode = 'user' } = {}) {
     const listeners = new Map();
     elements.set(match[2], {
       tagName: match[1].toUpperCase(), value: '', textContent: '', innerHTML: '',
-      checked: false, disabled: false, dataset: {}, listeners,
+      checked: false, disabled: false, dataset: {}, listeners, style: {},
       classList: {
         add: name => classes.add(name), remove: name => classes.delete(name),
         contains: name => classes.has(name),
         toggle: (name, yes) => yes ? classes.add(name) : classes.delete(name),
       },
       addEventListener: (name, handler) => listeners.set(name, handler),
-      setAttribute() {}, focus() {}, click() { return this.onclick?.(); },
+      setAttribute(name, value) { this[name] = value; }, focus() {}, click() { return this.onclick?.(); },
     });
   }
   const get = id => elements.get(id) || null;
   const calls = [];
   const resets = [];
+  const bodyClasses = new Set();
+  const htmlClasses = new Set();
+  const body = {
+    dataset: { workspace: mode },
+    classList: {
+      add: name => bodyClasses.add(name),
+      remove: name => bodyClasses.delete(name),
+      contains: name => bodyClasses.has(name),
+    },
+  };
+  const documentElement = {
+    dataset: {},
+    classList: {
+      add: name => htmlClasses.add(name),
+      remove: name => htmlClasses.delete(name),
+      contains: name => htmlClasses.has(name),
+    },
+  };
   let session, request;
   // Stub dashboard rendering only; execute the real controller and its auth handlers.
   const dashboard = {
@@ -43,7 +89,8 @@ function fixture({ saved = {}, respond, mode = 'user' } = {}) {
   };
   vm.runInNewContext(source, {
     document: {
-      body: { dataset: { workspace: mode } }, getElementById: get,
+      body, getElementById: get,
+      documentElement,
       querySelectorAll: () => [], querySelector: selector => selector === 'main' ? {} : null,
     },
     localStorage: {
@@ -62,18 +109,43 @@ function fixture({ saved = {}, respond, mode = 'user' } = {}) {
     WorkspaceSidebar: dashboard, WorkspaceChat: dashboard,
     FormData: class { append() {} },
     MutationObserver: class { observe() {} }, console: { warn() {} }, location: {},
+    window: { addEventListener() {} },
+    requestAnimationFrame: () => 0,
+    cancelAnimationFrame() {},
   }, { filename: 'app.js', timeout: 1000 });
-  return { get, calls, storage, resets, session: () => session(), request: (...args) => request(...args) };
+  return { get, calls, storage, resets, body, documentElement,
+    session: () => session(), request: (...args) => request(...args) };
 }
 
 const profile = { company_id: 'tenant-a', user_id: 'user-a', name: 'Test User',
-  role: 'owner', permissions: ['task.read'], is_platform_admin: false,
+  role: 'owner', permissions: ['task.read', 'knowledge.write'], is_platform_admin: false,
   access_token: 'mock-access', refresh_token: 'mock-refresh' };
 const savedSession = {
   ws_companyId: profile.company_id, ws_userId: profile.user_id,
   ws_accessToken: profile.access_token, ws_refreshToken: profile.refresh_token,
   ws_userName: profile.name, ws_role: 'owner', ws_permissions: '["team.manage"]', ws_isPlatformAdmin: '1',
 };
+
+test('theme preference defaults to light, toggles, and persists', () => {
+  const f = fixture();
+  assert.equal(f.documentElement.dataset.theme, 'light');
+  assert.equal(f.get('btnThemeToggle')['aria-label'], 'Use dark theme');
+  assert.ok(f.get('themeIconSun'));
+  assert.ok(f.get('themeIconMoon'));
+  assert.doesNotMatch(html.match(/<button id="btnThemeToggle"[\s\S]*?<\/button>/)[0], /themeToggleLabel|Dark theme|Light theme/);
+  assert.match(styles, /:root\[data-theme="dark"\]\s+\.theme-icon-sun\s*\{\s*display:\s*none;/);
+  assert.match(styles, /:root\[data-theme="dark"\]\s+\.theme-icon-moon\s*\{\s*display:\s*block;/);
+  f.get('btnThemeToggle').onclick();
+  assert.equal(f.documentElement.dataset.theme, 'dark');
+  assert.equal(f.get('btnThemeToggle')['aria-label'], 'Use light theme');
+  assert.equal(f.storage.get('ws_theme'), 'dark');
+});
+
+test('saved dark theme is restored on workspace startup', () => {
+  const f = fixture({ saved: { ws_theme: 'dark' } });
+  assert.equal(f.documentElement.dataset.theme, 'dark');
+  assert.equal(f.get('btnThemeToggle')['aria-label'], 'Use light theme');
+});
 
 test('expired resource request clears only the matching session', async () => {
   const f = fixture({ saved: savedSession, respond: url => url.endsWith('/auth/me')
@@ -169,7 +241,7 @@ test('invitation acceptance submits token and personal credentials only', async 
   assert.equal(f.get('invitePassword').value, '');
 });
 
-test('pending company profile opens onboarding and unlocks after save', async () => {
+test('pending company profile opens the onboarding wizard and unlocks after save', async () => {
   let complete = false;
   const f = fixture({ respond: (url, options) => {
     if (url.endsWith('/auth/login')) return { status: 200, body: profile };
@@ -178,6 +250,7 @@ test('pending company profile opens onboarding and unlocks after save', async ()
       return { status: 200, body: { onboarding_status: 'complete' } };
     }
     if (url.endsWith('/profile')) return { status: 200, body: { id: 'tenant-a', name: 'Test Company',
+      contact_email: 'contact@example.test', industry: 'Travel',
       owner_user_id: 'user-a', onboarding_status: complete ? 'complete' : 'pending' } };
     return undefined;
   } });
@@ -185,11 +258,134 @@ test('pending company profile opens onboarding and unlocks after save', async ()
   f.get('loginPassword').value = 'safe-password';
   await f.get('btnLogin').onclick();
   assert.equal(f.session().onboardingStatus, 'pending');
+  assert.equal(f.get('onboardingWizard').style.display, 'grid');
+  assert.equal(f.body.classList.contains('onboarding-open'), true);
+  assert.equal(f.documentElement.classList.contains('onboarding-open'), true);
+  assert.equal(f.get('onboardCompanyName').value, 'Test Company');
+  await f.get('btnOnboardGoCompany').onclick();
+  assert.equal(f.body.classList.contains('onboarding-open'), false);
+  assert.equal(f.documentElement.classList.contains('onboarding-open'), false);
   assert.equal(f.get('view-company').classList.contains('active'), true);
+  f.get('companyProfileNameInput').value = 'Test Company';
   f.get('companyContactEmail').value = 'contact@example.test';
   f.get('companyIndustry').value = 'Travel';
   await f.get('btnSaveCompanyProfile').onclick();
   assert.equal(f.session().onboardingStatus, 'complete');
+});
+
+test('onboarding saves company details, hires a catalog agent, and opens the workspace', async () => {
+  let companySaved = false;
+  const catalogAgent = { id: 'catalog-first', name: 'Reservation Specialist',
+    description: 'Handles booking requests.' };
+  const f = fixture({ respond: (url, options) => {
+    if (url.endsWith('/auth/login')) return { status: 200, body: profile };
+    if (url.endsWith('/profile') && options.method === 'PUT') {
+      companySaved = true;
+      return { status: 200, body: { onboarding_status: 'complete' } };
+    }
+    if (url.endsWith('/profile')) return { status: 200, body: {
+      id: 'tenant-a', name: companySaved ? 'Northwind Travel' : '',
+      contact_email: companySaved ? 'owner@northwind.test' : '',
+      industry: companySaved ? 'Travel' : '', owner_user_id: 'user-a',
+      onboarding_status: companySaved ? 'complete' : 'pending',
+    } };
+    if (url.endsWith('/agents')) return { status: 200, body: [] };
+    if (url.endsWith('/agent-catalog')) return { status: 200, body: [catalogAgent] };
+    if (url.endsWith('/catalog-first/hire')) return { status: 201, body: { id: 'agent-first', name: 'Northwind Reservations' } };
+    if (url.endsWith('/agents/agent-first')) return { status: 200, body: { id: 'agent-first' } };
+    return undefined;
+  } });
+  f.get('loginEmail').value = 'owner@northwind.test';
+  f.get('loginPassword').value = 'safe-password';
+  await f.get('btnLogin').onclick();
+
+  assert.equal(f.get('onboardPanel1').classList.contains('hidden'), false);
+  f.get('onboardCompanyName').value = 'Northwind Travel';
+  f.get('onboardCompanyEmail').value = 'owner@northwind.test';
+  f.get('onboardCompanyIndustry').value = 'Travel';
+  await f.get('btnOnboardSaveCompany').onclick();
+
+  const profileUpdate = f.calls.find(call => call.url.endsWith('/profile') && call.options.method === 'PUT');
+  assert.deepEqual(JSON.parse(profileUpdate.options.body), {
+    name: 'Northwind Travel', contact_email: 'owner@northwind.test', industry: 'Travel',
+  });
+  assert.equal(f.get('onboardPanel2').classList.contains('hidden'), false);
+  assert.equal(f.get('onboardAgentCatalog').value, 'catalog-first');
+  assert.equal(f.get('onboardAgentDescription').textContent, catalogAgent.description);
+
+  f.get('onboardAgentName').value = 'Northwind Reservations';
+  await f.get('btnOnboardHire').onclick();
+  const hire = f.calls.find(call => call.url.endsWith('/catalog-first/hire'));
+  assert.deepEqual(JSON.parse(hire.options.body), { name: 'Northwind Reservations' });
+  assert.equal(f.get('onboardPanel3').classList.contains('hidden'), false);
+  await f.get('btnOnboardFinish').onclick();
+  assert.equal(f.get('onboardingWizard').classList.contains('hidden'), true);
+  assert.equal(f.get('view-home').classList.contains('active'), true);
+});
+
+test('onboarding validates company details before sending the profile update', async () => {
+  const f = fixture({ respond: url => url.endsWith('/auth/login')
+    ? { status: 200, body: profile }
+    : url.endsWith('/profile')
+      ? { status: 200, body: { id: 'tenant-a', owner_user_id: 'user-a', onboarding_status: 'pending' } }
+      : undefined });
+  f.get('loginEmail').value = 'owner@example.test';
+  f.get('loginPassword').value = 'safe-password';
+  await f.get('btnLogin').onclick();
+  f.get('onboardCompanyName').value = 'Acme';
+  f.get('onboardCompanyEmail').value = 'not-an-email';
+  f.get('onboardCompanyIndustry').value = 'Travel';
+  await f.get('btnOnboardSaveCompany').onclick();
+  assert.equal(f.calls.some(call => call.url.endsWith('/profile') && call.options.method === 'PUT'), false);
+  assert.match(f.get('onboardCompanyLog').textContent, /valid contact email/);
+  assert.equal(f.get('onboardPanel1').classList.contains('hidden'), false);
+});
+
+test('onboarding displays catalog errors and allows retry', async () => {
+  let catalogRequests = 0;
+  const catalogAgent = { id: 'catalog-first', name: 'Reservation Specialist', description: 'Booking support.' };
+  const f = fixture({ respond: url => {
+    if (url.endsWith('/auth/login')) return { status: 200, body: profile };
+    if (url.endsWith('/profile')) return { status: 200, body: {
+      id: 'tenant-a', owner_user_id: 'user-a', onboarding_status: 'complete',
+    } };
+    if (url.endsWith('/agents')) return { status: 200, body: [] };
+    if (url.endsWith('/agent-catalog')) {
+      catalogRequests += 1;
+      return catalogRequests === 1
+        ? { status: 503, body: { detail: 'Catalog temporarily unavailable' } }
+        : { status: 200, body: [catalogAgent] };
+    }
+    return undefined;
+  } });
+  f.get('loginEmail').value = 'owner@example.test';
+  f.get('loginPassword').value = 'safe-password';
+  await f.get('btnLogin').onclick();
+  assert.match(f.get('onboardHireLog').textContent, /Catalog temporarily unavailable/);
+  assert.equal(f.get('btnOnboardHire').disabled, true);
+  await f.get('btnOnboardRetryCatalog').onclick();
+  assert.equal(catalogRequests, 2);
+  assert.equal(f.get('onboardAgentCatalog').value, catalogAgent.id);
+  assert.equal(f.get('btnOnboardHire').disabled, false);
+});
+
+test('ready company goes straight to its role landing page without onboarding', async () => {
+  const f = fixture({ respond: url => {
+    if (url.endsWith('/auth/login')) return { status: 200, body: profile };
+    if (url.endsWith('/profile')) return { status: 200, body: {
+      id: 'tenant-a', owner_user_id: 'user-a', onboarding_status: 'complete',
+    } };
+    if (url.endsWith('/agents')) return { status: 200, body: [{ id: 'agent-first', name: 'Reservation' }] };
+    return undefined;
+  } });
+  f.get('loginEmail').value = 'owner@example.test';
+  f.get('loginPassword').value = 'safe-password';
+  await f.get('btnLogin').onclick();
+  assert.equal(f.get('onboardingWizard').classList.contains('hidden'), true);
+  assert.equal(f.body.classList.contains('onboarding-open'), false);
+  assert.equal(f.documentElement.classList.contains('onboarding-open'), false);
+  assert.equal(f.get('view-home').classList.contains('active'), true);
+  assert.ok(f.calls.some(call => call.url.endsWith('/inventory/hydrate')));
 });
 
 test('workspace initializes the login gate and registers login/logout/Enter handlers', async () => {
@@ -209,6 +405,30 @@ test('workspace initializes the login gate and registers login/logout/Enter hand
     assert.equal(clicked, true);
   }
   assert.equal(f.calls.length, 0);
+});
+
+test('app shell and onboarding wizard are outside the login gate', () => {
+  assert.deepEqual(parentElements(html, ['loginGate', 'app', 'onboardingWizard']), {
+    loginGate: 'body',
+    app: 'body',
+    onboardingWizard: 'body',
+  });
+
+  test('onboarding unlocks document scrolling when dismissed or session ends', async () => {
+    const f = fixture({ respond: url => url.endsWith('/auth/login')
+      ? { status: 200, body: profile }
+      : url.endsWith('/profile')
+        ? { status: 200, body: { id: 'tenant-a', owner_user_id: 'user-a', onboarding_status: 'pending' } }
+        : undefined });
+    f.get('loginEmail').value = 'owner@example.test';
+    f.get('loginPassword').value = 'safe-password';
+    await f.get('btnLogin').onclick();
+    assert.equal(f.body.classList.contains('onboarding-open'), true);
+    await f.get('btnLogout').onclick();
+    assert.equal(f.body.classList.contains('onboarding-open'), false);
+    assert.equal(f.documentElement.classList.contains('onboarding-open'), false);
+    assert.equal(f.get('onboardingWizard').classList.contains('hidden'), true);
+  });
 });
 
 test('successful login uses existing credentials contract and updates company/session fields', async () => {
@@ -231,9 +451,28 @@ test('successful login uses existing credentials contract and updates company/se
   assert.ok(f.storage.get('ws_refreshToken') === profile.refresh_token);
   assert.equal(f.get('loginGate').classList.contains('hidden'), true);
   assert.equal(f.get('btnLogin').disabled, false);
-  const hydrate = f.calls.find(call => call.url.endsWith('/inventory/hydrate'));
-  assert.ok(hydrate.options.headers.Authorization === `Bearer ${profile.access_token}`);
+  assert.equal(f.get('app').classList.contains('hidden'), false);
+  assert.equal(f.get('onboardingWizard').classList.contains('hidden'), false);
+  assert.equal(f.get('onboardingWizard').style.display, 'grid');
+  assert.equal(f.get('onboardPanel2').classList.contains('hidden'), false);
+  assert.equal(f.calls.some(call => call.url.endsWith('/inventory/hydrate')), false);
   assert.equal(f.calls.some(call => /\/auth\/(token|register)$/.test(call.url)), false);
+});
+
+test('agent lookup failure opens the workspace instead of blocking on onboarding', async () => {
+  const f = fixture({ respond: url => url.endsWith('/auth/login')
+    ? { status: 200, body: profile }
+    : url.endsWith('/agents')
+      ? { status: 503, body: { detail: 'Temporarily unavailable' } }
+      : undefined });
+  f.get('loginEmail').value = 'user@example.test';
+  f.get('loginPassword').value = 'mock-password';
+  await f.get('btnLogin').onclick();
+  assert.equal(f.get('loginGate').classList.contains('hidden'), true);
+  assert.equal(f.get('app').classList.contains('hidden'), false);
+  assert.equal(f.get('view-home').classList.contains('active'), true);
+  assert.equal(f.get('onboardingWizard').classList.contains('hidden'), true);
+  assert.ok(f.calls.some(call => call.url.endsWith('/inventory/hydrate')));
 });
 
 test('failed login stays at the gate without creating a session', async () => {
@@ -252,7 +491,7 @@ test('missing credentials never send a login request', async () => {
   const f = fixture();
   await f.get('btnLogin').onclick();
   assert.equal(f.calls.length, 0);
-  assert.equal(f.get('loginLog').textContent, 'Email and password are required');
+  assert.equal(f.get('loginLog').textContent, 'Email/username/phone and password are required');
 });
 
 test('boot restores the company field and verifies profile using Bearer; logout clears session', async () => {
@@ -279,7 +518,7 @@ test('quick start reports denied provisioning without creating a session', async
   const f = fixture({ respond: () => ({ status: 403, body: { detail: 'Provisioning restricted' } }) });
   await f.get('btnQuickStart').onclick();
   assert.equal(f.calls.length, 1);
-  assert.equal(f.get('quickLog').textContent, 'Quick start failed: Provisioning restricted');
+  assert.match(f.get('quickLog').textContent, /^Quick start failed: Provisioning restricted/);
   assert.equal(f.storage.has('ws_companyId'), false);
 });
 

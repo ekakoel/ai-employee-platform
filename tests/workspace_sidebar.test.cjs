@@ -23,6 +23,26 @@ test('every workspace navigation page has an explicit context', () => {
   }
 });
 
+test('workspace navigation is grouped under clear, native dropdowns', () => {
+  const html = fs.readFileSync(path.join(__dirname, '../app/static/workspace/index.html'), 'utf8');
+  const navigation = html.match(/<nav id="nav"[\s\S]*?<\/nav>/)?.[0];
+  assert.ok(navigation, 'Main navigation should be present');
+  assert.match(navigation, /aria-label="Main navigation"/);
+  assert.match(navigation, /<button data-view="home" class="nav-btn active">Home<\/button>/);
+  for (const label of [
+    'My work', 'AI team', 'Company &amp; people', 'Knowledge &amp; collaboration',
+    'Operations &amp; integrations', 'Governance &amp; reports', 'Developer diagnostics',
+  ]) {
+    assert.match(navigation, new RegExp(`<summary class="nav-group">${label}<\\/summary>`));
+  }
+  const groups = [...navigation.matchAll(/<details class="nav-section[^"]*"[\s\S]*?<\/details>/g)]
+    .map(([group]) => group);
+  assert.equal(groups.length, 7);
+  assert.ok(groups.every(group => /<summary class="nav-group">[\s\S]*?<\/summary>\s*<div class="nav-menu">/.test(group)));
+  assert.ok([...navigation.matchAll(/<button data-view="([^"]+)" class="nav-btn[^"]*">/g)]
+    .every(([, view]) => view === 'home' || groups.some(group => group.includes(`data-view="${view}"`))));
+});
+
 test('Home and Tasks use complementary sources without repeating tasks or metrics', () => {
   const data = { tasks, approvals: [{ status: 'pending' }], notifications: [{ title: 'New update', read_at: null }], policies: [{ name: 'Refund limits', is_active: true }] };
   const home = buildContext('home', data);

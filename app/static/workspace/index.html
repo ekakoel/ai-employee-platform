@@ -6,7 +6,7 @@
   <meta name="referrer" content="no-referrer" />
   <title>AI Employee Workspace</title>
   <link rel="icon" type="image/svg+xml" href="/workspace/assets/brand-mark.svg" />
-  <link rel="stylesheet" href="/workspace/assets/styles.css" />
+  <link rel="stylesheet" href="/workspace/assets/styles.css?v=20261023-nav-1" />
 </head>
 <body data-workspace="user">
   <!-- ========== LOGIN GATE ========== -->
@@ -208,6 +208,7 @@
       </div>
     </div>
   </div>
+  </div>
 
   <!-- ========== APP SHELL ========== -->
   <div id="app" class="hidden">
@@ -220,48 +221,72 @@
         </div>
       </div>
 
-      <nav id="nav">
-        <div class="nav-group">Company</div>
-        <button data-view="company" class="nav-btn">Company profile</button>
-        <div class="nav-group">Work</div>
+      <nav id="nav" aria-label="Main navigation">
         <button data-view="home" class="nav-btn active">Home</button>
-        <button data-view="inbox" class="nav-btn">Inbox <span id="navInboxCount" class="nav-count hidden">0</span></button>
-        <button data-view="chat" class="nav-btn">Chat</button>
-        <button data-view="tasks" class="nav-btn">Tasks</button>
-        <button data-view="approvals" class="nav-btn">Approvals</button>
-
-        <div class="nav-group">Workforce</div>
-        <button data-view="agents" class="nav-btn">AI Employees</button>
-        <button data-view="directory" class="nav-btn">Directory</button>
-        <button data-view="marketplace" class="nav-btn">Marketplace</button>
-        <button data-view="inventory" class="nav-btn">Inventory</button>
-
-        <div class="nav-group">Collaborate</div>
-        <button data-view="consult" class="nav-btn">Consult</button>
-        <button data-view="knowledge" class="nav-btn">Knowledge</button>
-        <button data-view="delegation" class="nav-btn">Delegation</button>
-        <button data-view="automation" class="nav-btn">Automation</button>
-
-        <div class="nav-group">Company</div>
-        <button data-view="notifications" class="nav-btn">Notifications</button>
-        <button data-view="governance" class="nav-btn">Governance</button>
-        <button data-view="policy-management" class="nav-btn">Policies</button>
-        <button data-view="users" class="nav-btn">Users &amp; positions</button>
-        <button data-view="departments" class="nav-btn">Departments</button>
-        <button data-view="teams" class="nav-btn">Teams</button>
-        <button data-view="skills" class="nav-btn">Skills</button>
-        <button data-view="learning" class="nav-btn">Learning</button>
-        <button data-view="usage" class="nav-btn">Plan & Usage</button>
-        <button data-view="audit" class="nav-btn">Audit Log</button>
-
-        <div class="nav-group">Operations</div>
-        <button data-view="integrations" class="nav-btn">Integrations</button>
-        <button data-view="workflows" class="nav-btn">Workflows</button>
-        <button data-view="cost" class="nav-btn">LLM Cost</button>
-        <div class="nav-group developer-only">Diagnostics</div>
-        <button data-view="tools" class="nav-btn developer-only">Tools</button>
-        <button data-view="policies" class="nav-btn developer-only">Policy Simulator</button>
-        <button data-view="scopecheck" class="nav-btn developer-only">Scope Check</button>
+        <details class="nav-section" data-nav-group="work">
+          <summary class="nav-group">My work</summary>
+          <div class="nav-menu">
+            <button data-view="inbox" class="nav-btn">Inbox <span id="navInboxCount" class="nav-count hidden">0</span></button>
+            <button data-view="chat" class="nav-btn">Chat</button>
+            <button data-view="tasks" class="nav-btn">Tasks</button>
+            <button data-view="approvals" class="nav-btn">Approvals</button>
+          </div>
+        </details>
+        <details class="nav-section" data-nav-group="ai-team">
+          <summary class="nav-group">AI team</summary>
+          <div class="nav-menu">
+            <button data-view="agents" class="nav-btn">AI Employees</button>
+            <button data-view="directory" class="nav-btn">Agent directory</button>
+            <button data-view="marketplace" class="nav-btn">Agent marketplace</button>
+            <button data-view="inventory" class="nav-btn">Reservation inventory</button>
+            <button data-view="skills" class="nav-btn">Skills</button>
+            <button data-view="learning" class="nav-btn">Learning</button>
+          </div>
+        </details>
+        <details class="nav-section" data-nav-group="company">
+          <summary class="nav-group">Company &amp; people</summary>
+          <div class="nav-menu">
+            <button data-view="company" class="nav-btn">Company profile</button>
+            <button data-view="users" class="nav-btn">Users &amp; positions</button>
+            <button data-view="departments" class="nav-btn">Departments</button>
+            <button data-view="teams" class="nav-btn">Teams</button>
+          </div>
+        </details>
+        <details class="nav-section" data-nav-group="collaboration">
+          <summary class="nav-group">Knowledge &amp; collaboration</summary>
+          <div class="nav-menu">
+            <button data-view="knowledge" class="nav-btn">Company knowledge</button>
+            <button data-view="consult" class="nav-btn">Consult an AI employee</button>
+            <button data-view="delegation" class="nav-btn">Delegation</button>
+          </div>
+        </details>
+        <details class="nav-section" data-nav-group="operations">
+          <summary class="nav-group">Operations &amp; integrations</summary>
+          <div class="nav-menu">
+            <button data-view="automation" class="nav-btn">Automation</button>
+            <button data-view="workflows" class="nav-btn">Workflows</button>
+            <button data-view="integrations" class="nav-btn">Integrations</button>
+          </div>
+        </details>
+        <details class="nav-section" data-nav-group="governance">
+          <summary class="nav-group">Governance &amp; reports</summary>
+          <div class="nav-menu">
+            <button data-view="notifications" class="nav-btn">Notifications</button>
+            <button data-view="governance" class="nav-btn">Governance</button>
+            <button data-view="policy-management" class="nav-btn">Policies</button>
+            <button data-view="usage" class="nav-btn">Plan &amp; usage</button>
+            <button data-view="cost" class="nav-btn">AI usage &amp; cost</button>
+            <button data-view="audit" class="nav-btn">Audit log</button>
+          </div>
+        </details>
+        <details class="nav-section developer-only" data-nav-group="diagnostics">
+          <summary class="nav-group">Developer diagnostics</summary>
+          <div class="nav-menu">
+            <button data-view="tools" class="nav-btn developer-only">Tools</button>
+            <button data-view="policies" class="nav-btn developer-only">Policy simulator</button>
+            <button data-view="scopecheck" class="nav-btn developer-only">Scope check</button>
+          </div>
+        </details>
       </nav>
 
       <div class="session" id="sessionBox">
@@ -281,6 +306,15 @@
           <button id="btnTopNotif" class="icon-btn" title="Notifications">🔔 <span id="notifBadge" class="badge hidden">0</span></button>
           <span id="inboxBadge" class="badge hidden">0</span>
           <span id="statusPill" class="pill ok">Online</span>
+          <button id="btnThemeToggle" class="theme-toggle" type="button" aria-label="Use dark theme" title="Use dark theme" aria-pressed="false">
+            <svg id="themeIconSun" class="theme-icon theme-icon-sun" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <circle cx="12" cy="12" r="4"></circle>
+              <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"></path>
+            </svg>
+            <svg id="themeIconMoon" class="theme-icon theme-icon-moon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M20.2 15.2A8.5 8.5 0 0 1 8.8 3.8 8.6 8.6 0 1 0 20.2 15.2Z"></path>
+            </svg>
+          </button>
         </div>
       </header>
 
@@ -1327,15 +1361,8 @@
     </aside>
   </div>
 
-  <script src="/workspace/assets/home.js"></script>
-  <script src="/workspace/assets/inbox.js"></script>
-  <script src="/workspace/assets/chat.js?v=20261009-chat-attribution-2"></script>
-  <script src="/workspace/assets/results.js"></script>
-  <script src="/workspace/assets/sidebar.js"></script>
-  <script src="/workspace/assets/app.js"></script>
-
   <!-- Job 93 — post-login onboarding wizard -->
-  <div id="onboardingWizard" class="hidden" aria-live="polite">
+  <div id="onboardingWizard" class="hidden" role="dialog" aria-modal="true" aria-label="Company onboarding" aria-live="polite">
     <div class="onboard-card">
       <div class="onboard-steps">
         <span data-step="1" class="active">1 · Company</span>
@@ -1344,26 +1371,39 @@
       </div>
       <div id="onboardPanel1">
         <h2>Set up your company</h2>
-        <p class="muted">A few details so your AI employees work in the right context.</p>
-        <p class="muted">Continue in <strong>Company profile</strong> — save name, contact, and industry.</p>
-        <button type="button" id="btnOnboardGoCompany" class="primary block">Open company profile</button>
+        <p id="onboardRecoveryNotice" class="onboard-recovery hidden" role="status"></p>
+        <p class="muted">Add your organization details so your AI employees work in the right context.</p>
+        <label>Company name
+          <input id="onboardCompanyName" maxlength="200" minlength="2" autocomplete="organization" required />
+        </label>
+        <label>Contact email
+          <input id="onboardCompanyEmail" type="email" maxlength="320" autocomplete="email" required />
+        </label>
+        <label>Industry
+          <input id="onboardCompanyIndustry" maxlength="120" minlength="2" placeholder="e.g. Hospitality" required />
+        </label>
+        <button type="button" id="btnOnboardSaveCompany" class="primary block">Save and continue</button>
+        <button type="button" id="btnOnboardGoCompany" class="link-btn">Open full company profile instead</button>
+        <p id="onboardCompanyLog" class="login-message" role="status"></p>
       </div>
       <div id="onboardPanel2" class="hidden">
         <h2>Hire your first AI Employee</h2>
-        <p class="muted">Pick a specialist. You can hire more later.</p>
-        <div class="agent-pick-grid" id="onboardAgentGrid">
-          <button type="button" class="agent-pick" data-slug="reservation"><div class="icon">🏨</div><strong>Reservation</strong><small>Booking &amp; availability</small></button>
-          <button type="button" class="agent-pick" data-slug="contract-manager"><div class="icon">📄</div><strong>Contracts</strong><small>Review &amp; obligations</small></button>
-          <button type="button" class="agent-pick" data-slug="quotation"><div class="icon">💰</div><strong>Quotation</strong><small>Pricing &amp; quotes</small></button>
-          <button type="button" class="agent-pick" data-slug="support"><div class="icon">💬</div><strong>Support</strong><small>Answers from knowledge</small></button>
-        </div>
-        <button type="button" id="btnOnboardHire" class="primary block">Hire selected</button>
-        <p id="onboardHireLog" class="login-message"></p>
+        <p class="muted">Choose an available specialist from the catalog. You can hire more later.</p>
+        <label>AI Employee
+          <select id="onboardAgentCatalog" aria-describedby="onboardAgentDescription"></select>
+        </label>
+        <p id="onboardAgentDescription" class="muted" aria-live="polite"></p>
+        <label>Display name (optional)
+          <input id="onboardAgentName" maxlength="200" placeholder="Uses the catalog name if left blank" />
+        </label>
+        <button type="button" id="btnOnboardHire" class="primary block" disabled>Hire selected AI Employee</button>
+        <button type="button" id="btnOnboardRetryCatalog" class="link-btn">Reload AI Employee catalog</button>
+        <p id="onboardHireLog" class="login-message" role="status"></p>
       </div>
       <div id="onboardPanel3" class="hidden">
         <h2>Configure your AI Employee</h2>
-        <p class="muted">Name them and open full settings anytime from AI Employees.</p>
-        <label>Display name<input id="onboardAgentName" maxlength="120" placeholder="e.g. Maya · Reservations" /></label>
+        <p class="muted">Your first AI Employee has been hired. You can update its display name here or adjust its settings later from AI Employees.</p>
+        <label>Display name<input id="onboardAgentNameAfterHire" maxlength="200" placeholder="AI Employee name" /></label>
         <button type="button" id="btnOnboardFinish" class="primary block">Finish setup</button>
         <button type="button" id="btnOnboardSkipConfig" class="link-btn">Skip for now</button>
         <p id="onboardConfigLog" class="login-message"></p>
@@ -1371,5 +1411,11 @@
     </div>
   </div>
 
+  <script src="/workspace/assets/home.js?v=20261023-onboarding-4"></script>
+  <script src="/workspace/assets/inbox.js?v=20261023-onboarding-4"></script>
+  <script src="/workspace/assets/chat.js?v=20261023-onboarding-4"></script>
+  <script src="/workspace/assets/results.js?v=20261023-onboarding-4"></script>
+  <script src="/workspace/assets/sidebar.js?v=20261023-onboarding-4"></script>
+  <script src="/workspace/assets/app.js?v=20261023-nav-1"></script>
 </body>
 </html>
