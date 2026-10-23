@@ -43,9 +43,9 @@ def deliver(email, subject, route, token):
     message = EmailMessage()
     message["From"] = settings.smtp_from
     message["To"] = email
-    link = f"{settings.public_base_url.rstrip('/')}{route}{token}"
     message["Subject"] = subject
-    message.set_content(
+    link = f"{settings.public_base_url.rstrip('/')}{route}{token}"
+    body = (
         "Activate your AI Employee Platform account.
 
 "
@@ -56,19 +56,7 @@ def deliver(email, subject, route, token):
         "If you did not register, ignore this email.
 "
     )
-    # legacy subject/body assignment below may duplicate Subject — guard
-    message["Subject"] = subject
-    message.set_content(
-        "Activate your AI Employee Platform account.
-
-"
-        f"Open this link (valid 24 hours):
-{settings.public_base_url.rstrip('/')}{route}{token}
-
-"
-        "If you did not register, ignore this email.
-"
-    )}{route}{token}")
+    message.set_content(body)
     # SMTP failures are intentionally not logged with the message or token.
     try:
         with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:
@@ -77,6 +65,7 @@ def deliver(email, subject, route, token):
             smtp.send_message(message)
     except (OSError, smtplib.SMTPException):
         raise auth_sessions.AuthError("Email delivery temporarily unavailable", 503) from None
+
 
 
 def claim_email(db, email):
