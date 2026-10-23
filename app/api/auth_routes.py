@@ -99,7 +99,8 @@ class CompanyRegistration(BaseModel):
 
 
 class VerificationRequest(BaseModel):
-    token: str = Field(min_length=20)
+    # Job 95: 6-digit OTP (also accepts legacy longer tokens)
+    token: str = Field(min_length=6, max_length=128)
 
 
 class VerificationResend(BaseModel):
