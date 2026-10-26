@@ -114,6 +114,7 @@ def create_conversation(
     agent_instance_id: str,
     user_id: str,
     title: str = "",
+    owner_concierge: bool = False,
 ) -> Conversation:
     agent = db.get(AgentInstance, agent_instance_id)
     if not agent or agent.company_id != company_id:
