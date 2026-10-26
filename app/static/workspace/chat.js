@@ -17,6 +17,20 @@
   function cleanReply(content) {
     return String(content || '').replace(/\s*[_*]*\s*\(Chat mode:\s*no tools executed\.\s*Use\s*[\u201c\u201d"']?Create task[\u201c\u201d"']?\s*to run with policy & tools\.\)\s*[_*]*\s*$/, '').trimEnd();
   }
+
+  function isConciergeMessage(content) {
+    const t = String(content || '');
+    return /As Owner you can/i.test(t) || /Suggested next steps/i.test(t) || /first AI Employee/i.test(t);
+  }
+  function conciergeActionsMarkup() {
+    return `<div class="concierge-actions" role="group" aria-label="Suggested next steps">
+      <button type="button" class="concierge-chip" data-concierge="knowledge">1 · Upload knowledge</button>
+      <button type="button" class="concierge-chip" data-concierge="users">2 · Invite teammate</button>
+      <button type="button" class="concierge-chip" data-concierge="ask">3 · Ask me something</button>
+      <button type="button" class="concierge-chip" data-concierge="agents">4 · Configure AI Employee</button>
+    </div>`;
+  }
+
   function messageMarkup(message, esc, { agentName = '' } = {}) {
     const normalizedRole = { assistant: 'agent', user: 'human' }[message.role] || message.role;
     const role = ['human', 'agent', 'system'].includes(normalizedRole) ? normalizedRole : 'agent';
@@ -26,14 +40,46 @@
     const sender = message.sender_name || (role === 'agent' ? agentName || 'Unknown sender' : role === 'system' ? 'System' : 'Unknown sender');
     const work = role === 'agent' && typeof message.work_result?.result === 'string' && message.work_result.result.trim() && message.work_result.status === 'completed' ? message.work_result : null;
     const content = role === 'agent' ? cleanReply(message.content) : message.content || '';
-    return `<article class="bubble ${role}"><div class="who"><span>${esc(sender)}</span>${time}</div><div>${esc(content)}</div>${work ? `<div class="chat-message-results"><button class="link-btn" data-chat-result="${esc(work.id)}" title="View saved result">${esc(work.title || 'Saved result')}</button></div>` : ''}</article>`;
+    const body = role === 'agent' ? cleanReply(message.content) : message.content || '';
+    const textHtml = esc(body).replace(/
+/g, '<br>');
+    const chips = role === 'agent' && isConciergeMessage(message.content) ? conciergeActionsMarkup() : '';
+    return `<article class="bubble ${role}"><div class="who"><span>${esc(sender)}</span>${time}</div><div class="bubble-text">${textHtml}</div>${work}${chips}</article>`;
   }
 
-  function create({ api, getSession, escapeHtml: esc, onAgentChanged, onTaskCreated, openTask, openResult }) {
+  function create({ api, getSession, escapeHtml: esc, onAgentChanged, onTaskCreated, openTask, openResult, onConciergeAction }) {
     const $ = id => document.getElementById(id);
     let agents = [], conversations = [], messages = [], conversation = null;
     let generation = 0, busy = false, loadedAt = 0, sessionKey = '', pendingMessage = '', activeAgentId = '';
     const drafts = new Map();
+
+    function markTourEngaged() {
+      try {
+        const s = getSession();
+        if (s && s.companyId) localStorage.setItem('owner_concierge_done:' + s.companyId, '1');
+      } catch (_) {}
+    }
+    function bindConciergeChips(root) {
+      (root || document).querySelectorAll?.('.concierge-chip')?.forEach((btn) => {
+        if (btn.dataset.bound) return;
+        btn.dataset.bound = '1';
+        btn.onclick = () => {
+          const action = btn.getAttribute('data-concierge');
+          markTourEngaged();
+          if (action === 'knowledge' && typeof onConciergeAction === 'function') onConciergeAction('knowledge');
+          else if (action === 'users' && typeof onConciergeAction === 'function') onConciergeAction('users');
+          else if (action === 'agents' && typeof onConciergeAction === 'function') onConciergeAction('agents');
+          else if (action === 'ask') {
+            if ($('chatInput')) {
+              $('chatInput').value = 'What should I do first as company owner?';
+              $('chatInput').focus();
+              controls();
+            }
+          }
+        };
+      });
+    }
+
     const key = () => `${getSession().companyId}/${getSession().userId}`;
     const path = () => `/companies/${getSession().companyId}`;
     const current = (request, session) => request === generation && session === key();
@@ -53,6 +99,7 @@
       $('chatHistoryList')?.querySelectorAll?.('[data-chat-conversation]').forEach(button => { button.disabled = busy; });
     }
     function render(scroll = true) {
+      // Job 98 chips bound after DOM paint
       const thread = $('chatThread');
       const nearBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
       const agentName = agents.find(agent => agent.id === (conversation?.agent_instance_id || activeAgentId))?.name || '';
@@ -66,7 +113,8 @@
       $('chatMeta').textContent = conversation?.title || 'New conversation';
       if (scroll || nearBottom) thread.scrollTop = thread.scrollHeight;
       controls();
-    }
+    }      bindConciergeChips(document);
+
     function saveDraft() { drafts.set(conversation?.id || `new:${activeAgentId}`, $('chatInput').value); }
     function restoreDraft() { $('chatInput').value = drafts.get(conversation?.id || `new:${$('chatAgent').value}`) || ''; }
     function hideTask() { $('chatLinkedTask').classList.add('hidden'); $('chatLinkedTask').onclick = null; }

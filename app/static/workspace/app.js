@@ -239,6 +239,13 @@
     onAgentChanged: () => contextualSidebar.refresh(),
     onTaskCreated: () => { refreshInboxBadge(); contextualSidebar.refresh(); },
     openTask: (id) => { focusedTaskId = id; $("taskFilter").selectedIndex = 0; showView("tasks"); },
+    onConciergeAction: (action) => {
+      try {
+        if (action === 'knowledge') showView('knowledge');
+        else if (action === 'users') showView('users');
+        else if (action === 'agents') showView('agents');
+      } catch (e) { console.warn(e); }
+    },
   });
   ["consultAgent", "simAgent", "scopeAgent"].forEach((id) => {
     $(id)?.addEventListener("change", () => contextualSidebar.refresh());
@@ -1213,11 +1220,13 @@
             body: JSON.stringify({
               agent_instance_id: onboardHiredAgentId,
               title: "Getting started with your AI Employee",
-              owner_concierge: true,
+              owner_concierge: true, // Job 98
+
             }),
           });
           if (typeof chatWorkspace !== "undefined" && chatWorkspace && chatWorkspace.openAgent) {
             await chatWorkspace.openAgent(onboardHiredAgentId, { forceNew: true });
+          try { localStorage.setItem('owner_concierge_seen:' + state.companyId, '1'); } catch (_) {}
           } else if (typeof chatWorkspace !== "undefined" && chatWorkspace && chatWorkspace.load) {
             await chatWorkspace.load(true);
           }
