@@ -4550,6 +4550,15 @@ async def ingest_knowledge_extract(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        # Avoid opaque 500 for missing OCR / parse libraries
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Could not extract text ({type(exc).__name__}: {exc}). "
+                "Try a text PDF, DOCX, TXT, or paste content via Add knowledge."
+            ),
+        ) from exc
 
     record_audit(
         db,

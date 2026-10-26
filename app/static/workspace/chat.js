@@ -58,6 +58,30 @@
         if (s && s.companyId) localStorage.setItem('owner_concierge_done:' + s.companyId, '1');
       } catch (_) {}
     }
+
+    // Job 100 — event delegation so chips always respond after re-render
+    (function chatThreadConciergeDelegate() {
+      const thread = document.getElementById("chatThread");
+      if (!thread || thread.dataset.conciergeDelegate === "1") return;
+      thread.dataset.conciergeDelegate = "1";
+      thread.addEventListener("click", (ev) => {
+        const btn = ev.target && ev.target.closest ? ev.target.closest(".concierge-chip") : null;
+        if (!btn) return;
+        ev.preventDefault();
+        const action = btn.getAttribute("data-concierge");
+        markTourEngaged();
+        if (action === "ask") {
+          if ($("chatInput")) {
+            $("chatInput").value = "What should I do first as company owner?";
+            $("chatInput").focus();
+            controls();
+          }
+          return;
+        }
+        if (typeof onConciergeAction === "function") onConciergeAction(action);
+      });
+    })();
+
     function bindConciergeChips(root) {
       (root || document).querySelectorAll?.('.concierge-chip')?.forEach((btn) => {
         if (btn.dataset.bound) return;
@@ -112,7 +136,8 @@
       $('chatMeta').textContent = conversation?.title || 'New conversation';
       if (scroll || nearBottom) thread.scrollTop = thread.scrollHeight;
       controls();
-    }      bindConciergeChips(document);
+      bindConciergeChips(thread);
+    }
 
     function saveDraft() { drafts.set(conversation?.id || `new:${activeAgentId}`, $('chatInput').value); }
     function restoreDraft() { $('chatInput').value = drafts.get(conversation?.id || `new:${$('chatAgent').value}`) || ''; }

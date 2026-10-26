@@ -210,7 +210,14 @@ def extract_pdf(data: bytes) -> str:
     if has_meaningful_text(text):
         return text
 
-    ocr_text = extract_pdf_with_ocr(data)
+    try:
+        ocr_text = extract_pdf_with_ocr(data)
+    except Exception as exc:
+        raise ValueError(
+            "PDF has little selectable text and OCR failed "
+            f"({type(exc).__name__}: {exc}). "
+            "Install Tesseract for scanned PDFs, or upload a text-based PDF / paste text as a knowledge note."
+        ) from exc
 
     if has_meaningful_text(ocr_text):
         return ocr_text

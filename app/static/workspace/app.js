@@ -241,10 +241,12 @@
     openTask: (id) => { focusedTaskId = id; $("taskFilter").selectedIndex = 0; showView("tasks"); },
     onConciergeAction: (action) => {
       try {
-        if (action === 'knowledge') showView('knowledge');
-        else if (action === 'users') showView('users');
+        if (action === 'knowledge') {
+          if (typeof openKnowledgeGuided === 'function') openKnowledgeGuided();
+          else showView('knowledge');
+        } else if (action === 'users') showView('users');
         else if (action === 'agents') showView('agents');
-      } catch (e) { console.warn(e); }
+      } catch (e) { console.warn('onConciergeAction', e); }
     },
   });
   ["consultAgent", "simAgent", "scopeAgent"].forEach((id) => {
