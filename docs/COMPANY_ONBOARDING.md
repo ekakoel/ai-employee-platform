@@ -77,3 +77,20 @@ Run isolated tests before deployment. Production needs SMTP, HTTPS origin,
 database migration, gateway rate limits, backup, and operational owner/email
 reconciliation. Browser E2E and PostgreSQL concurrency must be validated on
 disposable environments; unit tests do not establish either result.
+
+## First AI Employee: CEO
+
+After the company profile is completed, onboarding offers the published catalog
+template with slug `ceo` as the first AI Employee. The UI selects it by slug,
+not by catalog ordering. Reservation and other specialist templates remain in
+the catalog for later hiring.
+
+The CEO template is an executive advisor and planning partner. Its initial
+responsibilities include clarifying business goals, prioritizing work, preparing
+action plans, identifying risks, and recommending specialist AI Employees.
+Recommendations do not themselves hire another agent or execute delegated work.
+
+The initial CEO template has no allowed tools and autonomy level `1`. Existing
+company permissions, tool grants, approval rules, and human oversight remain in
+force. Do not describe autonomous hiring or AI-to-AI delegation as available
+unless those capabilities are implemented and verified separately.

@@ -1,0 +1,1230 @@
+﻿AI EMPLOYEE — CEO ONBOARDING SOURCE AUDIT
+Project: D:\Eka Koel\App\2026\AI\ai-employee-platform
+Date: 2026-10-23 17:54:34
+
+
+================================================================================
+SECTION: SEED CATALOG
+FILE: app\services\seed.py
+================================================================================
+Total lines: 860
+Showing lines 167-360
+ 167: def seed_catalog(db: Session) -> None:
+ 168:     for role_name in ROLE_PERMISSIONS:
+ 169:         get_or_create_role(db, role_name)
+ 170: 
+ 171:     now = datetime.now(timezone.utc)
+ 172: 
+ 173:     _upsert_catalog(
+ 174:         db,
+ 175:         slug="reservation",
+ 176:         name="Reservation AI Employee",
+ 177:         description=(
+ 178:             "AI Employee untuk pekerjaan reservation, quotation, "
+ 179:             "itinerary, dan follow-up pelanggan."
+ 180:         ),
+ 181:         role="reservation",
+ 182:         skills=[
+ 183:             "availability_check",
+ 184:             "reservation_management",
+ 185:             "booking_support",
+ 186:             "quotation_preparation",
+ 187:             "itinerary_planning",
+ 188:             "customer_follow_up",
+ 189:             "reporting",
+ 190:         ],
+ 191:         allowed_tools=[
+ 192:             "search_availability",
+ 193:             "create_reservation",
+ 194:             "get_reservation",
+ 195:         ],
+ 196:         status="active",
+ 197:         version="1.0.0",
+ 198:         scope=[
+ 199:             "reservation",
+ 200:             "quotation",
+ 201:             "itinerary",
+ 202:             "customer_follow_up",
+ 203:             "reservation_reporting",
+ 204:         ],
+ 205:         responsibilities=[
+ 206:             "process inquiries",
+ 207:             "prepare quotations",
+ 208:             "prepare itineraries",
+ 209:             "check reservation information",
+ 210:             "follow up customers",
+ 211:             "prepare reservation reports",
+ 212:             "escalate unusual cases",
+ 213:         ],
+ 214:         default_instructions=(
+ 215:             "You are Reservation AI.\n"
+ 216:             "Your responsibility is reservation, quotation, itinerary, "
+ 217:             "and customer follow-up within company policy.\n"
+ 218:             "You must:\n"
+ 219:             "- work only within your defined scope;\n"
+ 220:             "- use only available company data and allowed tools;\n"
+ 221:             "- never invent availability, prices, or bookings;\n"
+ 222:             "- request approval before sensitive actions;\n"
+ 223:             "- report uncertainty clearly."
+ 224:         ),
+ 225:         default_knowledge_requirements=[
+ 226:             "product_catalog",
+ 227:             "pricing_rules",
+ 228:             "cancellation_policy",
+ 229:         ],
+ 230:         default_policies={
+ 231:             "draft_quotation": "auto",
+ 232:             "quotation_calculation": "auto",
+ 233:             "send_quotation": "approval",
+ 234:             "unusual_discount": "approval",
+ 235:             "booking_confirmation": "approval",
+ 236:             "generate_report": "auto",
+ 237:             "unknown_action": "deny",
+ 238:         },
+ 239:         default_approval_recommendations={
+ 240:             "send_quotation": "manager",
+ 241:             "unusual_discount": "manager",
+ 242:             "booking_confirmation": "supervisor",
+ 243:         },
+ 244:         default_autonomy="1",
+ 245:         evaluation_criteria=[
+ 246:             "quotation accuracy",
+ 247:             "policy compliance",
+ 248:             "approval adherence",
+ 249:             "customer response quality",
+ 250:         ],
+ 251:         is_published=True,
+ 252:         published_at=now,
+ 253:         changelog="Initial Reservation AI template v1.0.0",
+ 254:     )
+ 255: 
+ 256:     _upsert_catalog(
+ 257:         db,
+ 258:         slug="contract-manager",
+ 259:         name="Contract Manager AI Employee",
+ 260:         description=(
+ 261:             "AI Employee untuk analisis dan pengelolaan contract "
+ 262:             "sesuai skill yang ditetapkan platform."
+ 263:         ),
+ 264:         role="contract_manager",
+ 265:         skills=[
+ 266:             "contract_analysis",
+ 267:             "contract_extraction",
+ 268:             "contract_validation",
+ 269:         ],
+ 270:         allowed_tools=[
+ 271:             "read_document",
+ 272:             "extract_contract",
+ 273:             "search_contract",
+ 274:         ],
+ 275:         status="active",
+ 276:         version="1.0.0",
+ 277:         scope=[
+ 278:             "contract_analysis",
+ 279:             "contract_extraction",
+ 280:             "contract_validation",
+ 281:             "contract_reporting",
+ 282:         ],
+ 283:         responsibilities=[
+ 284:             "analyze contracts",
+ 285:             "extract key terms",
+ 286:             "validate contract data",
+ 287:             "search existing contracts",
+ 288:             "escalate unusual clauses",
+ 289:         ],
+ 290:         default_instructions=(
+ 291:             "You are Contract Manager.\n"
+ 292:             "Your responsibility is to analyze and manage company contracts.\n"
+ 293:             "You must:\n"
+ 294:             "- use only available company data;\n"
+ 295:             "- use available tools;\n"
+ 296:             "- never invent contract information;\n"
+ 297:             "- request approval before sensitive actions;\n"
+ 298:             "- report uncertainty clearly."
+ 299:         ),
+ 300:         default_knowledge_requirements=[
+ 301:             "contract_templates",
+ 302:             "legal_guidelines",
+ 303:         ],
+ 304:         default_policies={
+ 305:             "search_contract": "auto",
+ 306:             "extract_contract": "auto",
+ 307:             "analyze_contract": "auto",
+ 308:             "update_contract": "approval",
+ 309:             "delete_contract": "approval",
+ 310:             "unknown_action": "deny",
+ 311:         },
+ 312:         default_approval_recommendations={
+ 313:             "update_contract": "manager",
+ 314:             "delete_contract": "owner",
+ 315:         },
+ 316:         default_autonomy="1",
+ 317:         evaluation_criteria=[
+ 318:             "extraction accuracy",
+ 319:             "policy compliance",
+ 320:             "escalation quality",
+ 321:         ],
+ 322:         is_published=True,
+ 323:         published_at=now,
+ 324:         changelog="Initial Contract Manager AI template v1.0.0",
+ 325:     )
+ 326: 
+ 327:     seed_platform_skills(db)
+ 328: 
+ 329:     db.commit()
+ 330: 
+ 331: 
+ 332: def _upsert_skill(db: Session, **kwargs) -> Skill:
+ 333:     slug = kwargs["slug"]
+ 334:     company_id = kwargs.get("company_id")
+ 335:     q = select(Skill).where(Skill.slug == slug)
+ 336:     if company_id is None:
+ 337:         q = q.where(Skill.company_id.is_(None))
+ 338:     else:
+ 339:         q = q.where(Skill.company_id == company_id)
+ 340:     existing = db.scalar(q)
+ 341:     if existing:
+ 342:         for k, v in kwargs.items():
+ 343:             setattr(existing, k, v)
+ 344:         db.flush()
+ 345:         return existing
+ 346:     skill = Skill(**kwargs)
+ 347:     db.add(skill)
+ 348:     db.flush()
+ 349:     return skill
+ 350: 
+ 351: 
+ 352: def seed_platform_skills(db: Session) -> None:
+ 353:     """Platform-level skills referenced by Agent Catalog templates."""
+ 354:     platform: list[dict] = [
+ 355:         # ------------------------------------------------------------------
+ 356:         # Reservation domain
+ 357:         # ------------------------------------------------------------------
+ 358:         dict(
+ 359:             slug="availability_check",
+ 360:             name="Availability Check",
+
+================================================================================
+SECTION: AGENT CATALOG MODEL
+FILE: app\models\entities.py
+================================================================================
+Total lines: 1493
+Showing lines 1-180
+   1: from datetime import datetime, timezone
+   2: from enum import Enum
+   3: from uuid import uuid4
+   4: 
+   5: from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
+   6: from sqlalchemy.orm import Mapped, mapped_column, relationship
+   7: 
+   8: from app.core.database import Base
+   9: 
+  10: 
+  11: def new_id() -> str:
+  12:     return str(uuid4())
+  13: 
+  14: 
+  15: def utcnow() -> datetime:
+  16:     return datetime.now(timezone.utc)
+  17: 
+  18: 
+  19: class AgentStatus(str, Enum):
+  20:     ACTIVE = "active"
+  21:     INACTIVE = "inactive"
+  22: 
+  23: 
+  24: class TaskStatus(str, Enum):
+  25:     PENDING = "pending"
+  26:     PLANNING = "planning"
+  27:     RUNNING = "running"
+  28:     WAITING_APPROVAL = "waiting_approval"
+  29:     COMPLETED = "completed"
+  30:     FAILED = "failed"
+  31:     CANCELLED = "cancelled"
+  32: 
+  33: 
+  34: class UserStatus(str, Enum):
+  35:     ACTIVE = "active"
+  36:     INACTIVE = "inactive"
+  37: 
+  38: class DocumentStatus(str, Enum):
+  39:     UPLOADED = "uploaded"
+  40:     PROCESSING = "processing"
+  41:     READY = "ready"
+  42:     FAILED = "failed"
+  43: 
+  44: class ApprovalStatus(str, Enum):
+  45:     PENDING = "pending"
+  46:     APPROVED = "approved"
+  47:     REJECTED = "rejected"
+  48:     CANCELLED = "cancelled"
+  49: 
+  50: 
+  51: class ExperienceStatus(str, Enum):
+  52:     CANDIDATE = "candidate"
+  53:     VALIDATED = "validated"
+  54:     REJECTED = "rejected"
+  55:     ARCHIVED = "archived"
+  56: 
+  57: 
+  58: class DelegationStatus(str, Enum):
+  59:     PENDING = "pending"
+  60:     ACCEPTED = "accepted"
+  61:     REJECTED = "rejected"
+  62:     COMPLETED = "completed"
+  63:     FAILED = "failed"
+  64:     CANCELLED = "cancelled"
+  65: 
+  66: 
+  67: class AutomationTriggerType(str, Enum):
+  68:     SCHEDULE = "schedule"
+  69:     EVENT = "event"
+  70: 
+  71: 
+  72: class AutomationRunStatus(str, Enum):
+  73:     PENDING = "pending"
+  74:     RUNNING = "running"
+  75:     COMPLETED = "completed"
+  76:     FAILED = "failed"
+  77:     PAUSED_APPROVAL = "paused_approval"
+  78:     CANCELLED = "cancelled"
+  79: 
+  80: class SubscriptionStatus(str, Enum):
+  81:     ACTIVE = "active"
+  82:     SUSPENDED = "suspended"
+  83:     CANCELLED = "cancelled"
+  84: 
+  85: 
+  86: class Company(Base):
+  87:     __tablename__ = "companies"
+  88: 
+  89:     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+  90:     name: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
+  91:     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+  92:     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+  93:     owner_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", use_alter=True, name="fk_company_owner_user"), nullable=True)
+  94:     contact_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+  95:     industry: Mapped[str | None] = mapped_column(String(120), nullable=True)
+  96:     profile_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+  97:     onboarding_status: Mapped[str] = mapped_column(String(20), default="complete", server_default="complete", nullable=False)
+  98: 
+  99:     users: Mapped[list["User"]] = relationship(back_populates="company", cascade="all, delete-orphan", foreign_keys="User.company_id")
+ 100:     agent_instances: Mapped[list["AgentInstance"]] = relationship(back_populates="company")
+ 101:     knowledge_items: Mapped[list["KnowledgeItem"]] = relationship(back_populates="company")
+ 102:     tasks: Mapped[list["Task"]] = relationship(back_populates="company")
+ 103:     audit_logs: Mapped[list["AuditLog"]] = relationship(back_populates="company")
+ 104:     subscriptions: Mapped[list["AgentSubscription"]] = relationship(back_populates="company", cascade="all, delete-orphan")
+ 105: 
+ 106: 
+ 107: class Role(Base):
+ 108:     __tablename__ = "roles"
+ 109: 
+ 110:     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+ 111:     name: Mapped[str] = mapped_column(String(100), nullable=False)
+ 112:     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+ 113:     permissions: Mapped[list["Permission"]] = relationship(secondary="role_permissions", back_populates="roles")
+ 114: 
+ 115: 
+ 116: class Permission(Base):
+ 117:     __tablename__ = "permissions"
+ 118: 
+ 119:     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+ 120:     key: Mapped[str] = mapped_column(String(150), unique=True, nullable=False)
+ 121:     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+ 122:     roles: Mapped[list[Role]] = relationship(secondary="role_permissions", back_populates="permissions")
+ 123: 
+ 124: 
+ 125: class RolePermission(Base):
+ 126:     __tablename__ = "role_permissions"
+ 127:     __table_args__ = (UniqueConstraint("role_id", "permission_id", name="uq_role_permission"),)
+ 128: 
+ 129:     role_id: Mapped[str] = mapped_column(ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True)
+ 130:     permission_id: Mapped[str] = mapped_column(ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True)
+ 131: 
+ 132: 
+ 133: 
+ 134: class Department(Base):
+ 135:     """Company organizational unit (Job 18)."""
+ 136: 
+ 137:     __tablename__ = "departments"
+ 138:     __table_args__ = (
+ 139:         UniqueConstraint("company_id", "name", name="uq_company_department_name"),
+ 140:     )
+ 141: 
+ 142:     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+ 143:     company_id: Mapped[str] = mapped_column(
+ 144:         ForeignKey("companies.id", ondelete="CASCADE"),
+ 145:         nullable=False,
+ 146:         index=True,
+ 147:     )
+ 148:     name: Mapped[str] = mapped_column(String(200), nullable=False)
+ 149:     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+ 150:     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+ 151:     created_at: Mapped[datetime] = mapped_column(
+ 152:         DateTime(timezone=True), default=utcnow, nullable=False
+ 153:     )
+ 154:     updated_at: Mapped[datetime] = mapped_column(
+ 155:         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+ 156:     )
+ 157: 
+ 158:     company: Mapped[Company] = relationship()
+ 159:     users: Mapped[list["User"]] = relationship(back_populates="department")
+ 160: 
+ 161: 
+ 162: class AgentTeam(Base):
+ 163:     """Named group of AI employees within a company (Job 18)."""
+ 164: 
+ 165:     __tablename__ = "agent_teams"
+ 166:     __table_args__ = (
+ 167:         UniqueConstraint("company_id", "name", name="uq_company_agent_team_name"),
+ 168:     )
+ 169: 
+ 170:     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+ 171:     company_id: Mapped[str] = mapped_column(
+ 172:         ForeignKey("companies.id", ondelete="CASCADE"),
+ 173:         nullable=False,
+ 174:         index=True,
+ 175:     )
+ 176:     department_id: Mapped[str | None] = mapped_column(
+ 177:         ForeignKey("departments.id", ondelete="SET NULL"),
+ 178:         nullable=True,
+ 179:         index=True,
+ 180:     )
+
+================================================================================
+SECTION: ONBOARDING JAVASCRIPT
+FILE: app\static\workspace\app.js
+================================================================================
+Total lines: 3672
+Showing lines 1000-1210
+1000:       const log = $("loginLog");
+1001:       if (log) {
+1002:         log.textContent =
+1003:           "Create company is restricted to platform developers.\nOpen /developer â†’ Provision company.";
+1004:       }
+1005:     };
+1006:   }
+1007: 
+1008: 
+1009:   // Job 93 â€” post-login onboarding wizard
+1010:   let onboardHiredAgentId = null;
+1011:   let onboardHiredAgentName = "";
+1012:   let onboardCatalogItems = [];
+1013:   function setOnboardStep(n) {
+1014:     document.querySelectorAll("#onboardingWizard .onboard-steps span").forEach((el) => {
+1015:       el.classList.toggle("active", String(el.getAttribute("data-step")) === String(n));
+1016:     });
+1017:     ["1", "2", "3"].forEach((i) => {
+1018:       const p = $("onboardPanel" + i);
+1019:       if (p) p.classList.toggle("hidden", String(i) !== String(n));
+1020:     });
+1021:   }
+1022:   function showOnboardingWizard(step) {
+1023:     const w = $("onboardingWizard");
+1024:     if (!w) {
+1025:       console.warn("onboardingWizard missing");
+1026:       return;
+1027:     }
+1028:     w.classList.remove("hidden");
+1029:     w.style.display = "grid";
+1030:     w.style.visibility = "visible";
+1031:     w.style.opacity = "1";
+1032:     w.style.zIndex = "9999";
+1033:     document.documentElement.classList.add("onboarding-open");
+1034:     document.body.classList.add("onboarding-open");
+1035:     const notice = $("onboardRecoveryNotice");
+1036:     if (notice) {
+1037:       notice.classList.add("hidden");
+1038:       notice.textContent = "";
+1039:     }
+1040:     // The workspace stays rendered behind the modal. This guarantees that a
+1041:     // recoverable wizard/UI error can never leave an authenticated user on a
+1042:     // blank page.
+1043:     setOnboardStep(step || 1);
+1044:   }
+1045:   function hideOnboardingWizard() {
+1046:     const w = $("onboardingWizard");
+1047:     if (w) {
+1048:       w.classList.add("hidden");
+1049:       w.style.display = "none";
+1050:     }
+1051:     document.documentElement.classList.remove("onboarding-open");
+1052:     document.body.classList.remove("onboarding-open");
+1053:   }
+1054:   function showOnboardingRecovery(message) {
+1055:     showOnboardingWizard(1);
+1056:     const notice = $("onboardRecoveryNotice");
+1057:     if (!notice) return;
+1058:     notice.classList.remove("hidden");
+1059:     notice.textContent = message;
+1060:   }
+1061:   async function routePostLoginOnboarding() {
+1062:     const version = sessionVersion;
+1063:     const token = state.accessToken;
+1064:     try {
+1065:       if (!state.companyId) {
+1066:         // No company yet â€” still show step 1 if wizard exists
+1067:         showOnboardingWizard(1);
+1068:         return true;
+1069:       }
+1070:       if (state.onboardingStatus !== "complete") {
+1071:         showOnboardingWizard(1);
+1072:         return true;
+1073:       }
+1074:       const agents = await api(`/companies/${state.companyId}/agents`);
+1075:       if (version !== sessionVersion || token !== state.accessToken) return true;
+1076:       if (!agents || !agents.length) {
+1077:         showOnboardingWizard(2);
+1078:         await loadOnboardingCatalog();
+1079:         return true;
+1080:       }
+1081:       hideOnboardingWizard();
+1082:       return false;
+1083:     } catch (err) {
+1084:       if (version !== sessionVersion || token !== state.accessToken) return true;
+1085:       console.warn("routePostLoginOnboarding", err);
+1086:       hideOnboardingWizard();
+1087:       return false;
+1088:     }
+1089:   }
+1090:   if ($("btnOnboardGoCompany")) {
+1091:     $("btnOnboardGoCompany").onclick = () => {
+1092:       hideOnboardingWizard();
+1093:       try { showView("company"); } catch (_) {}
+1094:     };
+1095:   }
+1096:   if ($("btnOnboardSaveCompany")) {
+1097:     $("btnOnboardSaveCompany").onclick = async () => {
+1098:       const button = $("btnOnboardSaveCompany");
+1099:       if (button) button.disabled = true;
+1100:       try {
+1101:         await saveCompanyProfile({
+1102:           name: $("onboardCompanyName").value,
+1103:           contact_email: $("onboardCompanyEmail").value,
+1104:           industry: $("onboardCompanyIndustry").value,
+1105:         }, $("onboardCompanyLog"));
+1106:       } finally {
+1107:         if (button) button.disabled = false;
+1108:       }
+1109:     };
+1110:   }
+1111:   async function loadOnboardingCatalog() {
+1112:     const select = $("onboardAgentCatalog");
+1113:     const description = $("onboardAgentDescription");
+1114:     const log = $("onboardHireLog");
+1115:     const hireButton = $("btnOnboardHire");
+1116:     if (!select) return false;
+1117:     const version = sessionVersion;
+1118:     const token = state.accessToken;
+1119:     if (hireButton) hireButton.disabled = true;
+1120:     if (log) log.textContent = "Loading available AI employeesâ€¦";
+1121:     try {
+1122:       const catalog = await api("/agent-catalog");
+1123:       if (version !== sessionVersion || token !== state.accessToken) return false;
+1124:       onboardCatalogItems = Array.isArray(catalog) ? catalog : [];
+1125:       select.innerHTML = onboardCatalogItems.map((item) =>
+1126:         `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`
+1127:       ).join("");
+1128:       if (onboardCatalogItems.length) {
+1129:         select.value = onboardCatalogItems[0].id;
+1130:         if (description) description.textContent = onboardCatalogItems[0].description || "";
+1131:         if (hireButton) hireButton.disabled = false;
+1132:         if (log) log.textContent = "";
+1133:         return true;
+1134:       }
+1135:       if (description) description.textContent = "";
+1136:       if (log) log.textContent = "No AI Employees are currently available in the catalog. Reload to try again.";
+1137:       return false;
+1138:     } catch (err) {
+1139:       if (version !== sessionVersion || token !== state.accessToken) return false;
+1140:       if (description) description.textContent = "";
+1141:       if (log) log.textContent = `Could not load AI Employee catalog: ${err.message}. Reload to try again.`;
+1142:       return false;
+1143:     }
+1144:   }
+1145:   if ($("onboardAgentCatalog")) {
+1146:     $("onboardAgentCatalog").addEventListener("change", () => {
+1147:       const selected = onboardCatalogItems.find((item) => item.id === $("onboardAgentCatalog").value);
+1148:       if ($("onboardAgentDescription")) $("onboardAgentDescription").textContent = selected?.description || "";
+1149:     });
+1150:   }
+1151:   if ($("btnOnboardRetryCatalog")) $("btnOnboardRetryCatalog").onclick = loadOnboardingCatalog;
+1152:   if ($("btnOnboardHire")) {
+1153:     $("btnOnboardHire").onclick = async () => {
+1154:       const log = $("onboardHireLog");
+1155:       const button = $("btnOnboardHire");
+1156:       const selected = onboardCatalogItems.find((item) => item.id === $("onboardAgentCatalog").value);
+1157:       if (!selected) {
+1158:         if (log) log.textContent = "Choose an AI Employee from the available catalog.";
+1159:         return;
+1160:       }
+1161:       const version = sessionVersion;
+1162:       const token = state.accessToken;
+1163:       try {
+1164:         if (button) button.disabled = true;
+1165:         if (log) log.textContent = "Hiringâ€¦";
+1166:         const nameInput = $("onboardAgentName");
+1167:         const hireName = (nameInput && nameInput.value.trim()) || selected.name;
+1168:         const hired = await api(`/companies/${state.companyId}/agents/${selected.id}/hire`, {
+1169:           method: "POST",
+1170:           body: JSON.stringify({ name: hireName }),
+1171:         });
+1172:         if (version !== sessionVersion || token !== state.accessToken) return;
+1173:         onboardHiredAgentId = hired.id || hired.agent_instance_id || "";
+1174:         if (!onboardHiredAgentId) throw new Error("Agent was hired, but the server response did not include its ID.");
+1175:         onboardHiredAgentName = hireName;
+1176:         if (log) log.textContent = "Hired. Configure next.";
+1177:         if ($("onboardAgentNameAfterHire")) $("onboardAgentNameAfterHire").value = hireName;
+1178:         setOnboardStep(3);
+1179:       } catch (err) {
+1180:         if (log) log.textContent = err.message || "Hire failed";
+1181:       } finally {
+1182:         if (button && onboardCatalogItems.length) button.disabled = false;
+1183:       }
+1184:     };
+1185:   }
+1186:   async function finishOnboardConfig() {
+1187:     const log = $("onboardConfigLog");
+1188:     try {
+1189:       const name = ($("onboardAgentNameAfterHire") && $("onboardAgentNameAfterHire").value.trim()) || "";
+1190:       if (onboardHiredAgentId && name && name !== onboardHiredAgentName) {
+1191:         await api(`/companies/${state.companyId}/agents/${onboardHiredAgentId}`, {
+1192:           method: "PATCH",
+1193:           body: JSON.stringify({ name }),
+1194:         });
+1195:         onboardHiredAgentName = name;
+1196:       }
+1197:       hideOnboardingWizard();
+1198:       try { showView("home"); } catch (_) { try { showView("agents"); } catch (__) {} }
+1199:     } catch (err) {
+1200:       if (log) log.textContent = err.message || "Could not finish";
+1201:     }
+1202:   }
+1203:   if ($("btnOnboardFinish")) $("btnOnboardFinish").onclick = () => finishOnboardConfig();
+1204:   if ($("btnOnboardSkipConfig")) $("btnOnboardSkipConfig").onclick = () => {
+1205:     hideOnboardingWizard();
+1206:     try { showView("home"); } catch (_) {}
+1207:   };
+1208:   if ($("btnGoLoginAfterRegister")) {
+1209:     $("btnGoLoginAfterRegister").onclick = () => {
+1210:       if ($("registerSuccessPanel")) $("registerSuccessPanel").classList.remove("active");
+
+================================================================================
+SECTION: ONBOARDING NODE TESTS
+FILE: tests\workspace_auth.test.cjs
+================================================================================
+Total lines: 725
+Showing lines 250-390
+ 250:       return { status: 200, body: { onboarding_status: 'complete' } };
+ 251:     }
+ 252:     if (url.endsWith('/profile')) return { status: 200, body: { id: 'tenant-a', name: 'Test Company',
+ 253:       contact_email: 'contact@example.test', industry: 'Travel',
+ 254:       owner_user_id: 'user-a', onboarding_status: complete ? 'complete' : 'pending' } };
+ 255:     return undefined;
+ 256:   } });
+ 257:   f.get('loginEmail').value = 'owner@example.test';
+ 258:   f.get('loginPassword').value = 'safe-password';
+ 259:   await f.get('btnLogin').onclick();
+ 260:   assert.equal(f.session().onboardingStatus, 'pending');
+ 261:   assert.equal(f.get('onboardingWizard').style.display, 'grid');
+ 262:   assert.equal(f.body.classList.contains('onboarding-open'), true);
+ 263:   assert.equal(f.documentElement.classList.contains('onboarding-open'), true);
+ 264:   assert.equal(f.get('onboardCompanyName').value, 'Test Company');
+ 265:   await f.get('btnOnboardGoCompany').onclick();
+ 266:   assert.equal(f.body.classList.contains('onboarding-open'), false);
+ 267:   assert.equal(f.documentElement.classList.contains('onboarding-open'), false);
+ 268:   assert.equal(f.get('view-company').classList.contains('active'), true);
+ 269:   f.get('companyProfileNameInput').value = 'Test Company';
+ 270:   f.get('companyContactEmail').value = 'contact@example.test';
+ 271:   f.get('companyIndustry').value = 'Travel';
+ 272:   await f.get('btnSaveCompanyProfile').onclick();
+ 273:   assert.equal(f.session().onboardingStatus, 'complete');
+ 274: });
+ 275: 
+ 276: test('onboarding saves company details, hires a catalog agent, and opens the workspace', async () => {
+ 277:   let companySaved = false;
+ 278:   const catalogAgent = { id: 'catalog-first', name: 'Reservation Specialist',
+ 279:     description: 'Handles booking requests.' };
+ 280:   const f = fixture({ respond: (url, options) => {
+ 281:     if (url.endsWith('/auth/login')) return { status: 200, body: profile };
+ 282:     if (url.endsWith('/profile') && options.method === 'PUT') {
+ 283:       companySaved = true;
+ 284:       return { status: 200, body: { onboarding_status: 'complete' } };
+ 285:     }
+ 286:     if (url.endsWith('/profile')) return { status: 200, body: {
+ 287:       id: 'tenant-a', name: companySaved ? 'Northwind Travel' : '',
+ 288:       contact_email: companySaved ? 'owner@northwind.test' : '',
+ 289:       industry: companySaved ? 'Travel' : '', owner_user_id: 'user-a',
+ 290:       onboarding_status: companySaved ? 'complete' : 'pending',
+ 291:     } };
+ 292:     if (url.endsWith('/agents')) return { status: 200, body: [] };
+ 293:     if (url.endsWith('/agent-catalog')) return { status: 200, body: [catalogAgent] };
+ 294:     if (url.endsWith('/catalog-first/hire')) return { status: 201, body: { id: 'agent-first', name: 'Northwind Reservations' } };
+ 295:     if (url.endsWith('/agents/agent-first')) return { status: 200, body: { id: 'agent-first' } };
+ 296:     return undefined;
+ 297:   } });
+ 298:   f.get('loginEmail').value = 'owner@northwind.test';
+ 299:   f.get('loginPassword').value = 'safe-password';
+ 300:   await f.get('btnLogin').onclick();
+ 301: 
+ 302:   assert.equal(f.get('onboardPanel1').classList.contains('hidden'), false);
+ 303:   f.get('onboardCompanyName').value = 'Northwind Travel';
+ 304:   f.get('onboardCompanyEmail').value = 'owner@northwind.test';
+ 305:   f.get('onboardCompanyIndustry').value = 'Travel';
+ 306:   await f.get('btnOnboardSaveCompany').onclick();
+ 307: 
+ 308:   const profileUpdate = f.calls.find(call => call.url.endsWith('/profile') && call.options.method === 'PUT');
+ 309:   assert.deepEqual(JSON.parse(profileUpdate.options.body), {
+ 310:     name: 'Northwind Travel', contact_email: 'owner@northwind.test', industry: 'Travel',
+ 311:   });
+ 312:   assert.equal(f.get('onboardPanel2').classList.contains('hidden'), false);
+ 313:   assert.equal(f.get('onboardAgentCatalog').value, 'catalog-first');
+ 314:   assert.equal(f.get('onboardAgentDescription').textContent, catalogAgent.description);
+ 315: 
+ 316:   f.get('onboardAgentName').value = 'Northwind Reservations';
+ 317:   await f.get('btnOnboardHire').onclick();
+ 318:   const hire = f.calls.find(call => call.url.endsWith('/catalog-first/hire'));
+ 319:   assert.deepEqual(JSON.parse(hire.options.body), { name: 'Northwind Reservations' });
+ 320:   assert.equal(f.get('onboardPanel3').classList.contains('hidden'), false);
+ 321:   await f.get('btnOnboardFinish').onclick();
+ 322:   assert.equal(f.get('onboardingWizard').classList.contains('hidden'), true);
+ 323:   assert.equal(f.get('view-home').classList.contains('active'), true);
+ 324: });
+ 325: 
+ 326: test('onboarding validates company details before sending the profile update', async () => {
+ 327:   const f = fixture({ respond: url => url.endsWith('/auth/login')
+ 328:     ? { status: 200, body: profile }
+ 329:     : url.endsWith('/profile')
+ 330:       ? { status: 200, body: { id: 'tenant-a', owner_user_id: 'user-a', onboarding_status: 'pending' } }
+ 331:       : undefined });
+ 332:   f.get('loginEmail').value = 'owner@example.test';
+ 333:   f.get('loginPassword').value = 'safe-password';
+ 334:   await f.get('btnLogin').onclick();
+ 335:   f.get('onboardCompanyName').value = 'Acme';
+ 336:   f.get('onboardCompanyEmail').value = 'not-an-email';
+ 337:   f.get('onboardCompanyIndustry').value = 'Travel';
+ 338:   await f.get('btnOnboardSaveCompany').onclick();
+ 339:   assert.equal(f.calls.some(call => call.url.endsWith('/profile') && call.options.method === 'PUT'), false);
+ 340:   assert.match(f.get('onboardCompanyLog').textContent, /valid contact email/);
+ 341:   assert.equal(f.get('onboardPanel1').classList.contains('hidden'), false);
+ 342: });
+ 343: 
+ 344: test('onboarding displays catalog errors and allows retry', async () => {
+ 345:   let catalogRequests = 0;
+ 346:   const catalogAgent = { id: 'catalog-first', name: 'Reservation Specialist', description: 'Booking support.' };
+ 347:   const f = fixture({ respond: url => {
+ 348:     if (url.endsWith('/auth/login')) return { status: 200, body: profile };
+ 349:     if (url.endsWith('/profile')) return { status: 200, body: {
+ 350:       id: 'tenant-a', owner_user_id: 'user-a', onboarding_status: 'complete',
+ 351:     } };
+ 352:     if (url.endsWith('/agents')) return { status: 200, body: [] };
+ 353:     if (url.endsWith('/agent-catalog')) {
+ 354:       catalogRequests += 1;
+ 355:       return catalogRequests === 1
+ 356:         ? { status: 503, body: { detail: 'Catalog temporarily unavailable' } }
+ 357:         : { status: 200, body: [catalogAgent] };
+ 358:     }
+ 359:     return undefined;
+ 360:   } });
+ 361:   f.get('loginEmail').value = 'owner@example.test';
+ 362:   f.get('loginPassword').value = 'safe-password';
+ 363:   await f.get('btnLogin').onclick();
+ 364:   assert.match(f.get('onboardHireLog').textContent, /Catalog temporarily unavailable/);
+ 365:   assert.equal(f.get('btnOnboardHire').disabled, true);
+ 366:   await f.get('btnOnboardRetryCatalog').onclick();
+ 367:   assert.equal(catalogRequests, 2);
+ 368:   assert.equal(f.get('onboardAgentCatalog').value, catalogAgent.id);
+ 369:   assert.equal(f.get('btnOnboardHire').disabled, false);
+ 370: });
+ 371: 
+ 372: test('ready company goes straight to its role landing page without onboarding', async () => {
+ 373:   const f = fixture({ respond: url => {
+ 374:     if (url.endsWith('/auth/login')) return { status: 200, body: profile };
+ 375:     if (url.endsWith('/profile')) return { status: 200, body: {
+ 376:       id: 'tenant-a', owner_user_id: 'user-a', onboarding_status: 'complete',
+ 377:     } };
+ 378:     if (url.endsWith('/agents')) return { status: 200, body: [{ id: 'agent-first', name: 'Reservation' }] };
+ 379:     return undefined;
+ 380:   } });
+ 381:   f.get('loginEmail').value = 'owner@example.test';
+ 382:   f.get('loginPassword').value = 'safe-password';
+ 383:   await f.get('btnLogin').onclick();
+ 384:   assert.equal(f.get('onboardingWizard').classList.contains('hidden'), true);
+ 385:   assert.equal(f.body.classList.contains('onboarding-open'), false);
+ 386:   assert.equal(f.documentElement.classList.contains('onboarding-open'), false);
+ 387:   assert.equal(f.get('view-home').classList.contains('active'), true);
+ 388:   assert.ok(f.calls.some(call => call.url.endsWith('/inventory/hydrate')));
+ 389: });
+ 390: 
+
+================================================================================
+SECTION: AGENT TEMPLATE PYTHON TESTS
+FILE: tests\test_agent_template.py
+================================================================================
+Total lines: 350
+Showing lines 1-220
+   1: """Phase 2 â€” Agent Template snapshot and isolation tests."""
+   2: 
+   3: import pytest
+   4: from fastapi.testclient import TestClient
+   5: from sqlalchemy import create_engine, select
+   6: from sqlalchemy.orm import sessionmaker
+   7: 
+   8: from tests.helpers import provision_company
+   9: from app.core.database import Base, get_db
+  10: from app.main import app
+  11: from app.models.entities import AgentCatalog, AgentInstance
+  12: from app.services.seed import seed_catalog
+  13: 
+  14: 
+  15: engine = create_engine(
+  16:     "sqlite:///./test_agent_template.db",
+  17:     connect_args={"check_same_thread": False},
+  18: )
+  19: TestingSessionLocal = sessionmaker(
+  20:     bind=engine, autoflush=False, autocommit=False
+  21: )
+  22: 
+  23: 
+  24: @pytest.fixture()
+  25: def client():
+  26:     Base.metadata.drop_all(bind=engine)
+  27:     Base.metadata.create_all(bind=engine)
+  28: 
+  29:     with TestingSessionLocal() as db:
+  30:         seed_catalog(db)
+  31: 
+  32:     def override_get_db():
+  33:         db = TestingSessionLocal()
+  34:         try:
+  35:             yield db
+  36:         finally:
+  37:             db.close()
+  38: 
+  39:     previous = app.dependency_overrides.get(get_db)
+  40:     app.dependency_overrides[get_db] = override_get_db
+  41: 
+  42:     with TestClient(app) as c:
+  43:         yield c
+  44: 
+  45:     if previous is None:
+  46:         app.dependency_overrides.pop(get_db, None)
+  47:     else:
+  48:         app.dependency_overrides[get_db] = previous
+  49: 
+  50: 
+  51: # def _create_company_with_owner(client: TestClient):
+  52: #     company = client.post(
+  53: #         "/api/v1/companies",
+  54: #         json={"name": "Template Co"},
+  55: #     )
+  56: #     assert company.status_code == 201, company.text
+  57: #     company_id = company.json()["id"]
+  58: 
+  59: #     user = client.post(
+  60: #         f"/api/v1/companies/{company_id}/users",
+  61: #         json={
+  62: #             "name": "Owner",
+  63: #             "email": "owner@template.test",
+  64: #             "role": "owner",
+  65: #         },
+  66: #     )
+  67: #     assert user.status_code == 201, user.text
+  68: #     return company_id, user.json()["id"]
+  69: def _create_company_with_owner(client: TestClient):
+  70:     company_id, user_id, headers, _ = provision_company(client)
+  71:     return company_id, user_id, headers
+  72: 
+  73: def test_catalog_exposes_template_fields(client: TestClient):
+  74:     response = client.get("/api/v1/agent-catalog")
+  75:     assert response.status_code == 200
+  76:     items = response.json()
+  77:     assert len(items) >= 2
+  78: 
+  79:     reservation = next(i for i in items if i["slug"] == "reservation")
+  80:     assert reservation["version"] == "1.0.0"
+  81:     assert "reservation" in reservation["scope"]
+  82:     assert reservation["default_autonomy"] == "1"
+  83:     assert reservation["default_policies"]["send_quotation"] == "approval"
+  84:     assert reservation["is_published"] is True
+  85:     assert "You are Reservation AI" in reservation["default_instructions"]
+  86: 
+  87: 
+  88: def test_hire_snapshots_template_version_and_defaults(client: TestClient):
+  89:     company_id, user_id, headers = _create_company_with_owner(client)
+  90: 
+  91:     catalog = client.get("/api/v1/agent-catalog").json()
+  92:     reservation = next(i for i in catalog if i["slug"] == "reservation")
+  93: 
+  94:     hire = client.post(
+  95:         f"/api/v1/companies/{company_id}/agents/{reservation['id']}/hire",
+  96:         json={"name": "Front Desk AI"},
+  97:         headers=headers,
+  98:     )
+  99:     assert hire.status_code == 201, hire.text
+ 100:     instance = hire.json()
+ 101: 
+ 102:     assert instance["template_version"] == reservation["version"]
+ 103:     assert instance["skills"] == reservation["skills"]
+ 104:     assert instance["allowed_tools"] == reservation["allowed_tools"]
+ 105:     assert instance["scope"] == reservation["scope"]
+ 106:     assert instance["autonomy"] == reservation["default_autonomy"]
+ 107:     assert instance["policies"] == reservation["default_policies"]
+ 108:     assert instance["instructions"] == reservation["default_instructions"]
+ 109:     assert instance["configuration"]["evaluation_criteria"] == (
+ 110:         reservation["evaluation_criteria"]
+ 111:     )
+ 112: 
+ 113: 
+ 114: def test_catalog_mutation_does_not_change_existing_instance(client: TestClient):
+ 115:     company_id, user_id, headers = _create_company_with_owner(client)
+ 116: 
+ 117:     catalog_items = client.get("/api/v1/agent-catalog").json()
+ 118:     reservation = next(i for i in catalog_items if i["slug"] == "reservation")
+ 119: 
+ 120:     hire = client.post(
+ 121:         f"/api/v1/companies/{company_id}/agents/{reservation['id']}/hire",
+ 122:         json={"name": "Pinned AI"},
+ 123:         headers=headers,
+ 124:     )
+ 125:     assert hire.status_code == 201
+ 126:     instance_id = hire.json()["id"]
+ 127:     original_skills = list(hire.json()["skills"])
+ 128:     original_version = hire.json()["template_version"]
+ 129: 
+ 130:     # Mutate catalog defaults after hire.
+ 131:     with TestingSessionLocal() as db:
+ 132:         cat = db.scalar(
+ 133:             select(AgentCatalog).where(AgentCatalog.slug == "reservation")
+ 134:         )
+ 135:         assert cat is not None
+ 136:         cat.skills = ["mutated_skill_only"]
+ 137:         cat.version = "9.9.9"
+ 138:         cat.default_instructions = "MUTATED"
+ 139:         db.commit()
+ 140: 
+ 141:     with TestingSessionLocal() as db:
+ 142:         inst = db.get(AgentInstance, instance_id)
+ 143:         assert inst is not None
+ 144:         assert inst.template_version == original_version
+ 145:         assert list(inst.skills) == original_skills
+ 146:         assert inst.instructions != "MUTATED"
+ 147:         assert "mutated_skill_only" not in (inst.skills or [])
+ 148: 
+ 149: 
+ 150: def test_unpublished_catalog_not_hireable(client: TestClient):
+ 151:     company_id, user_id, headers = _create_company_with_owner(client)
+ 152: 
+ 153:     with TestingSessionLocal() as db:
+ 154:         cat = db.scalar(
+ 155:             select(AgentCatalog).where(AgentCatalog.slug == "reservation")
+ 156:         )
+ 157:         cat.is_published = False
+ 158:         db.commit()
+ 159:         catalog_id = cat.id
+ 160: 
+ 161:     hire = client.post(
+ 162:         f"/api/v1/companies/{company_id}/agents/{catalog_id}/hire",
+ 163:         json={"name": "Should Fail"},
+ 164:         headers=headers,
+ 165:     )
+ 166:     assert hire.status_code == 404
+ 167: 
+ 168: 
+ 169: def test_patch_instance_customization(client: TestClient):
+ 170:     company_id, user_id, headers = _create_company_with_owner(client)
+ 171:     catalog = client.get("/api/v1/agent-catalog").json()
+ 172:     reservation = next(i for i in catalog if i["slug"] == "reservation")
+ 173: 
+ 174:     hire = client.post(
+ 175:         f"/api/v1/companies/{company_id}/agents/{reservation['id']}/hire",
+ 176:         json={"name": "Customizable AI"},
+ 177:         headers=headers,
+ 178:     )
+ 179:     assert hire.status_code == 201
+ 180:     instance_id = hire.json()["id"]
+ 181: 
+ 182:     updated = client.patch(
+ 183:         f"/api/v1/companies/{company_id}/agents/{instance_id}",
+ 184:         json={
+ 185:             "instructions": "Custom company instructions",
+ 186:             "autonomy": "2",
+ 187:             "policies": {"send_quotation": "deny"},
+ 188:         },
+ 189:         headers=headers,
+ 190:     )
+ 191:     assert updated.status_code == 200, updated.text
+ 192:     body = updated.json()
+ 193:     assert body["instructions"] == "Custom company instructions"
+ 194:     assert body["autonomy"] == "2"
+ 195:     assert body["policies"]["send_quotation"] == "deny"
+ 196: 
+ 197: 
+ 198: def test_patch_instance_profile_configuration(client: TestClient):
+ 199:     company_id, user_id, headers = _create_company_with_owner(client)
+ 200:     catalog = client.get("/api/v1/agent-catalog").json()
+ 201:     reservation = next(i for i in catalog if i["slug"] == "reservation")
+ 202: 
+ 203:     hire = client.post(
+ 204:         f"/api/v1/companies/{company_id}/agents/{reservation['id']}/hire",
+ 205:         json={"name": "Profile Test AI"},
+ 206:         headers=headers,
+ 207:     )
+ 208:     assert hire.status_code == 201, hire.text
+ 209:     instance_id = hire.json()["id"]
+ 210: 
+ 211:     original_configuration = hire.json()["configuration"] or {}
+ 212: 
+ 213:     profile = {
+ 214:         "job_description": "Mengelola reservasi pelanggan.",
+ 215:         "responsibilities": [
+ 216:             "Memeriksa ketersediaan kamar",
+ 217:             "Mencatat permintaan pelanggan",
+ 218:         ],
+ 219:         "sop": [
+ 220:             "Verifikasi tanggal menginap",
+
+================================================================================
+SECTION: COMPANY ONBOARDING DOCUMENTATION
+FILE: docs\COMPANY_ONBOARDING.md
+================================================================================
+Total lines: 79
+Showing lines 1-79
+   1: # Company onboarding and identity
+   2: 
+   3: ## Current model
+   4: 
+   5: `User.company_id` is the single active company membership in this release.
+   6: Changing it or introducing multi-company membership requires a separately
+   7: reviewed migration and session contract. Login accepts email and password;
+   8: the server resolves exactly one active user and binds the session to that
+   9: user's company. Duplicate active legacy email identities fail closed with 409
+  10: and require operator reconciliation. The optional legacy `company_id` login
+  11: field is ignored, not a tenant selector. `X-User-ID` is not authentication.
+  12: 
+  13: The only required company field at registration is a unique company name;
+  14: the registering owner supplies their name, email, and password. Company
+  15: `owner_user_id` is set to the newly created user in the same transaction.
+  16: The server assigns the existing `owner` role. Platform admin is never granted.
+  17: Email claims reserve normalized addresses and protect concurrent public
+  18: registration. Existing addresses are claimed during migration, including
+  19: ambiguous legacy duplicates. Registration returns a conflict for existing
+  20: addresses or company names. It does not issue a session.
+  21: 
+  22: ## Verification and delivery
+  23: 
+  24: New public owners cannot sign in until email verification succeeds. Tokens are
+  25: random, single-use, expire after 24 hours, and are stored only as SHA-256
+  26: digests. `POST /api/v1/auth/request-verification` is the recovery route after
+  27: delivery failure; it returns a generic result for unknown addresses. Invitations
+  28: use the same verified email channel and expire after 48 hours. Acceptance
+  29: proves email control through the link, creates a `member`, and cannot select
+  30: company or role. Invitation links and verification links are delivered via
+  31: SMTP-over-TLS when `SMTP_HOST`, `SMTP_FROM`, and `PUBLIC_BASE_URL` are configured.
+  32: For deployed environments, the public base URL must be HTTPS. SMTP credentials
+  33: come from environment variables. Without delivery, production registration and
+  34: invitation issuance return 503; no email is claimed to have been sent. With
+  35: `DEBUG=true` in development/test only, response bodies expose tokens for local
+  36: testing. Tokens are never stored raw in the database or written to audit logs.
+  37: 
+  38: SMTP delivery occurs after the database transaction. If delivery fails, the
+  39: account remains pending; request verification again. Owners can reissue an
+  40: invitation. A mail outbox and endpoint rate limiting remain deployment work;
+  41: the public endpoints must be rate-limited at the gateway before exposure.
+  42: 
+  43: ## Profile and permissions
+  44: 
+  45: New companies start with `onboarding_status=pending`. Owner can read and PUT
+  46: `/api/v1/companies/{company_id}/profile` before completion. A contact email
+  47: and industry are required to complete the profile. Company workspace routes
+  48: reject pending companies with 403, while `/auth/me` and profile routes remain
+  49: available. Legacy companies default to `complete` to preserve operations.
+  50: Onboarding state is separate from company activation and email verification.
+  51: 
+  52: Only the recorded owner may invite, revoke invitations, or appoint/revoke
+  53: `ai_admin` through `/api/v1/companies/{company_id}/administrators/{user_id}`.
+  54: An `ai_admin` has the existing AI workforce permissions, including agent
+  55: management, skills, policy, knowledge, and integrations. An administrator
+  56: cannot appoint owners or grant platform privileges. Role changes revoke active
+  57: sessions and require a fresh login. The legacy direct-user-creation endpoint
+  58: returns 410; employees join by invitation and choose their own password.
+  59: AI Employee records remain company-scoped and are governed by existing
+  60: permission, tool, and approval controls.
+  61: 
+  62: ## Migration and cutover
+  63: 
+  64: `0005_company_onboarding` adds nullable profile/owner fields, email verification,
+  65: claims, and invitation records. Existing users remain verified; existing
+  66: companies remain complete, preventing a mass logout. The migration does not
+  67: guess legacy ownership. Inspect historical company users and audit records,
+  68: then assign `owner_user_id` through a reviewed operator procedure before
+  69: using owner-only invitation/profile management. Companies with no verified
+  70: owner need explicit reconciliation. Duplicate legacy email identities cannot
+  71: log in until resolved. Do not run this migration against workspace, staging, or
+  72: production data without backup and a reviewed rollout plan. PostgreSQL adds
+  73: the owner foreign key; SQLite's additive ALTER column cannot add that FK, so
+  74: application-level owner checks remain the boundary there.
+  75: 
+  76: Run isolated tests before deployment. Production needs SMTP, HTTPS origin,
+  77: database migration, gateway rate limits, backup, and operational owner/email
+  78: reconciliation. Browser E2E and PostgreSQL concurrency must be validated on
+  79: disposable environments; unit tests do not establish either result.
+
+================================================================================
+SECTION: AGENT TEMPLATE DOCUMENTATION
+FILE: docs\05_AI_AGENT_TEMPLATE_SPEC.md
+================================================================================
+Total lines: 147
+Showing lines 1-147
+   1: # AI Agent Template Specification
+   2: 
+   3: ## Purpose
+   4: 
+   5: Templates provide standardized, reusable AI Employees for common professional roles.
+   6: 
+   7: A template is a starting point, not a rigid behavior lock.
+   8: 
+   9: ## Template structure
+  10: 
+  11: ```text
+  12: Template
+  13: â”œâ”€â”€ Identity
+  14: â”œâ”€â”€ Role
+  15: â”œâ”€â”€ Scope
+  16: â”œâ”€â”€ Responsibilities
+  17: â”œâ”€â”€ Default Skills
+  18: â”œâ”€â”€ Default Tools
+  19: â”œâ”€â”€ Default Knowledge Requirements
+  20: â”œâ”€â”€ Default Policies
+  21: â”œâ”€â”€ Default Approval Recommendations
+  22: â”œâ”€â”€ Default Autonomy
+  23: â”œâ”€â”€ Evaluation Criteria
+  24: â””â”€â”€ Version
+  25: ```
+  26: 
+  27: ## Reservation AI
+  28: 
+  29: ### Responsibilities
+  30: 
+  31: - process inquiries;
+  32: - prepare quotations;
+  33: - prepare itineraries;
+  34: - check reservation information;
+  35: - follow up customers;
+  36: - prepare reservation reports;
+  37: - escalate unusual cases.
+  38: 
+  39: ### Default skills
+  40: 
+  41: - quotation preparation;
+  42: - itinerary planning;
+  43: - reservation management;
+  44: - customer communication;
+  45: - follow-up;
+  46: - reporting.
+  47: 
+  48: ### Default policy recommendations
+  49: 
+  50: - draft quotation: automatic;
+  51: - quotation calculation: automatic;
+  52: - send quotation: approval by default;
+  53: - unusual discount: approval;
+  54: - booking confirmation: approval where business policy requires it.
+  55: 
+  56: ## Accounting AI
+  57: 
+  58: ### Responsibilities
+  59: 
+  60: - prepare financial reports;
+  61: - prepare invoice drafts;
+  62: - analyze transaction data;
+  63: - track payment status;
+  64: - prepare expense/revenue reports;
+  65: - identify anomalies for human review.
+  66: 
+  67: ### Default skills
+  68: 
+  69: - invoice preparation;
+  70: - revenue reporting;
+  71: - expense analysis;
+  72: - payment tracking;
+  73: - financial reporting.
+  74: 
+  75: ### Default policy recommendations
+  76: 
+  77: - generate report: automatic;
+  78: - prepare invoice draft: automatic;
+  79: - send invoice: company-configurable;
+  80: - payment execution: approval;
+  81: - refund: approval.
+  82: 
+  83: ## Sales AI
+  84: 
+  85: ### Responsibilities
+  86: 
+  87: - qualify leads;
+  88: - prepare proposals;
+  89: - follow up leads;
+  90: - summarize sales activity;
+  91: - recommend next actions.
+  92: 
+  93: ## Customer Service AI
+  94: 
+  95: ### Responsibilities
+  96: 
+  97: - answer approved FAQs;
+  98: - classify inquiries;
+  99: - prepare responses;
+ 100: - escalate complex cases;
+ 101: - summarize customer history.
+ 102: 
+ 103: ## Operations AI
+ 104: 
+ 105: ### Responsibilities
+ 106: 
+ 107: - prepare operational tasks;
+ 108: - coordinate approved workflows;
+ 109: - monitor execution status;
+ 110: - prepare supplier/operations reports;
+ 111: - escalate exceptions.
+ 112: 
+ 113: ## Template versioning
+ 114: 
+ 115: Templates must be versioned.
+ 116: 
+ 117: Changing a template must not silently alter already deployed Agent Instances.
+ 118: 
+ 119: Future model:
+ 120: 
+ 121: ```text
+ 122: Template v1
+ 123: Template v2
+ 124: Template v3
+ 125: ```
+ 126: 
+ 127: An existing Agent may:
+ 128: 
+ 129: - stay on current version;
+ 130: - upgrade manually;
+ 131: - upgrade after controlled migration.
+ 132: 
+ 133: ## Company customization
+ 134: 
+ 135: A company can customize:
+ 136: 
+ 137: - instructions;
+ 138: - skills;
+ 139: - tools;
+ 140: - knowledge;
+ 141: - policies;
+ 142: - approval rules;
+ 143: - autonomy;
+ 144: - supervisor;
+ 145: - users.
+ 146: 
+ 147: Company customization must remain tenant-scoped.
+
+================================================================================
+GIT STATUS
+================================================================================
+## development...origin/development

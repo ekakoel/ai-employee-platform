@@ -275,8 +275,8 @@ test('pending company profile opens the onboarding wizard and unlocks after save
 
 test('onboarding saves company details, hires a catalog agent, and opens the workspace', async () => {
   let companySaved = false;
-  const catalogAgent = { id: 'catalog-first', name: 'Reservation Specialist',
-    description: 'Handles booking requests.' };
+  const catalogAgent = { id: 'catalog-first', slug: 'ceo', name: 'CEO AI Employee',
+    description: 'Executive advisor for business priorities and AI Employee recommendations.' };
   const f = fixture({ respond: (url, options) => {
     if (url.endsWith('/auth/login')) return { status: 200, body: profile };
     if (url.endsWith('/profile') && options.method === 'PUT') {
@@ -343,7 +343,8 @@ test('onboarding validates company details before sending the profile update', a
 
 test('onboarding displays catalog errors and allows retry', async () => {
   let catalogRequests = 0;
-  const catalogAgent = { id: 'catalog-first', name: 'Reservation Specialist', description: 'Booking support.' };
+  const catalogAgent = { id: 'catalog-first', slug: 'ceo', name: 'CEO AI Employee',
+    description: 'Executive advisor for business priorities and AI Employee recommendations.' };
   const f = fixture({ respond: url => {
     if (url.endsWith('/auth/login')) return { status: 200, body: profile };
     if (url.endsWith('/profile')) return { status: 200, body: {

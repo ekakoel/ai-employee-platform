@@ -145,3 +145,23 @@ A company can customize:
 - users.
 
 Company customization must remain tenant-scoped.
+
+## CEO AI Employee
+
+### Responsibilities
+
+- clarify company goals and operating context;
+- identify priorities, bottlenecks, and risks;
+- prepare practical action plans;
+- recommend specialist AI Employees based on demonstrated business needs;
+- explain assumptions, dependencies, and approval requirements.
+
+### Default guardrails
+
+- no default tools are granted;
+- default autonomy is level `1`;
+- unknown actions are denied;
+- external and financial commitments require owner approval;
+- recommendations do not imply that another agent has been hired or work has
+  been delegated;
+- existing instances remain unchanged when the catalog template is updated.
