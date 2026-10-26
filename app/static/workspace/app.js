@@ -413,6 +413,47 @@
     }
   }
 
+
+  // Job 99 — guided first knowledge
+  function knowledgeGuideKey() {
+    return "knowledge_guide_done:" + (state.companyId || "x");
+  }
+  function shouldShowKnowledgeGuide() {
+    try {
+      if (localStorage.getItem(knowledgeGuideKey()) === "1") return false;
+    } catch (_) {}
+    try {
+      if (sessionStorage.getItem("knowledge_guide_force") === "1") return true;
+    } catch (_) {}
+    return true; // show until dismissed or first successful add
+  }
+  function setKnowledgeGuideVisible(show) {
+    const banner = $("knowledgeGuideBanner");
+    if (!banner) return;
+    banner.classList.toggle("hidden", !show);
+    ["knowledgeNoteCard", "knowledgeWriteCard"].forEach((id) => {
+      const el = $(id);
+      if (el) el.classList.toggle("guide-highlight", !!show);
+    });
+  }
+  function openKnowledgeGuided() {
+    try { sessionStorage.setItem("knowledge_guide_force", "1"); } catch (_) {}
+    showView("knowledge");
+    setKnowledgeGuideVisible(shouldShowKnowledgeGuide());
+    const title = $("knowTitle") || $("knowledgeIngestTitle");
+    if (title) {
+      try { title.focus(); } catch (_) {}
+    }
+  }
+  function markKnowledgeGuideDone() {
+    try { localStorage.setItem(knowledgeGuideKey(), "1"); } catch (_) {}
+    try { sessionStorage.removeItem("knowledge_guide_force"); } catch (_) {}
+    setKnowledgeGuideVisible(false);
+  }
+  if ($("btnKnowledgeGuideDismiss")) {
+    $("btnKnowledgeGuideDismiss").onclick = () => markKnowledgeGuideDone();
+  }
+
   function showView(name) {
     if (!canAccessView(name)) {
       name = defaultLandingView();
@@ -2478,7 +2519,8 @@
         });
         $("knowTitle").value = "";
         $("knowContent").value = "";
-        await loadKnowledge();
+        await markKnowledgeGuideDone();
+        loadKnowledge();
       } catch (err) {
         alert(err.message);
       }
