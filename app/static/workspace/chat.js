@@ -41,8 +41,7 @@
     const work = role === 'agent' && typeof message.work_result?.result === 'string' && message.work_result.result.trim() && message.work_result.status === 'completed' ? message.work_result : null;
     const content = role === 'agent' ? cleanReply(message.content) : message.content || '';
     const body = role === 'agent' ? cleanReply(message.content) : message.content || '';
-    const textHtml = esc(body).replace(/
-/g, '<br>');
+    const textHtml = esc(body).split("\n").join("<br>");
     const chips = role === 'agent' && isConciergeMessage(message.content) ? conciergeActionsMarkup() : '';
     return `<article class="bubble ${role}"><div class="who"><span>${esc(sender)}</span>${time}</div><div class="bubble-text">${textHtml}</div>${work}${chips}</article>`;
   }
