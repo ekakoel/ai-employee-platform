@@ -738,6 +738,7 @@ class AgentTeamAddMembers(BaseModel):
 class ConversationCreate(BaseModel):
     agent_instance_id: str
     title: str = Field(default="Chat", max_length=300)
+    owner_concierge: bool = False  # Job 97: seed owner guided welcome
 
 
 class ConversationRead(BaseModel):

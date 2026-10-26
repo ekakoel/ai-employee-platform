@@ -1098,11 +1098,16 @@
       const button = $("btnOnboardSaveCompany");
       if (button) button.disabled = true;
       try {
-        await saveCompanyProfile({
+        const ok = await saveCompanyProfile({
           name: $("onboardCompanyName").value,
           contact_email: $("onboardCompanyEmail").value,
           industry: $("onboardCompanyIndustry").value,
         }, $("onboardCompanyLog"));
+        if (ok) {
+          // Profile PUT marks onboarding complete — continue wizard to hire
+          setOnboardStep(2);
+          await loadOnboardingCatalog();
+        }
       } finally {
         if (button) button.disabled = false;
       }
@@ -1194,16 +1199,68 @@
         });
         onboardHiredAgentName = name;
       }
+      // Ensure client state reflects completed onboarding (server already set on profile save)
+      state.onboardingStatus = "complete";
+      try { applyNavGating(); } catch (_) {}
       hideOnboardingWizard();
-      try { showView("home"); } catch (_) { try { showView("agents"); } catch (__) {} }
+
+      // Job 97b — open chat with hired agent + owner concierge welcome
+      if (onboardHiredAgentId) {
+        try {
+          showView("chat");
+          const created = await api(`/companies/${state.companyId}/conversations`, {
+            method: "POST",
+            body: JSON.stringify({
+              agent_instance_id: onboardHiredAgentId,
+              title: "Getting started with your AI Employee",
+              owner_concierge: true,
+            }),
+          });
+          if (typeof chatWorkspace !== "undefined" && chatWorkspace && chatWorkspace.openAgent) {
+            await chatWorkspace.openAgent(onboardHiredAgentId, { forceNew: true });
+          } else if (typeof chatWorkspace !== "undefined" && chatWorkspace && chatWorkspace.load) {
+            await chatWorkspace.load(true);
+          }
+          if (log) log.textContent = "Setup complete. Your AI Employee is ready in Chat.";
+        } catch (chatErr) {
+          console.warn("concierge chat", chatErr);
+          try { showView("home"); } catch (_) {}
+          if (log) log.textContent = "Setup complete. Open Chat to meet your AI Employee.";
+        }
+      } else {
+        try { showView("home"); } catch (_) { try { showView("agents"); } catch (__) {} }
+      }
     } catch (err) {
       if (log) log.textContent = err.message || "Could not finish";
     }
   }
   if ($("btnOnboardFinish")) $("btnOnboardFinish").onclick = () => finishOnboardConfig();
-  if ($("btnOnboardSkipConfig")) $("btnOnboardSkipConfig").onclick = () => {
+  if ($("btnOnboardSkipConfig")) $("btnOnboardSkipConfig").onclick = async () => {
+    state.onboardingStatus = "complete";
+    try { applyNavGating(); } catch (_) {}
     hideOnboardingWizard();
-    try { showView("home"); } catch (_) {}
+    if (onboardHiredAgentId) {
+      try {
+        showView("chat");
+        await api(`/companies/${state.companyId}/conversations`, {
+          method: "POST",
+          body: JSON.stringify({
+            agent_instance_id: onboardHiredAgentId,
+            title: "Getting started with your AI Employee",
+            owner_concierge: true,
+          }),
+        });
+        if (chatWorkspace && chatWorkspace.openAgent) {
+          await chatWorkspace.openAgent(onboardHiredAgentId, { forceNew: true });
+        } else if (chatWorkspace && chatWorkspace.load) {
+          await chatWorkspace.load(true);
+        }
+      } catch (_) {
+        try { showView("home"); } catch (__) {}
+      }
+    } else {
+      try { showView("home"); } catch (_) {}
+    }
   };
   if ($("btnGoLoginAfterRegister")) {
     $("btnGoLoginAfterRegister").onclick = () => {

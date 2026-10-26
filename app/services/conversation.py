@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models import Company  # Job 97
 from app.models.entities import (
     AgentInstance,
     AuditLog,
@@ -82,6 +83,30 @@ def message_reads(db: Session, *, company_id: str, conversation: Conversation, m
     return reads
 
 
+
+def build_owner_concierge_welcome(agent_name: str, company_name: str) -> str:
+    """Template welcome for first-hired AI Employee guiding the company owner."""
+    agent = (agent_name or "your AI Employee").strip()
+    company = (company_name or "your company").strip()
+    return (
+        f"Hello — I am {agent}, the first AI Employee at {company}.\n\n"
+        "Your company profile is set up and I am ready to help. "
+        "As Owner you can:\n"
+        "• Update Company profile (name, contact, industry)\n"
+        "• Hire and configure more AI Employees\n"
+        "• Assign skills and tools to each AI Employee\n"
+        "• Add Knowledge (policies, FAQs, playbooks) so answers stay grounded\n"
+        "• Invite teammates under Users & positions\n"
+        "• Chat with AI Employees, create Tasks, and review Approvals\n\n"
+        "Suggested next steps — reply with a number or describe what you need:\n"
+        "1) Upload a knowledge document (policies / FAQ)\n"
+        "2) Invite a teammate\n"
+        "3) Give me a first real question or task\n"
+        "4) Open AI Employees to refine my configuration\n\n"
+        "Chat is advisory. To run tools, use Create Task from this conversation."
+    )
+
+
 def create_conversation(
     db: Session,
     *,
@@ -115,6 +140,23 @@ def create_conversation(
         )
     )
     db.flush()
+    # Job 97 — owner concierge intro from the hired AI Employee
+    if owner_concierge:
+        company = db.get(Company, company_id)
+        company_name = getattr(company, "name", None) or "your company"
+        agent_name = getattr(agent, "name", None) or "your AI Employee"
+        db.add(
+            Message(
+                company_id=company_id,
+                conversation_id=conv.id,
+                role=MessageRole.AGENT.value,
+                content=build_owner_concierge_welcome(agent_name, company_name),
+            )
+        )
+        db.flush()
+        if not (title or "").strip() or title.strip() == "Chat":
+            conv.title = "Getting started with your AI Employee"
+
     record_audit(
         db,
         company_id=company_id,

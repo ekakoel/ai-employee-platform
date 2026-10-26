@@ -2849,6 +2849,7 @@ def create_conversation_api(
             agent_instance_id=agent.id,
             user_id=user.id,
             title=payload.title,
+            owner_concierge=bool(getattr(payload, "owner_concierge", False)),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

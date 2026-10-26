@@ -225,7 +225,29 @@
     $('chatInput').onkeydown = event => {
       if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); send(); }
     };
-    return { load, reset };
+    async function openAgent(agentId, { forceNew = false } = {}) {
+      if (!agentId) return null;
+      activeAgentId = agentId;
+      if ($('chatAgent')) {
+        // ensure option exists
+        const has = Array.from($('chatAgent').options || []).some(o => o.value === agentId);
+        if (!has) {
+          const opt = document.createElement('option');
+          opt.value = agentId;
+          opt.textContent = 'AI Employee';
+          $('chatAgent').appendChild(opt);
+        }
+        $('chatAgent').value = agentId;
+      }
+      if (forceNew) {
+        conversation = null;
+        conversations = [];
+        messages = [];
+      }
+      await load(true);
+      return conversation;
+    }
+    return { load, reset, openAgent };
   }
   const exports = { create, messageMarkup, groupConversations, cleanReply };
   if (typeof module !== 'undefined' && module.exports) module.exports = exports;
