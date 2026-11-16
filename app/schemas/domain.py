@@ -165,6 +165,7 @@ class KnowledgeSourceGrantCreate(BaseModel):
     classification: str = Field(pattern="^[ABCDU]$")
     owner_user_id: str
     allowed_user_ids: list[str] = Field(default_factory=list)
+    allowed_agent_instance_ids: list[str] = Field(default_factory=list)
     allowed_role_ids: list[str] = Field(default_factory=list)
     allowed_department_ids: list[str] = Field(default_factory=list)
     allowed_purposes: list[str] = Field(min_length=1)
@@ -181,6 +182,7 @@ class KnowledgeSourceGrantRead(BaseModel):
     owner_user_id: str | None
     created_by_user_id: str | None
     allowed_user_ids: list[str]
+    allowed_agent_instance_ids: list[str]
     allowed_role_ids: list[str]
     allowed_department_ids: list[str]
     allowed_purposes: list[str]
