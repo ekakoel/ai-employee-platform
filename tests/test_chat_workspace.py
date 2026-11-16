@@ -81,7 +81,7 @@ def chat_fixture(monkeypatch):
             created_by_user_id="alice",
             allowed_user_ids=["alice"],
             allowed_agent_instance_ids=["agent"],
-            allowed_purposes=["task_execution"],
+            allowed_purposes=["task_execution", "advisory_chat"],
             is_active=True,
             is_approved=True,
             policy_version=1,
