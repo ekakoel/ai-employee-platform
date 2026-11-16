@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.models.entities import (
     AgentInstance,
+    AuditLog,
     DocumentStatus,
     KnowledgeDocument,
     KnowledgeItem,
@@ -73,6 +74,7 @@ def authorized_source_ids(
     requester_id: str | None,
     agent_instance_id: str | None,
     purpose: str,
+    task_id: str | None = None,
 ) -> tuple[set[str], set[str]]:
     """Return (knowledge_item_ids, knowledge_document_ids); fail closed."""
     if not requester_id or not agent_instance_id or not purpose:
@@ -111,8 +113,6 @@ def authorized_source_ids(
     grants = db.scalars(
         select(KnowledgeSourceGrant).where(
             KnowledgeSourceGrant.company_id == company_id,
-            KnowledgeSourceGrant.is_active.is_(True),
-            KnowledgeSourceGrant.is_approved.is_(True),
         )
     ).all()
 
@@ -146,12 +146,50 @@ def authorized_source_ids(
     item_ids: set[str] = set()
     document_ids: set[str] = set()
     for grant in grants:
-        if not grant_allows(grant, user, purpose):
-            continue
-        if grant.source_type == "item":
-            if item_versions.get(grant.source_id) == grant.source_version:
+        reason = "audience_or_policy_denied"
+        allowed = grant_allows(grant, user, purpose)
+        if allowed and grant.source_type == "item":
+            allowed = item_versions.get(grant.source_id) == grant.source_version
+            reason = "source_version_changed_or_missing"
+            if allowed:
                 item_ids.add(grant.source_id)
-        elif grant.source_type == "document":
-            if document_versions.get(grant.source_id) == grant.source_version:
+        elif allowed and grant.source_type == "document":
+            allowed = document_versions.get(grant.source_id) == grant.source_version
+            reason = "source_not_ready_or_version_changed"
+            if allowed:
                 document_ids.add(grant.source_id)
+        elif grant.source_type not in {"item", "document"}:
+            allowed = False
+            reason = "invalid_source_type"
+
+        db.add(AuditLog(
+            company_id=company_id,
+            user_id=user.id,
+            agent_instance_id=agent_instance_id,
+            task_id=task_id,
+            action="knowledge.retrieval.authorization",
+            resource_type="knowledge_source",
+            resource_id=grant.source_id,
+            status="allowed" if allowed else "denied",
+            details={
+                "source_type": grant.source_type,
+                "classification": grant.classification,
+                "purpose": purpose,
+                "policy_version": grant.policy_version,
+                "reason": "authorized" if allowed else reason,
+            },
+        ))
+
+    if not grants:
+        db.add(AuditLog(
+            company_id=company_id,
+            user_id=user.id,
+            agent_instance_id=agent_instance_id,
+            task_id=task_id,
+            action="knowledge.retrieval.authorization",
+            resource_type="knowledge_retrieval",
+            resource_id=None,
+            status="denied",
+            details={"purpose": purpose, "reason": "no_source_grants"},
+        ))
     return item_ids, document_ids
