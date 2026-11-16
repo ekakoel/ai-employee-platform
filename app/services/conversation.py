@@ -245,6 +245,7 @@ def _agent_reply_text(db: Session, conv: Conversation, human_text: str) -> str:
         instruction=human_text,
         mode="consult",
     )
+    request.retrieval_purpose = "advisory_chat"
     try:
         grounded_context = load_agent_context(db, agent, request)
     except ValueError as exc:
