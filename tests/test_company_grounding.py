@@ -69,7 +69,7 @@ def workspace():
             created_by_user_id="owner",
             allowed_user_ids=["owner"],
             allowed_agent_instance_ids=["agent"],
-            allowed_purposes=["task_execution", "knowledge_search", "knowledge_list"],
+            allowed_purposes=["task_execution", "knowledge_search", "knowledge_list", "advisory_chat"],
             is_active=True,
             is_approved=True,
             policy_version=1,
