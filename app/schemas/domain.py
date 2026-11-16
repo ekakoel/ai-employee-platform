@@ -159,6 +159,42 @@ class AgentAccessRead(BaseModel):
     created_at: datetime
 
 
+class KnowledgeSourceGrantCreate(BaseModel):
+    source_type: str = Field(pattern="^(item|document)$")
+    source_id: str = Field(min_length=1, max_length=36)
+    classification: str = Field(pattern="^[ABCDU]$")
+    owner_user_id: str
+    allowed_user_ids: list[str] = Field(default_factory=list)
+    allowed_role_ids: list[str] = Field(default_factory=list)
+    allowed_department_ids: list[str] = Field(default_factory=list)
+    allowed_purposes: list[str] = Field(min_length=1)
+    source_hash: str | None = Field(default=None, pattern="^[a-fA-F0-9]{64}$")
+
+
+class KnowledgeSourceGrantRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    company_id: str
+    source_type: str
+    source_id: str
+    classification: str
+    owner_user_id: str | None
+    created_by_user_id: str | None
+    allowed_user_ids: list[str]
+    allowed_role_ids: list[str]
+    allowed_department_ids: list[str]
+    allowed_purposes: list[str]
+    is_active: bool
+    is_approved: bool
+    policy_version: int
+    source_version: str | None
+    source_hash: str | None
+    approved_by_user_id: str | None
+    approved_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
 class KnowledgeCreate(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     content: str = Field(min_length=1)
