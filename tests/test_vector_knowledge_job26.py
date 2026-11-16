@@ -25,7 +25,7 @@ def _approve_item_for_search(company_id, item_id, owner_id, purposes):
     with SessionLocal() as db:
         item = db.get(KnowledgeItem, item_id)
         assert item is not None
-        db.add(KnowledgeSourceGrant(
+        grant = KnowledgeSourceGrant(
             company_id=company_id,
             source_type="item",
             source_id=item.id,
@@ -41,7 +41,11 @@ def _approve_item_for_search(company_id, item_id, owner_id, purposes):
             source_hash=__import__("hashlib").sha256(item.content.encode("utf-8")).hexdigest(),
             approved_by_user_id=owner_id,
             approved_at=datetime.now(timezone.utc),
-        ))
+        )
+        db.add(grant)
+        db.flush()
+        from app.knowledge.indexing import replace_chunks_for_item
+        replace_chunks_for_item(db, item)
         db.commit()
 
 
