@@ -18,6 +18,7 @@ from app.models.entities import (
     Company,
     Conversation,
     KnowledgeItem,
+    KnowledgeSourceGrant,
     Message,
     Task,
     User,
@@ -68,6 +69,30 @@ def chat_fixture(monkeypatch):
             ),
         ])
         db.flush()
+        budget = db.get(KnowledgeItem, "budget")
+        import hashlib
+        from app.security.knowledge_access import source_version_token
+        db.add(KnowledgeSourceGrant(
+            company_id="one",
+            source_type="item",
+            source_id=budget.id,
+            classification="B",
+            owner_user_id="alice",
+            created_by_user_id="alice",
+            allowed_user_ids=["alice"],
+            allowed_agent_instance_ids=["agent"],
+            allowed_purposes=["task_execution"],
+            is_active=True,
+            is_approved=True,
+            policy_version=1,
+            source_version=source_version_token(budget.updated_at),
+            source_hash=hashlib.sha256(budget.content.encode("utf-8")).hexdigest(),
+            approved_by_user_id="bob",
+            approved_at=datetime.now(timezone.utc),
+        ))
+        db.flush()
+        from app.knowledge.indexing import replace_chunks_for_item
+        replace_chunks_for_item(db, budget)
         exp = datetime.now(timezone.utc) + timedelta(hours=12)
         db.add_all([
             AuthSession(id="chat-alice", user_id="alice", company_id="one", auth_version=1, absolute_expires_at=exp),
