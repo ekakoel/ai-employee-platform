@@ -188,6 +188,7 @@ def load_agent_context(
             agent_instance_id=agent.id,
             requester_id=task.requested_by_user_id,
             purpose="task_execution",
+            task_id=task.id,
             query=query,
             limit=5,
         )
