@@ -32,7 +32,7 @@ def _fresh_company():
 
 
 def test_smoke_playbook_execute_knowledge_inventory():
-    company_id, headers, _email = _fresh_company()
+    company_id, headers, demo_body = _fresh_company()
 
     pb = client.post(
         f"/api/v1/companies/{company_id}/demo/playbook-reservation",
@@ -83,7 +83,56 @@ def test_smoke_playbook_execute_knowledge_inventory():
     know = ing.json()
     assert "Alila" in know["content"]
 
-    listed = client.get(f"/api/v1/companies/{company_id}/knowledge", headers=headers)
+    # New sources are not visible to retrieval/listing until a separate
+    # administrator approves a purpose-bound source grant.
+    agent_id = body["agent_instance_id"]
+    listed = client.get(
+        f"/api/v1/companies/{company_id}/knowledge",
+        headers=headers,
+        params={"agent_instance_id": agent_id},
+    )
+    assert listed.status_code == 200
+    assert not any(k["id"] == know["id"] for k in listed.json())
+
+    approver = next(
+        (u for u in (demo_body.get("users") or []) if u.get("role") == "ai_admin"),
+        None,
+    )
+    assert approver is not None, "demo bootstrap must include an independent AI admin"
+    manager_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": approver["email"], "password": "demo12345"},
+    )
+    assert manager_login.status_code == 200, manager_login.text
+    manager_token = manager_login.json()
+    manager_headers = {
+        "Authorization": f"Bearer {manager_token['access_token']}",
+        "X-User-ID": manager_token["user_id"],
+    }
+    created_grant = client.post(
+        f"/api/v1/companies/{company_id}/knowledge/source-grants",
+        headers=manager_headers,
+        json={
+            "source_type": "item",
+            "source_id": know["id"],
+            "classification": "B",
+            "owner_user_id": manager_token["user_id"],
+            "allowed_user_ids": [headers["X-User-ID"]],
+            "allowed_purposes": ["knowledge_list", "knowledge_search", "task_execution"],
+        },
+    )
+    assert created_grant.status_code == 201, created_grant.text
+    approved_grant = client.post(
+        f"/api/v1/companies/{company_id}/knowledge/source-grants/{created_grant.json()['id']}/approve",
+        headers=headers,
+    )
+    assert approved_grant.status_code == 200, approved_grant.text
+
+    listed = client.get(
+        f"/api/v1/companies/{company_id}/knowledge",
+        headers=headers,
+        params={"agent_instance_id": agent_id},
+    )
     assert listed.status_code == 200
     assert any(k["id"] == know["id"] for k in listed.json())
 
