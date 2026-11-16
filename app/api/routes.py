@@ -2590,10 +2590,22 @@ def update_knowledge(
             detail="Knowledge item not found",
         )
 
-    for key, value in payload.model_dump(
-        exclude_unset=True
-    ).items():
+    changed_fields = payload.model_dump(exclude_unset=True)
+    for key, value in changed_fields.items():
         setattr(item, key, value)
+
+    if changed_fields:
+        grants = db.scalars(select(KnowledgeSourceGrant).where(
+            KnowledgeSourceGrant.company_id == company_id,
+            KnowledgeSourceGrant.source_type == "item",
+            KnowledgeSourceGrant.source_id == item.id,
+        )).all()
+        for grant in grants:
+            grant.is_active = False
+            grant.is_approved = False
+            grant.policy_version += 1
+        # Purge embeddings/chunks; a fresh owner review and approval is required.
+        replace_chunks_for_item(db, item)
 
     record_audit(
         db,
@@ -2645,6 +2657,16 @@ def delete_knowledge(
             status_code=404,
             detail="Knowledge item not found",
         )
+
+    grants = db.scalars(select(KnowledgeSourceGrant).where(
+        KnowledgeSourceGrant.company_id == company_id,
+        KnowledgeSourceGrant.source_type == "item",
+        KnowledgeSourceGrant.source_id == item.id,
+    )).all()
+    for grant in grants:
+        grant.is_active = False
+        grant.is_approved = False
+        grant.policy_version += 1
 
     record_audit(
         db,
