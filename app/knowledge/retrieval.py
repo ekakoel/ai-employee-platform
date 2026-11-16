@@ -52,37 +52,6 @@ def _record_retrieval_audit(db: Session, *, requester: User | None, company_id: 
     db.flush()
 
 
-def authorized_source_ids(db: Session, *, requester: User | None,
-                          company_id: str, purpose: str) -> tuple[list[str], list[str]]:
-    """Resolve explicit source grants from trusted persisted identity; unknown is deny."""
-    if (requester is None or requester.status != "active"
-            or requester.company_id != company_id or not purpose):
-        return [], []
-    policies = db.scalars(select(KnowledgeSourcePolicy).where(
-        KnowledgeSourcePolicy.company_id == company_id,
-        KnowledgeSourcePolicy.is_active.is_(True),
-        KnowledgeSourcePolicy.is_approved.is_(True),
-        KnowledgeSourcePolicy.expires_at.is_(None) | (KnowledgeSourcePolicy.expires_at > datetime.now(timezone.utc)),
-        KnowledgeSourcePolicy.allowed_purposes.contains([purpose]),
-    )).all()
-    item_ids: list[str] = []
-    document_ids: list[str] = []
-    for policy in policies:
-        if policy.classification not in {"A", "B", "C"}:
-            continue
-        if policy.classification in {"B", "C"}:
-            user_grant = requester.id in (policy.allowed_user_ids or [])
-            role_grant = requester.role_id in (policy.allowed_role_ids or [])
-            department_grant = bool(requester.department_id and requester.department_id in (policy.allowed_department_ids or []))
-            if not (user_grant or role_grant or department_grant):
-                continue
-        if policy.source_type == "item":
-            item_ids.append(policy.source_id)
-        elif policy.source_type == "document":
-            document_ids.append(policy.source_id)
-    return item_ids, document_ids
-
-
 def search_knowledge_chunks(
     db: Session,
     *,
