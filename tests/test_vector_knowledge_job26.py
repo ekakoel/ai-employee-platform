@@ -1,6 +1,7 @@
 """Job 26 — Vector / hybrid knowledge retrieval tests."""
 
 import pytest
+from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 
 from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
@@ -16,7 +17,7 @@ from app.knowledge.embeddings import (
 from app.knowledge.indexing import replace_chunks_for_item
 from app.knowledge.retrieval import search_knowledge_chunks
 from app.main import app
-from app.models.entities import KnowledgeChunk, KnowledgeItem
+from app.models.entities import KnowledgeChunk, KnowledgeItem, KnowledgeSourcePolicy, Role, User
 from app.services.seed import seed_catalog
 
 engine = create_engine(
@@ -116,7 +117,7 @@ def test_hybrid_search_returns_vector_scores(client, monkeypatch):
     co = {"id": _cid}
     owner = {"id": _oid, "email": _demo.get("owner_email")}
     headers = _hdrs
-    client.post(
+    created = client.post(
         f"/api/v1/companies/{co['id']}/knowledge",
         headers=headers,
         json={
@@ -125,6 +126,16 @@ def test_hybrid_search_returns_vector_scores(client, monkeypatch):
             "category": "policy",
         },
     )
+    assert created.status_code == 201, created.text
+    with SessionLocal() as db:
+        db.add(KnowledgeSourcePolicy(
+            company_id=co["id"], source_type="item", source_id=created.json()["id"],
+            classification="B", is_approved=True, is_active=True,
+            allowed_user_ids=[_oid], allowed_role_ids=[], allowed_department_ids=[],
+            allowed_purposes=["interactive_knowledge_search"], approval_ref="TEST-OWNER-APPROVAL",
+            owner_user_id=_oid, reviewed_at=datetime.now(timezone.utc), policy_version=1,
+        ))
+        db.commit()
     search = client.post(
         f"/api/v1/companies/{co['id']}/knowledge/search",
         headers=headers,
@@ -164,6 +175,12 @@ def test_keyword_only_when_flag_off(monkeypatch):
         co = Company(name="KW Only Co")
         db.add(co)
         db.flush()
+        role = Role(name="owner")
+        db.add(role)
+        db.flush()
+        user = User(company_id=co.id, email="kw@example.test", name="KW Owner", role_id=role.id)
+        db.add(user)
+        db.flush()
         item = KnowledgeItem(
             company_id=co.id,
             title="Test",
@@ -173,6 +190,13 @@ def test_keyword_only_when_flag_off(monkeypatch):
         )
         db.add(item)
         db.flush()
+        db.add(KnowledgeSourcePolicy(
+            company_id=co.id, source_type="item", source_id=item.id,
+            classification="B", is_approved=True, is_active=True,
+            allowed_user_ids=[user.id], allowed_role_ids=[], allowed_department_ids=[],
+            allowed_purposes=["task_execution"], approval_ref="TEST-OWNER-APPROVAL",
+            owner_user_id=user.id, reviewed_at=datetime.now(timezone.utc), policy_version=1,
+        ))
         replace_chunks_for_item(db, item)
         db.commit()
         chunks = list(
@@ -183,7 +207,7 @@ def test_keyword_only_when_flag_off(monkeypatch):
         assert chunks
         assert chunks[0].embedding is None
         hits = search_knowledge_chunks(
-            db, company_id=co.id, agent_instance_id=None, query="hotel reservation"
+            db, company_id=co.id, agent_instance_id=None, query="hotel reservation", requester_user_id=user.id, purpose="task_execution"
         )
         assert hits
         assert hits[0]["search_mode"] == "keyword"
