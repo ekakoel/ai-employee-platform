@@ -40,6 +40,8 @@ def upgrade():
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.UniqueConstraint("company_id", "source_type", "source_id", name="uq_knowledge_source_policy"),
+        sa.CheckConstraint("classification IN ('A', 'B', 'C', 'D', 'U')", name="ck_knowledge_source_classification"),
+        sa.CheckConstraint("source_type IN ('item', 'document')", name="ck_knowledge_source_type"),
     )
     op.create_index("ix_knowledge_source_policies_company_id", "knowledge_source_policies", ["company_id"])
     op.create_index("ix_knowledge_source_policy_company", "knowledge_source_policies", ["company_id", "source_type", "is_active"])
