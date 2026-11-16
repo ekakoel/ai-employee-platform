@@ -1617,10 +1617,22 @@ def search_company_knowledge(
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "knowledge.read")
 
+    if agent_instance_id is None:
+        raise HTTPException(status_code=400, detail="agent_instance_id is required for authorized knowledge retrieval")
+    get_owned_agent_or_404(db, company_id, agent_instance_id)
+    require_agent_use(
+        db,
+        user,
+        company_id=company_id,
+        agent_instance_id=agent_instance_id,
+    )
+
     hits = search_knowledge_chunks(
         db,
         company_id=company_id,
         agent_instance_id=agent_instance_id,
+        requester_id=user.id,
+        purpose="knowledge_search",
         query=payload.query,
         limit=payload.limit,
     )
@@ -1629,6 +1641,8 @@ def search_company_knowledge(
             db,
             company_id=company_id,
             agent_instance_id=agent_instance_id,
+            requester_id=user.id,
+            purpose="knowledge_search",
             query=payload.query,
             limit=payload.limit - len(hits),
         )
@@ -3490,6 +3504,7 @@ def create_task(
 
     task = Task(
         company_id=company_id,
+        requested_by_user_id=user.id,
         **data,
         status=TaskStatus.PENDING.value,
     )
