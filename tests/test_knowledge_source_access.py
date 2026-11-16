@@ -58,7 +58,7 @@ def test_secret_and_unclassified_sources_are_never_allowed():
 
 def test_public_corpus_requires_explicit_wildcard_admission():
     assert grant_allows(
-        _grant(classification="A", allowed_user_ids=["*"]),
+        _grant(classification="A", allowed_user_ids=["*"], allowed_agent_instance_ids=["*"]),
         _user(),
         "task_execution",
         "agent-1",
