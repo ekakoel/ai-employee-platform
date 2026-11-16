@@ -377,6 +377,7 @@ def post_human_message(
         task = Task(
             company_id=company_id,
             agent_instance_id=conv.agent_instance_id,
+            requested_by_user_id=user_id,
             title=(conv.title or text)[:300],
             instruction=text,
             mode=task_mode if task_mode in ("consult", "execute") else "consult",
