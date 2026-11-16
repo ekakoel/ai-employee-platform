@@ -227,7 +227,7 @@ def test_agent_memory_lifecycle(client):
         headers=_hdrs,
     )
     assert listed.status_code == 200
-    assert any(m["id"] == mem_id for m in listed.json())
+    assert listed.json() == [], "unclassified agent memories must remain unavailable to retrieval"
 
     deleted = client.delete(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/memories/{mem_id}",
@@ -239,7 +239,7 @@ def test_agent_memory_lifecycle(client):
         f"/api/v1/companies/{company_id}/agents/{agent_id}/memories",
         headers=_hdrs,
     )
-    assert all(m["id"] != mem_id for m in listed2.json())
+    assert listed2.json() == []
 
 
 def test_expired_memory_not_listed(client):
