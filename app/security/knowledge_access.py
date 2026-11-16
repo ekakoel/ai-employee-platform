@@ -1,10 +1,11 @@
 """Fail-closed authorization for knowledge source retrieval."""
 from datetime import datetime, timezone
+import hashlib
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.entities import KnowledgeSourcePolicy, User
+from app.models.entities import KnowledgeDocument, KnowledgeItem, KnowledgeSourcePolicy, User
 
 
 def authorized_source_ids(
@@ -38,10 +39,29 @@ def authorized_source_ids(
 
     item_ids: list[str] = []
     document_ids: list[str] = []
+    item_rows = {
+        row.id: row for row in db.scalars(
+            select(KnowledgeItem).where(KnowledgeItem.company_id == company_id)
+        ).all()
+    }
+    document_rows = {
+        row.id: row for row in db.scalars(
+            select(KnowledgeDocument).where(KnowledgeDocument.company_id == company_id)
+        ).all()
+    }
     for policy in policies:
         if policy.classification not in {"A", "B", "C"}:
             continue
-        if not policy.approval_ref or purpose not in (policy.allowed_purposes or []):
+        if not policy.approval_ref or not policy.source_hash or purpose not in (policy.allowed_purposes or []):
+            continue
+        source = item_rows.get(policy.source_id) if policy.source_type == "item" else document_rows.get(policy.source_id)
+        if source is None or not getattr(source, "is_active", True):
+            continue
+        if policy.source_type == "document" and str(source.status).lower() not in {"ready", "documentstatus.ready"}:
+            continue
+        source_text = source.content if policy.source_type == "item" else (source.extracted_text or "")
+        current_hash = hashlib.sha256((source_text or "").encode("utf-8")).hexdigest()
+        if current_hash != policy.source_hash:
             continue
         if policy.classification in {"B", "C"}:
             user_grant = requester.id in (policy.allowed_user_ids or [])
