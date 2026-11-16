@@ -43,7 +43,7 @@ from app.models import (
     Task,
     User,
 )
-from app.models.entities import TaskStatus
+from app.models.entities import DocumentStatus, TaskStatus
 from app.runtime.tool_executor import ToolExecutionError, ToolExecutor
 from app.schemas.domain import (
     ConversationCreate,
@@ -1745,7 +1745,7 @@ def approve_knowledge_source_grant(
         source = db.scalar(select(KnowledgeDocument).where(
             KnowledgeDocument.id == grant.source_id,
             KnowledgeDocument.company_id == company_id,
-            KnowledgeDocument.status == "READY",
+            KnowledgeDocument.status == DocumentStatus.READY,
         ))
         source_content = source.extracted_text if source else None
     if source is None:
@@ -1849,7 +1849,8 @@ def search_company_knowledge(
             query=payload.query,
             limit=payload.limit - len(hits),
         )
-        hits.extend(items)
+        existing_sources = {hit.get("source_id") for hit in hits}
+        hits.extend(item for item in items if item.get("source_id") not in existing_sources)
     db.commit()  # persist allow/deny authorization audit events
     return hits
 
