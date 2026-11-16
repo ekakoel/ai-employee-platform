@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import hashlib
+from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -47,20 +49,57 @@ def _session_local():
         return None
 
 
-def _search(db, company_id, query, limit=5, agent_instance_id=None):
+def _approve_demo_sources(company_id, owner_id):
+    from app.models.entities import KnowledgeItem, KnowledgeSourceGrant
+    from app.security.knowledge_access import source_version_token
+
+    SessionLocal = _session_local()
+    if SessionLocal is None or not owner_id:
+        return
+    with SessionLocal() as db:
+        items = db.query(KnowledgeItem).filter(
+            KnowledgeItem.company_id == company_id,
+            KnowledgeItem.is_active.is_(True),
+        ).all()
+        for item in items:
+            db.add(KnowledgeSourceGrant(
+                company_id=company_id,
+                source_type="item",
+                source_id=item.id,
+                classification="B",
+                owner_user_id=owner_id,
+                created_by_user_id=owner_id,
+                allowed_user_ids=[owner_id],
+                allowed_purposes=["knowledge_search"],
+                is_active=True,
+                is_approved=True,
+                policy_version=1,
+                source_version=source_version_token(item.updated_at),
+                source_hash=hashlib.sha256(item.content.encode("utf-8")).hexdigest(),
+                approved_by_user_id=owner_id,
+                approved_at=datetime.now(timezone.utc),
+            ))
+        db.commit()
+
+
+def _search(db, company_id, query, limit=5, agent_instance_id=None, requester_id=None):
     from app.knowledge.retrieval import search_knowledge_chunks
     return search_knowledge_chunks(
         db,
         company_id=company_id,
         query=query,
         agent_instance_id=agent_instance_id,
+        requester_id=requester_id,
+        purpose="knowledge_search",
         limit=limit,
     )
 
 
 def test_search_knowledge_finds_cancellation_policy(client):
     """After bootstrap + index, keyword search finds cancellation_policy."""
-    _, company_id, agent_instance_id = _bootstrap(client)
+    data, company_id, agent_instance_id = _bootstrap(client)
+    owner_id = data.get("owner_user_id") or data.get("user_id")
+    _approve_demo_sources(company_id, owner_id)
     SessionLocal = _session_local()
     if SessionLocal is None:
         pytest.skip("SessionLocal not found")
@@ -72,6 +111,7 @@ def test_search_knowledge_finds_cancellation_policy(client):
             company_id,
             "cancellation policy free cancellation",
             agent_instance_id=agent_instance_id,
+            requester_id=owner_id,
         )
         assert hits, "expected at least one hit for cancellation policy"
         blob = str(hits).lower()
