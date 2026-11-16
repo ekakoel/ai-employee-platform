@@ -374,6 +374,8 @@ class KnowledgeSearchHit(BaseModel):
     chunk_index: int | None = None
     # Job 26 hybrid search metadata
     search_mode: str | None = None
+    source_id: str | None = None
+    source_title: str | None = None
     keyword_score: float | None = None
     vector_score: float | None = None
 
