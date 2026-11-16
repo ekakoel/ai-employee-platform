@@ -61,11 +61,22 @@ class AgentExecutor:
     ) -> str:
         from app.services.grounding import GroundingError, MISSING_INFORMATION, requires_action, sources
         authoritative = sources(context)
-        knowledge_count = len(context.knowledge)
+        authorized_knowledge = list(context.knowledge) + [
+            {
+                "title": hit.get("source_title") or "Authorized knowledge",
+                "content": hit.get("content") or "",
+            }
+            for hit in context.retrieved_knowledge
+        ]
+        knowledge_count = len({
+            hit.get("knowledge_item_id") or hit.get("knowledge_document_id") or hit.get("id")
+            for hit in context.retrieved_knowledge
+        }) + len(context.knowledge)
 
         knowledge_summary = "\n".join(
             f"- {item['title']}: {item['content']}"
-            for item in context.knowledge
+            for item in authorized_knowledge
+            if item.get("content")
         )
 
         if not knowledge_summary:
