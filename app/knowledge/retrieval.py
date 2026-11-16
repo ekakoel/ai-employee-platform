@@ -35,7 +35,7 @@ def _vector_enabled() -> bool:
 
 
 def _normalized_hash(content: str) -> str:
-    normalized = re.sub(r"\\s+", " ", (content or "").strip().lower())
+    normalized = re.sub(r"\s+", " ", (content or "").strip().lower())
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
