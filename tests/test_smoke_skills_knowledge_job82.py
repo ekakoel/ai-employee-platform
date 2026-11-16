@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import hashlib
+from datetime import datetime, timezone
 from collections import Counter
 
 import pytest
@@ -44,8 +46,43 @@ def _session_local():
         return None
 
 
+def _approve_demo_sources(company_id, owner_id):
+    from app.models.entities import KnowledgeItem, KnowledgeSourceGrant
+    from app.security.knowledge_access import source_version_token
+
+    SessionLocal = _session_local()
+    if SessionLocal is None or not owner_id:
+        return
+    with SessionLocal() as db:
+        items = db.query(KnowledgeItem).filter(
+            KnowledgeItem.company_id == company_id,
+            KnowledgeItem.is_active.is_(True),
+        ).all()
+        for item in items:
+            db.add(KnowledgeSourceGrant(
+                company_id=company_id,
+                source_type="item",
+                source_id=item.id,
+                classification="B",
+                owner_user_id=owner_id,
+                created_by_user_id=owner_id,
+                allowed_user_ids=[owner_id],
+                allowed_purposes=["knowledge_search"],
+                is_active=True,
+                is_approved=True,
+                policy_version=1,
+                source_version=source_version_token(item.updated_at),
+                source_hash=hashlib.sha256(item.content.encode("utf-8")).hexdigest(),
+                approved_by_user_id=owner_id,
+                approved_at=datetime.now(timezone.utc),
+            ))
+        db.commit()
+
+
 def test_bootstrap_seeds_searchable_knowledge(client):
-    _, company_id, agent_id = _bootstrap(client)
+    data, company_id, agent_id = _bootstrap(client)
+    owner_id = data.get("owner_user_id") or data.get("user_id")
+    _approve_demo_sources(company_id, owner_id)
     SessionLocal = _session_local()
     if SessionLocal is None:
         pytest.skip("SessionLocal not found")
@@ -57,6 +94,8 @@ def test_bootstrap_seeds_searchable_knowledge(client):
             db,
             company_id=company_id,
             agent_instance_id=agent_id,
+            requester_id=owner_id,
+            purpose="knowledge_search",
             query="cancellation policy 48 hours",
             limit=5,
         )
