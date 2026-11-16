@@ -5,7 +5,7 @@ import hashlib
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.entities import KnowledgeDocument, KnowledgeItem, KnowledgeSourcePolicy, User
+from app.models.entities import DocumentStatus, KnowledgeDocument, KnowledgeItem, KnowledgeSourcePolicy, User
 
 
 def authorized_source_ids(
@@ -68,7 +68,7 @@ def authorized_source_ids(
         source = item_rows.get(policy.source_id) if policy.source_type == "item" else document_rows.get(policy.source_id)
         if source is None or not getattr(source, "is_active", True):
             continue
-        if policy.source_type == "document" and str(source.status).lower() not in {"ready", "documentstatus.ready"}:
+        if policy.source_type == "document" and source.status != DocumentStatus.READY:
             continue
         source_text = source.content if policy.source_type == "item" else (source.extracted_text or "")
         current_hash = hashlib.sha256((source_text or "").encode("utf-8")).hexdigest()
