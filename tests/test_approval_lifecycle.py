@@ -190,6 +190,7 @@ def create_approval_case(
                 owner_user_id=user.id,
                 created_by_user_id=user.id,
                 allowed_user_ids=[user.id],
+                allowed_agent_instance_ids=[agent.id],
                 allowed_purposes=["task_execution"],
                 is_active=True,
                 is_approved=True,
