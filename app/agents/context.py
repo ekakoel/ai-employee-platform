@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.models.entities import AgentInstance, KnowledgeItem, Task
+from app.models.entities import AgentInstance, KnowledgeItem, Task, User
 
 
 @dataclass(frozen=True)
@@ -106,15 +106,23 @@ def load_agent_context(
             if not match.in_scope:
                 raise ValueError("Request is outside the assigned employee scope.")
 
-    knowledge_query = db.query(KnowledgeItem).filter(
-        KnowledgeItem.company_id == agent.company_id,
-        KnowledgeItem.is_active.is_(True),
+    # Knowledge is fail-closed: only explicitly approved source policies
+    # matching the persisted task requester and declared purpose can enter context.
+    requester = db.get(User, task.requested_by_user_id) if task and task.requested_by_user_id else None
+    from app.security.knowledge_access import authorized_source_ids
+    authorized_items, _ = authorized_source_ids(
+        db, requester=requester, company_id=agent.company_id,
+        purpose="task_execution",
     )
-
-    knowledge_items = knowledge_query.filter(
-        (KnowledgeItem.agent_instance_id.is_(None))
-        | (KnowledgeItem.agent_instance_id == agent.id)
-    ).all()
+    knowledge_items = []
+    if authorized_items:
+        knowledge_items = db.query(KnowledgeItem).filter(
+            KnowledgeItem.company_id == agent.company_id,
+            KnowledgeItem.is_active.is_(True),
+            KnowledgeItem.id.in_(authorized_items),
+            (KnowledgeItem.agent_instance_id.is_(None))
+            | (KnowledgeItem.agent_instance_id == agent.id),
+        ).all()
 
     # AgentInstance defines the relationship as `catalog`.
     catalog = agent.catalog
@@ -180,21 +188,9 @@ def load_agent_context(
         search_knowledge_chunks,
     )
 
-    memory_rows = active_agent_memories(
-        db,
-        company_id=agent.company_id,
-        agent_instance_id=agent.id,
-        limit=10,
-    )
-    memories = [
-        {
-            "id": m.id,
-            "title": m.title,
-            "content": m.content,
-            "category": m.category,
-        }
-        for m in memory_rows
-    ]
+    # AgentMemory has no source classification/ACL yet. Keep it out of
+    # model context until it receives the same source-policy enforcement.
+    memories: list[dict[str, Any]] = []
 
     retrieved_knowledge: list[dict[str, Any]] = []
     experiences: list[dict[str, Any]] = []
@@ -206,17 +202,11 @@ def load_agent_context(
             agent_instance_id=agent.id,
             query=query,
             limit=5,
+            requester_user_id=task.requested_by_user_id,
+            purpose="task_execution",
         )
-        from app.services.experience import search_validated_experiences
-
-        experiences = search_validated_experiences(
-            db,
-            company_id=agent.company_id,
-            agent_instance_id=agent.id,
-            query=query,
-            limit=3,
-            min_confidence=0.3,
-        )
+        # Experience records also lack source ACL metadata; do not expose them
+        # to the model until their read policy is implemented.
 
     return AgentContext(
         company_id=agent.company_id,
