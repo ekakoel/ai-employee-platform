@@ -39,14 +39,22 @@ def authorized_source_ids(
 
     item_ids: list[str] = []
     document_ids: list[str] = []
+    candidate_item_ids = [p.source_id for p in policies if p.source_type == "item"]
+    candidate_document_ids = [p.source_id for p in policies if p.source_type == "document"]
     item_rows = {
         row.id: row for row in db.scalars(
-            select(KnowledgeItem).where(KnowledgeItem.company_id == company_id)
+            select(KnowledgeItem).where(
+                KnowledgeItem.company_id == company_id,
+                KnowledgeItem.id.in_(candidate_item_ids or ["__deny__"]),
+            )
         ).all()
     }
     document_rows = {
         row.id: row for row in db.scalars(
-            select(KnowledgeDocument).where(KnowledgeDocument.company_id == company_id)
+            select(KnowledgeDocument).where(
+                KnowledgeDocument.company_id == company_id,
+                KnowledgeDocument.id.in_(candidate_document_ids or ["__deny__"]),
+            )
         ).all()
     }
     for policy in policies:
