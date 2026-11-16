@@ -13,7 +13,7 @@ from app.core.database import Base, get_db
 from app.knowledge.chunking import chunk_text
 from app.knowledge.retrieval import score_text, search_knowledge_chunks
 from app.main import app
-from app.models.entities import KnowledgeChunk
+from app.models.entities import KnowledgeChunk, KnowledgeSourcePolicy
 from app.services.seed import seed_catalog
 
 engine = create_engine(
@@ -103,7 +103,7 @@ def test_knowledge_create_indexes_chunks(client):
 
 def test_search_finds_relevant_chunk(client):
     company_id, owner_id, agent_id, _hdrs = setup(client)
-    client.post(
+    created = client.post(
         f"/api/v1/companies/{company_id}/knowledge",
         headers=_hdrs,
         json={
@@ -112,6 +112,16 @@ def test_search_finds_relevant_chunk(client):
             "category": "policy",
         },
     )
+    assert created.status_code == 201, created.text
+    with SessionLocal() as db:
+        db.add(KnowledgeSourcePolicy(
+            company_id=company_id, source_type="item", source_id=created.json()["id"],
+            classification="B", is_approved=True, is_active=True,
+            allowed_user_ids=[owner_id], allowed_role_ids=[], allowed_department_ids=[],
+            allowed_purposes=["interactive_knowledge_search"], approval_ref="TEST-OWNER-APPROVAL",
+            owner_user_id=owner_id, reviewed_at=datetime.now(timezone.utc), policy_version=1,
+        ))
+        db.commit()
     search = client.post(
         f"/api/v1/companies/{company_id}/knowledge/search",
         headers=_hdrs,
