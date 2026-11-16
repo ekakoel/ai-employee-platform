@@ -1761,6 +1761,10 @@ def approve_knowledge_source_grant(
     grant.approved_at = datetime.now(timezone.utc)
     grant.policy_version += 1
     grant.updated_at = datetime.now(timezone.utc)
+    if grant.source_type == "item":
+        replace_chunks_for_item(db, source)
+    else:
+        replace_chunks_for_document(db, source)
     record_audit(
         db, company_id=company_id, user_id=user.id,
         action="knowledge.source_grant.approve", resource_type="knowledge_source_grant",
@@ -1796,6 +1800,12 @@ def revoke_knowledge_source_grant(
     grant.is_approved = False
     grant.policy_version += 1
     grant.updated_at = datetime.now(timezone.utc)
+    if grant.source_type == "item":
+        chunks = db.scalars(select(KnowledgeChunk).where(KnowledgeChunk.knowledge_item_id == grant.source_id)).all()
+    else:
+        chunks = db.scalars(select(KnowledgeChunk).where(KnowledgeChunk.knowledge_document_id == grant.source_id)).all()
+    for chunk in chunks:
+        db.delete(chunk)
     record_audit(
         db, company_id=company_id, user_id=user.id,
         action="knowledge.source_grant.revoke", resource_type="knowledge_source_grant",
