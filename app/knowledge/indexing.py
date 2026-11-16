@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -32,6 +34,7 @@ def _source_is_indexable(db: Session, *, company_id: str, source_type: str, sour
             KnowledgeSourceGrant.is_active.is_(True),
             KnowledgeSourceGrant.is_approved.is_(True),
             KnowledgeSourceGrant.source_version == source_version_token(updated_at),
+            KnowledgeSourceGrant.source_hash == hashlib.sha256((content or "").encode("utf-8")).hexdigest(),
         )
     )
     return grant is not None
@@ -51,7 +54,7 @@ def replace_chunks_for_item(db: Session, item: KnowledgeItem) -> list[KnowledgeC
 
     if not item.is_active or not _source_is_indexable(
         db, company_id=item.company_id, source_type="item",
-        source_id=item.id, updated_at=item.updated_at,
+        source_id=item.id, updated_at=item.updated_at, content=item.content,
     ):
         return []
 
@@ -93,7 +96,7 @@ def replace_chunks_for_document(
 
     if document.status != DocumentStatus.READY or not _source_is_indexable(
         db, company_id=document.company_id, source_type="document",
-        source_id=document.id, updated_at=document.updated_at,
+        source_id=document.id, updated_at=document.updated_at, content=document.extracted_text or "",
     ):
         return []
 
