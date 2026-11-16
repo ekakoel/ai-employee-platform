@@ -120,6 +120,7 @@ def test_indexing_stores_embedding(client, monkeypatch):
         },
     )
     assert item.status_code in (200, 201), item.text
+    _approve_item_for_search(co["id"], item.json()["id"], _oid, ["knowledge_search"])
 
     with SessionLocal() as db:
         chunks = list(
