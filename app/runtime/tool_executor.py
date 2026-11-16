@@ -494,9 +494,10 @@ class ToolExecutor:
                 status="success",
                 details={
                     "tool": tool_name,
-                    "arguments": arguments,
+                    # Do not persist raw tool arguments or returned passages in
+                    # audit logs; retrieval results may contain restricted data.
+                    "argument_keys": sorted(arguments.keys()),
                     "result_count": result.get("count"),
-                    "result": result,
                 },
             )
 
