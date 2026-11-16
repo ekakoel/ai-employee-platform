@@ -114,16 +114,20 @@ def test_search_finds_relevant_chunk(client):
         },
     )
     assert created.status_code == 201, created.text
-    with SessionLocal() as db:
-        db.add(KnowledgeSourcePolicy(
-            company_id=company_id, source_type="item", source_id=created.json()["id"],
-            source_hash=hashlib.sha256("Customers may cancel free within 24 hours. Late cancel incurs fee.".encode("utf-8")).hexdigest(),
-            classification="B", is_approved=True, is_active=True,
-            allowed_user_ids=[owner_id], allowed_role_ids=[], allowed_department_ids=[],
-            allowed_purposes=["interactive_knowledge_search"], approval_ref="TEST-OWNER-APPROVAL",
-            owner_user_id=owner_id, reviewed_at=datetime.now(timezone.utc), policy_version=1,
-        ))
-        db.commit()
+    admitted = client.put(
+        f"/api/v1/companies/{company_id}/knowledge/sources/item/{created.json()['id']}/policy",
+        headers=_hdrs,
+        json={
+            "classification": "B",
+            "allowed_user_ids": [owner_id],
+            "allowed_role_ids": [],
+            "allowed_department_ids": [],
+            "allowed_purposes": ["interactive_knowledge_search"],
+            "approval_ref": "TEST-OWNER-APPROVAL",
+            "source_version": "1.0",
+        },
+    )
+    assert admitted.status_code == 200, admitted.text
     search = client.post(
         f"/api/v1/companies/{company_id}/knowledge/search",
         headers=_hdrs,
@@ -133,6 +137,19 @@ def test_search_finds_relevant_chunk(client):
     hits = search.json()
     assert len(hits) >= 1
     assert hits[0]["score"] > 0
+
+    revoked = client.delete(
+        f"/api/v1/companies/{company_id}/knowledge/sources/item/{created.json()['id']}/policy",
+        headers=_hdrs,
+    )
+    assert revoked.status_code == 204
+    after_revoke = client.post(
+        f"/api/v1/companies/{company_id}/knowledge/search",
+        headers=_hdrs,
+        json={"query": "cancel fee", "limit": 5},
+    )
+    assert after_revoke.status_code == 200
+    assert after_revoke.json() == []
 
 
 def test_tenant_isolation_search(client):
