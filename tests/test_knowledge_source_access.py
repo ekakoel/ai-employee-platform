@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 from app.security.knowledge_access import grant_allows
-from app.knowledge.retrieval import deduplicate_source_hits
+from app.knowledge.retrieval import apply_token_budget, deduplicate_source_hits
 
 
 def _grant(**overrides):
@@ -80,3 +80,14 @@ def test_duplicate_passages_deduplicate_within_source_but_keep_provenance():
     ]
     result = deduplicate_source_hits(hits)
     assert [row["id"] for row in result] == ["c1", "c3"]
+
+
+def test_retrieval_token_budget_keeps_highest_ranked_hits():
+    hits = [
+        {"id": "c1", "content": "a" * 40, "score": 0.9},
+        {"id": "c2", "content": "b" * 40, "score": 0.8},
+        {"id": "c3", "content": "c" * 40, "score": 0.7},
+    ]
+    # estimate_tokens uses len(text)//4, so each passage costs 10 tokens.
+    result = apply_token_budget(hits, max_tokens=20)
+    assert [hit["id"] for hit in result] == ["c1", "c2"]
