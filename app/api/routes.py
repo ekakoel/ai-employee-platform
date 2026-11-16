@@ -1906,9 +1906,20 @@ def list_agent_memories(
     user = require_company_user(db, company_id, x_user_id)
     get_owned_agent_or_404(db, company_id, agent_instance_id)
     require_permission(user, "agent.read")
-    return active_agent_memories(
-        db, company_id=company_id, agent_instance_id=agent_instance_id, limit=50
-    )
+    # AgentMemory has no source classification or per-user read grants yet.
+    # Do not expose ungoverned memory through a parallel API endpoint.
+    db.add(AuditLog(
+        company_id=company_id,
+        user_id=user.id,
+        agent_instance_id=agent_instance_id,
+        action="memory.read.authorization",
+        resource_type="agent_memory_collection",
+        resource_id=None,
+        status="denied",
+        details={"reason": "source_policy_not_implemented"},
+    ))
+    db.commit()
+    return []
 
 
 @router.post(
@@ -2410,14 +2421,20 @@ def search_company_experiences(
 ):
     user = require_company_user(db, company_id, x_user_id)
     require_permission(user, "agent.read")
-    return search_validated_experiences(
-        db,
+    # Experience records can contain task-derived business/customer data.
+    # Until they inherit source grants, deny direct retrieval as well.
+    db.add(AuditLog(
         company_id=company_id,
+        user_id=user.id,
         agent_instance_id=payload.agent_instance_id,
-        query=payload.query,
-        limit=payload.limit,
-        min_confidence=payload.min_confidence,
-    )
+        action="experience.read.authorization",
+        resource_type="experience_search",
+        resource_id=None,
+        status="denied",
+        details={"reason": "source_policy_not_implemented"},
+    ))
+    db.commit()
+    return []
 
 
 @router.post(
