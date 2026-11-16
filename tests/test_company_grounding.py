@@ -13,11 +13,13 @@ from app.llm.base import LLMResponse
 from app.main import app
 from app.models.entities import (
     AgentInstance, AgentSkill, AgentSubscription, Approval, AuditLog,
-    Company, Conversation, KnowledgeChunk, KnowledgeItem, Policy, Skill, Task, User,
+    Company, Conversation, KnowledgeChunk, KnowledgeItem, KnowledgeSourceGrant, Policy, Skill, Task, User,
 )
 from app.runtime.tool_executor import ApprovalRequiredError, ToolExecutionError, ToolExecutor
 from app.security.policy_engine import PolicyEngine, conditions_match
 from app.knowledge.retrieval import search_knowledge_chunks
+from app.security.knowledge_access import source_version_token
+from app.knowledge.indexing import replace_chunks_for_item
 from app.services.conversation import _agent_reply_text
 from app.services.grounding import GroundingError, MISSING_INFORMATION, required_action_tool, validated_answer
 from app.services.seed import get_or_create_role
@@ -57,9 +59,29 @@ def workspace():
             KnowledgeItem(id="foreign", company_id="two", title="Foreign pricing", content="FOREIGN"),
         ])
         db.flush()
+        price_source = db.get(KnowledgeItem, "prices")
+        db.add(KnowledgeSourceGrant(
+            company_id="one",
+            source_type="item",
+            source_id=price_source.id,
+            classification="B",
+            owner_user_id="owner",
+            created_by_user_id="owner",
+            allowed_user_ids=["owner"],
+            allowed_purposes=["task_execution", "knowledge_search", "knowledge_list"],
+            is_active=True,
+            is_approved=True,
+            policy_version=1,
+            source_version=source_version_token(price_source.updated_at),
+            source_hash=__import__("hashlib").sha256(price_source.content.encode("utf-8")).hexdigest(),
+            approved_by_user_id="owner",
+            approved_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+        ))
+        db.flush()
+        replace_chunks_for_item(db, price_source)
         db.add_all([
             AgentSkill(company_id="one", agent_instance_id="agent", skill_id="skill"),
-            Task(id="task", company_id="one", agent_instance_id="agent", title="Bali quotation", instruction="Create quotation for Ada: 3-day Bali tour for 2 guests."),
+            Task(id="task", company_id="one", agent_instance_id="agent", requested_by_user_id="owner", title="Bali quotation", instruction="Create quotation for Ada: 3-day Bali tour for 2 guests."),
             Conversation(id="chat", company_id="one", agent_instance_id="agent", user_id="owner", title="Bali"),
         ])
         db.commit()
@@ -96,7 +118,8 @@ def test_context_sources_skills_and_no_implicit_tool_grants(workspace):
     with sessions() as db:
         agent = db.get(AgentInstance, "agent")
         context = load_agent_context(db, agent, db.get(Task, "task"))
-        assert {row["id"] for row in context.knowledge} == {"prices"}
+        assert context.knowledge == []
+        assert {row["knowledge_item_id"] for row in context.retrieved_knowledge} == {"prices"}
         assert context.assigned_skills[0]["instructions"] == "Use company pricing only."
         assert context.assigned_skills[0]["workflow"] == ["load pricing", "draft quotation"]
         agent.allowed_tools = []
