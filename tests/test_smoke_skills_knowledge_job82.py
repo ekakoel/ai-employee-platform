@@ -67,7 +67,7 @@ def _approve_demo_sources(company_id, owner_id, agent_id):
                 owner_user_id=owner_id,
                 created_by_user_id=owner_id,
                 allowed_user_ids=[owner_id],
-                allowed_agent_instance_ids=[agent_instance_id],
+                allowed_agent_instance_ids=[agent_id],
                 allowed_purposes=["knowledge_search"],
                 is_active=True,
                 is_approved=True,
@@ -88,7 +88,7 @@ def _approve_demo_sources(company_id, owner_id, agent_id):
 def test_bootstrap_seeds_searchable_knowledge(client):
     data, company_id, agent_id = _bootstrap(client)
     owner_id = data.get("owner_user_id") or data.get("user_id")
-    _approve_demo_sources(company_id, owner_id, agent_instance_id)
+    _approve_demo_sources(company_id, owner_id, agent_id)
     SessionLocal = _session_local()
     if SessionLocal is None:
         pytest.skip("SessionLocal not found")
