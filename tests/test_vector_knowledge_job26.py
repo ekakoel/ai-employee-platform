@@ -21,7 +21,7 @@ from app.models.entities import KnowledgeChunk, KnowledgeItem, KnowledgeSourceGr
 from app.security.knowledge_access import source_version_token
 from app.services.seed import seed_catalog
 
-def _approve_item_for_search(company_id, item_id, owner_id, purposes):
+def _approve_item_for_search(company_id, item_id, owner_id, purposes, agent_instance_id):
     with SessionLocal() as db:
         item = db.get(KnowledgeItem, item_id)
         assert item is not None
@@ -33,6 +33,7 @@ def _approve_item_for_search(company_id, item_id, owner_id, purposes):
             owner_user_id=owner_id,
             created_by_user_id=owner_id,
             allowed_user_ids=[owner_id],
+            allowed_agent_instance_ids=[agent_instance_id],
             allowed_purposes=purposes,
             is_active=True,
             is_approved=True,
@@ -107,6 +108,8 @@ def test_indexing_stores_embedding(client, monkeypatch):
 
     # auth-hardened: demo bootstrap instead of public company create
     _cid, _oid, _hdrs, _demo = provision_company(client)
+    agent_instance_id = (_demo.get("agents") or [{}])[0].get("id")
+    assert agent_instance_id
     co = {"id": _cid}
     owner = {"id": _oid, "email": _demo.get("owner_email")}
     headers = _hdrs
@@ -120,7 +123,7 @@ def test_indexing_stores_embedding(client, monkeypatch):
         },
     )
     assert item.status_code in (200, 201), item.text
-    _approve_item_for_search(co["id"], item.json()["id"], _oid, ["knowledge_search"])
+    _approve_item_for_search(co["id"], item.json()["id"], _oid, ["knowledge_search"], agent_instance_id)
 
     with SessionLocal() as db:
         chunks = list(
@@ -157,9 +160,7 @@ def test_hybrid_search_returns_vector_scores(client, monkeypatch):
         },
     )
     assert created.status_code == 201, created.text
-    _approve_item_for_search(co["id"], created.json()["id"], _oid, ["knowledge_search"])
-    agent_instance_id = (_demo.get("agents") or [{}])[0].get("id")
-    assert agent_instance_id
+    _approve_item_for_search(co["id"], created.json()["id"], _oid, ["knowledge_search"], agent_instance_id)
     search = client.post(
         f"/api/v1/companies/{co['id']}/knowledge/search",
         headers=headers,
