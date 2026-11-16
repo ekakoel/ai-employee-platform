@@ -1637,6 +1637,8 @@ def search_company_knowledge(
             purpose="interactive_knowledge_search",
         )
         hits.extend(items)
+    # Persist metadata-only retrieval audit decisions for interactive searches.
+    db.commit()
     return hits
 
 
