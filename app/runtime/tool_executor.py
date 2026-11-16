@@ -534,7 +534,15 @@ class ToolExecutor:
                     raise ValueError(f"Missing required tool argument: {key}")
             prepare = getattr(tool, "prepare_arguments", None)
             if prepare is not None:
-                return prepare(ToolContext(company_id=company_id, agent_instance_id=agent_id, task_id=task_id, db=self.db), arguments)
+                task = self.db.get(Task, task_id) if task_id else None
+                requester_id = task.requested_by_user_id if task is not None else None
+                return prepare(ToolContext(
+                    company_id=company_id,
+                    agent_instance_id=agent_id,
+                    task_id=task_id,
+                    requester_user_id=requester_id,
+                    db=self.db,
+                ), arguments)
             return dict(arguments)
         except (ValueError, TypeError, KeyError, ArithmeticError) as exc:
             self._audit_denied(company_id=company_id, agent_instance_id=agent_id, task_id=task_id,
