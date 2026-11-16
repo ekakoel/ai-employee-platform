@@ -49,7 +49,7 @@ def client():
         app.dependency_overrides[get_db] = prev
 
 
-def _approve_item_for_search(company_id, item_id, owner_id, purposes):
+def _approve_item_for_search(company_id, item_id, owner_id, purposes, agent_instance_id):
     with SessionLocal() as db:
         item = db.get(KnowledgeItem, item_id)
         assert item is not None
@@ -61,6 +61,7 @@ def _approve_item_for_search(company_id, item_id, owner_id, purposes):
             owner_user_id=owner_id,
             created_by_user_id=owner_id,
             allowed_user_ids=[owner_id],
+            allowed_agent_instance_ids=[agent_instance_id],
             allowed_purposes=purposes,
             is_active=True,
             is_approved=True,
@@ -118,7 +119,7 @@ def test_knowledge_create_indexes_chunks(client):
     )
     assert resp.status_code == 201, resp.text
     item_id = resp.json()["id"]
-    _approve_item_for_search(company_id, item_id, owner_id, ["knowledge_search"])
+    _approve_item_for_search(company_id, item_id, owner_id, ["knowledge_search"], agent_id)
 
     with SessionLocal() as db:
         chunks = list(
@@ -144,7 +145,7 @@ def test_search_finds_relevant_chunk(client):
         },
     )
     assert created.status_code == 201, created.text
-    _approve_item_for_search(company_id, created.json()["id"], owner_id, ["knowledge_search"])
+    _approve_item_for_search(company_id, created.json()["id"], owner_id, ["knowledge_search"], agent_id)
     search = client.post(
         f"/api/v1/companies/{company_id}/knowledge/search",
         headers=_hdrs,
