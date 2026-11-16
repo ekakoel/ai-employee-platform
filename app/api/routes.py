@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import hashlib
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile, status, Request
 from sqlalchemy import or_, select
@@ -34,7 +35,9 @@ from app.models import (
     DelegationRequest,
     Experience,
     KnowledgeChunk,
+    KnowledgeDocument,
     KnowledgeItem,
+    KnowledgeSourceGrant,
     Policy,
     Skill,
     Task,
@@ -105,6 +108,8 @@ from app.schemas.domain import (
     TaskCreate,
     TaskRead,
     UserCreate, UserRoleUpdate,
+    KnowledgeSourceGrantCreate,
+    KnowledgeSourceGrantRead,
     UserRead,
     MarketplaceTemplateRead,
     MarketplaceInstallationRead,
@@ -139,6 +144,7 @@ from app.services.access import (
     require_agent_chat,
     grant_operational_access_for_agent,
     grant_all_agents_to_user,
+    is_company_admin,
 )
 from app.services.approval import ApprovalService
 from app.services.consultation import run_consultation
@@ -167,6 +173,7 @@ from app.services.experience import (
 from app.services.audit import record_audit
 from app.services.seed import get_or_create_role
 from app.services.task_runtime import TaskRuntimeService
+from app.security.knowledge_access import source_version_token, authorized_source_ids
 
 router = APIRouter(prefix="/api/v1")
 
@@ -1604,6 +1611,202 @@ def delete_company_policy(
 
 
 @router.post(
+    "/companies/{company_id}/knowledge/source-grants",
+    response_model=KnowledgeSourceGrantRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_knowledge_source_grant(
+    company_id: str,
+    payload: KnowledgeSourceGrantCreate,
+    db: Session = Depends(get_db),
+    x_user_id: str = Depends(get_authenticated_user_id),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "knowledge.write")
+
+    if payload.source_type == "item":
+        source = db.scalar(select(KnowledgeItem).where(
+            KnowledgeItem.id == payload.source_id,
+            KnowledgeItem.company_id == company_id,
+        ))
+        source_content = source.content if source else None
+    else:
+        source = db.scalar(select(KnowledgeDocument).where(
+            KnowledgeDocument.id == payload.source_id,
+            KnowledgeDocument.company_id == company_id,
+        ))
+        source_content = source.extracted_text if source else None
+    if source is None:
+        raise HTTPException(status_code=404, detail="Knowledge source not found")
+
+    owner = db.get(User, payload.owner_user_id)
+    if owner is None or owner.company_id != company_id or owner.status != "active":
+        raise HTTPException(status_code=400, detail="Source owner must be an active user in this company")
+
+    allowed_users = set(payload.allowed_user_ids)
+    if "*" in allowed_users and payload.classification != "A":
+        raise HTTPException(status_code=400, detail="Wildcard audience is only valid for classification A")
+    if payload.classification == "C" and not allowed_users:
+        raise HTTPException(status_code=400, detail="Restricted C sources require named user grants")
+    if payload.classification == "A" and allowed_users != {"*"}:
+        raise HTTPException(status_code=400, detail="A sources require an explicit wildcard audience")
+    if payload.classification == "B" and not (
+        allowed_users or payload.allowed_role_ids or payload.allowed_department_ids
+    ):
+        raise HTTPException(status_code=400, detail="B sources require an explicit audience")
+    if not payload.allowed_purposes:
+        raise HTTPException(status_code=400, detail="At least one permitted purpose is required")
+
+    if allowed_users - {"*"}:
+        valid_users = set(db.scalars(select(User.id).where(
+            User.company_id == company_id,
+            User.status == "active",
+            User.id.in_(allowed_users),
+        )).all())
+        if valid_users != allowed_users:
+            raise HTTPException(status_code=400, detail="Audience contains an unknown or inactive company user")
+    if payload.allowed_department_ids:
+        valid_departments = set(db.scalars(select(Department.id).where(
+            Department.company_id == company_id,
+            Department.is_active.is_(True),
+            Department.id.in_(payload.allowed_department_ids),
+        )).all())
+        if valid_departments != set(payload.allowed_department_ids):
+            raise HTTPException(status_code=400, detail="Audience contains an unknown or inactive department")
+
+    current_hash = hashlib.sha256((source_content or "").encode("utf-8")).hexdigest()
+    if payload.source_hash and payload.source_hash.lower() != current_hash:
+        raise HTTPException(status_code=409, detail="Source content changed; refresh the source before creating its grant")
+
+    grant = KnowledgeSourceGrant(
+        company_id=company_id,
+        source_type=payload.source_type,
+        source_id=payload.source_id,
+        classification=payload.classification,
+        owner_user_id=payload.owner_user_id,
+        created_by_user_id=user.id,
+        allowed_user_ids=payload.allowed_user_ids,
+        allowed_role_ids=payload.allowed_role_ids,
+        allowed_department_ids=payload.allowed_department_ids,
+        allowed_purposes=list(dict.fromkeys(payload.allowed_purposes)),
+        is_active=False,
+        is_approved=False,
+        policy_version=1,
+        source_version=source_version_token(source.updated_at),
+        source_hash=current_hash,
+    )
+    db.add(grant)
+    db.flush()
+    record_audit(
+        db, company_id=company_id, user_id=user.id,
+        action="knowledge.source_grant.create", resource_type="knowledge_source_grant",
+        resource_id=grant.id, status="pending",
+        details={"source_type": grant.source_type, "classification": grant.classification},
+    )
+    db.commit()
+    db.refresh(grant)
+    return grant
+
+
+@router.post(
+    "/companies/{company_id}/knowledge/source-grants/{grant_id}/approve",
+    response_model=KnowledgeSourceGrantRead,
+)
+def approve_knowledge_source_grant(
+    company_id: str,
+    grant_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str = Depends(get_authenticated_user_id),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "knowledge.write")
+    if not is_company_admin(user):
+        raise HTTPException(status_code=403, detail="Only a company administrator may approve source grants")
+
+    grant = db.scalar(select(KnowledgeSourceGrant).where(
+        KnowledgeSourceGrant.id == grant_id,
+        KnowledgeSourceGrant.company_id == company_id,
+    ))
+    if grant is None:
+        raise HTTPException(status_code=404, detail="Source grant not found")
+    if grant.created_by_user_id == user.id:
+        raise HTTPException(status_code=403, detail="Source grant approval requires a different administrator")
+    if grant.classification not in {"A", "B", "C"}:
+        raise HTTPException(status_code=403, detail="D and U sources can never be admitted to retrieval")
+
+    if grant.source_type == "item":
+        source = db.scalar(select(KnowledgeItem).where(
+            KnowledgeItem.id == grant.source_id,
+            KnowledgeItem.company_id == company_id,
+            KnowledgeItem.is_active.is_(True),
+        ))
+        source_content = source.content if source else None
+    else:
+        source = db.scalar(select(KnowledgeDocument).where(
+            KnowledgeDocument.id == grant.source_id,
+            KnowledgeDocument.company_id == company_id,
+            KnowledgeDocument.status == "READY",
+        ))
+        source_content = source.extracted_text if source else None
+    if source is None:
+        raise HTTPException(status_code=409, detail="Source is missing, inactive, or not READY")
+
+    current_hash = hashlib.sha256((source_content or "").encode("utf-8")).hexdigest()
+    if grant.source_hash != current_hash or grant.source_version != source_version_token(source.updated_at):
+        raise HTTPException(status_code=409, detail="Source changed after grant creation; create a fresh grant")
+
+    grant.is_approved = True
+    grant.is_active = True
+    grant.approved_by_user_id = user.id
+    grant.approved_at = datetime.now(timezone.utc)
+    grant.policy_version += 1
+    grant.updated_at = datetime.now(timezone.utc)
+    record_audit(
+        db, company_id=company_id, user_id=user.id,
+        action="knowledge.source_grant.approve", resource_type="knowledge_source_grant",
+        resource_id=grant.id, status="success",
+        details={"source_type": grant.source_type, "classification": grant.classification, "policy_version": grant.policy_version},
+    )
+    db.commit()
+    db.refresh(grant)
+    return grant
+
+
+@router.delete(
+    "/companies/{company_id}/knowledge/source-grants/{grant_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def revoke_knowledge_source_grant(
+    company_id: str,
+    grant_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str = Depends(get_authenticated_user_id),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    require_permission(user, "knowledge.write")
+    if not is_company_admin(user):
+        raise HTTPException(status_code=403, detail="Only a company administrator may revoke source grants")
+    grant = db.scalar(select(KnowledgeSourceGrant).where(
+        KnowledgeSourceGrant.id == grant_id,
+        KnowledgeSourceGrant.company_id == company_id,
+    ))
+    if grant is None:
+        raise HTTPException(status_code=404, detail="Source grant not found")
+    grant.is_active = False
+    grant.is_approved = False
+    grant.policy_version += 1
+    grant.updated_at = datetime.now(timezone.utc)
+    record_audit(
+        db, company_id=company_id, user_id=user.id,
+        action="knowledge.source_grant.revoke", resource_type="knowledge_source_grant",
+        resource_id=grant.id, status="success",
+        details={"policy_version": grant.policy_version},
+    )
+    db.commit()
+    return None
+
+
+@router.post(
     "/companies/{company_id}/knowledge/search",
     response_model=list[KnowledgeSearchHit],
 )
@@ -2315,25 +2518,27 @@ def list_knowledge(
         "knowledge.read",
     )
 
+    if agent_instance_id is None:
+        raise HTTPException(status_code=400, detail="agent_instance_id is required for authorized knowledge listing")
+    get_owned_agent_or_404(db, company_id, agent_instance_id)
+    require_agent_use(db, user, company_id=company_id, agent_instance_id=agent_instance_id)
+    item_ids, _ = authorized_source_ids(
+        db,
+        company_id=company_id,
+        requester_id=user.id,
+        agent_instance_id=agent_instance_id,
+        purpose="knowledge_list",
+    )
+    if not item_ids:
+        return []
     query = select(KnowledgeItem).where(
-        KnowledgeItem.company_id == company_id
+        KnowledgeItem.company_id == company_id,
+        KnowledgeItem.id.in_(item_ids),
+        KnowledgeItem.is_active.is_(True),
+        (KnowledgeItem.agent_instance_id.is_(None))
+        | (KnowledgeItem.agent_instance_id == agent_instance_id),
     )
-
-    if agent_instance_id:
-        get_owned_agent_or_404(
-            db,
-            company_id,
-            agent_instance_id,
-        )
-
-        query = query.where(
-            (KnowledgeItem.agent_instance_id.is_(None))
-            | (KnowledgeItem.agent_instance_id == agent_instance_id)
-        )
-
-    return list(
-        db.scalars(query).all()
-    )
+    return list(db.scalars(query).all())
 
 
 @router.patch(
