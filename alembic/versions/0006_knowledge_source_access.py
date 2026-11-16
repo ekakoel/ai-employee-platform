@@ -62,6 +62,12 @@ def upgrade():
         op.create_index("ix_knowledge_source_grants_company", "knowledge_source_grants", ["company_id"])
         op.create_index("ix_knowledge_source_grants_source", "knowledge_source_grants", ["source_type", "source_id"])
 
+    # Existing chunks have no trustworthy source classification or requester
+    # ACL. They are derived data and can be rebuilt after each source is
+    # explicitly approved; remove them before the new policy is enabled.
+    if "knowledge_chunks" in inspector.get_table_names():
+        op.execute("DELETE FROM knowledge_chunks")
+
 
 def downgrade():
     bind = op.get_bind()
