@@ -462,10 +462,13 @@ class ToolExecutor:
         tool_name: str,
         arguments: dict[str, Any],
     ) -> dict[str, Any]:
+        task = self.db.get(Task, task_id) if task_id else None
+        requester_id = task.requested_by_user_id if task is not None else None
         context = ToolContext(
             company_id=company_id,
             agent_instance_id=agent_instance_id,
             task_id=task_id,
+            requester_user_id=requester_id,
             db=self.db,
         )
 
