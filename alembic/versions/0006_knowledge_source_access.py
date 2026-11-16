@@ -41,6 +41,7 @@ def upgrade():
             sa.Column("source_id", sa.String(36), nullable=False),
             sa.Column("classification", sa.String(1), nullable=False, server_default="U"),
             sa.Column("owner_user_id", sa.String(36), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
+            sa.Column("created_by_user_id", sa.String(36), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
             sa.Column("allowed_user_ids", sa.JSON(), nullable=False, server_default="[]"),
             sa.Column("allowed_role_ids", sa.JSON(), nullable=False, server_default="[]"),
             sa.Column("allowed_department_ids", sa.JSON(), nullable=False, server_default="[]"),
