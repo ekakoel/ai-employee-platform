@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from sqlalchemy import and_, false, or_, select
 from sqlalchemy.orm import Session
 
-from app.models.entities import AgentMemory, KnowledgeChunk, KnowledgeDocument, KnowledgeItem
+from app.models.entities import AgentMemory, DocumentStatus, KnowledgeChunk, KnowledgeDocument, KnowledgeItem
 from app.security.knowledge_access import authorized_source_ids
 
 
@@ -123,7 +123,7 @@ def search_knowledge_chunks(
                     select(KnowledgeDocument.id).where(
                         KnowledgeDocument.id == KnowledgeChunk.knowledge_document_id,
                         KnowledgeDocument.company_id == company_id,
-                        KnowledgeDocument.status == "ready",
+                        KnowledgeDocument.status == DocumentStatus.READY,
                         KnowledgeDocument.id.in_(document_ids) if document_ids else false(),
                         or_(
                             KnowledgeDocument.agent_instance_id.is_(None),
