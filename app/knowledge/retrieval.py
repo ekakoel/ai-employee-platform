@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import re
+import hashlib
 from datetime import datetime, timezone
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, false, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.entities import AgentMemory, KnowledgeChunk, KnowledgeDocument, KnowledgeItem
+from app.security.knowledge_access import authorized_source_ids
 
 
 def _tokens(text: str) -> set[str]:
@@ -32,14 +34,67 @@ def _vector_enabled() -> bool:
     return bool(live.knowledge_vector)
 
 
+def _normalized_hash(content: str) -> str:
+    normalized = re.sub(r"\\s+", " ", (content or "").strip().lower())
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def deduplicate_source_hits(hits: list[dict]) -> list[dict]:
+    """Keep the best-ranked passage per canonical source; retain cross-source provenance."""
+    seen_sources: set[tuple[str, str]] = set()
+    seen_hashes: set[tuple[str, str]] = set()
+    result: list[dict] = []
+    for hit in hits:
+        source_type = hit.get("source_type")
+        source_id = hit.get("source_id")
+        if not source_type or not source_id:
+            continue
+        source_key = (str(source_type), str(source_id))
+        passage_key = (str(source_id), _normalized_hash(str(hit.get("content") or "")))
+        if source_key in seen_sources or passage_key in seen_hashes:
+            continue
+        seen_sources.add(source_key)
+        seen_hashes.add(passage_key)
+        result.append(hit)
+    return result
+
+
 def search_knowledge_chunks(
     db: Session,
     *,
     company_id: str,
     agent_instance_id: str | None,
     query: str,
+    requester_id: str | None = None,
+    purpose: str = "task_execution",
     limit: int = 5,
 ) -> list[dict]:
+    item_ids, document_ids = authorized_source_ids(
+        db,
+        company_id=company_id,
+        requester_id=requester_id,
+        agent_instance_id=agent_instance_id,
+        purpose=purpose,
+    )
+    if not item_ids and not document_ids:
+        return []
+
+    source_filters = []
+    if item_ids:
+        source_filters.append(
+            and_(
+                KnowledgeChunk.knowledge_item_id.is_not(None),
+                KnowledgeChunk.knowledge_item_id.in_(item_ids),
+            )
+        )
+    if document_ids:
+        source_filters.append(
+            and_(
+                KnowledgeChunk.knowledge_document_id.is_not(None),
+                KnowledgeChunk.knowledge_document_id.in_(document_ids),
+            )
+        )
+
     rows = list(
         db.scalars(
             select(KnowledgeChunk).where(
@@ -49,13 +104,18 @@ def search_knowledge_chunks(
                     KnowledgeChunk.agent_instance_id.is_(None),
                     KnowledgeChunk.agent_instance_id == agent_instance_id,
                 ),
+                or_(*source_filters),
                 or_(
                     KnowledgeChunk.knowledge_item_id.is_(None),
                     select(KnowledgeItem.id).where(
                         KnowledgeItem.id == KnowledgeChunk.knowledge_item_id,
                         KnowledgeItem.company_id == company_id,
                         KnowledgeItem.is_active.is_(True),
-                        or_(KnowledgeItem.agent_instance_id.is_(None), KnowledgeItem.agent_instance_id == agent_instance_id),
+                        KnowledgeItem.id.in_(item_ids) if item_ids else false(),
+                        or_(
+                            KnowledgeItem.agent_instance_id.is_(None),
+                            KnowledgeItem.agent_instance_id == agent_instance_id,
+                        ),
                     ).exists(),
                 ),
                 or_(
@@ -63,7 +123,12 @@ def search_knowledge_chunks(
                     select(KnowledgeDocument.id).where(
                         KnowledgeDocument.id == KnowledgeChunk.knowledge_document_id,
                         KnowledgeDocument.company_id == company_id,
-                        or_(KnowledgeDocument.agent_instance_id.is_(None), KnowledgeDocument.agent_instance_id == agent_instance_id),
+                        KnowledgeDocument.status == "ready",
+                        KnowledgeDocument.id.in_(document_ids) if document_ids else false(),
+                        or_(
+                            KnowledgeDocument.agent_instance_id.is_(None),
+                            KnowledgeDocument.agent_instance_id == agent_instance_id,
+                        ),
                     ).exists(),
                 ),
             )
@@ -76,7 +141,7 @@ def search_knowledge_chunks(
     vec_w = 0.0
     if use_vector:
         from app.core.config import settings as live
-        from app.knowledge.embeddings import cosine_similarity, get_embedding_provider
+        from app.knowledge.embeddings import get_embedding_provider
 
         provider = get_embedding_provider()
         query_emb = provider.embed(query)
@@ -91,29 +156,31 @@ def search_knowledge_chunks(
         vec = 0.0
         if use_vector and query_emb and row.embedding:
             from app.knowledge.embeddings import cosine_similarity
-
             vec = max(0.0, cosine_similarity(query_emb, row.embedding))
         if use_vector:
-            s = kw_w * kw + vec_w * vec
-            # keep weak semantic hits even without keyword overlap
-            if s <= 0 and vec <= 0 and kw <= 0:
+            score = kw_w * kw + vec_w * vec
+            if score <= 0 and vec <= 0 and kw <= 0:
                 continue
         else:
-            s = kw
-            if s <= 0:
+            score = kw
+            if score <= 0:
                 continue
-        scored.append((s, kw, vec, row))
+        source_type = "item" if row.knowledge_item_id else "document"
+        source_id = row.knowledge_item_id or row.knowledge_document_id
+        scored.append((score, kw, vec, row, source_type, source_id))
 
-    scored.sort(key=lambda x: x[0], reverse=True)
-    results = []
-    for s, kw, vec, row in scored[:limit]:
+    scored.sort(key=lambda value: value[0], reverse=True)
+    ranked = []
+    for score, kw, vec, row, source_type, source_id in scored:
         hit = {
             "id": row.id,
             "content": row.content,
-            "score": round(s, 4),
+            "score": round(score, 4),
             "chunk_index": row.chunk_index,
             "knowledge_item_id": row.knowledge_item_id,
             "knowledge_document_id": row.knowledge_document_id,
+            "source_type": source_type,
+            "source_id": source_id,
             "source": "chunk",
         }
         if use_vector:
@@ -122,8 +189,9 @@ def search_knowledge_chunks(
             hit["search_mode"] = "hybrid"
         else:
             hit["search_mode"] = "keyword"
-        results.append(hit)
-    return results
+        ranked.append(hit)
+
+    return deduplicate_source_hits(ranked)[:limit]
 
 
 def search_knowledge_items(
@@ -132,11 +200,23 @@ def search_knowledge_items(
     company_id: str,
     agent_instance_id: str | None,
     query: str,
+    requester_id: str | None = None,
+    purpose: str = "knowledge_search",
     limit: int = 5,
 ) -> list[dict]:
+    item_ids, _ = authorized_source_ids(
+        db,
+        company_id=company_id,
+        requester_id=requester_id,
+        agent_instance_id=agent_instance_id,
+        purpose=purpose,
+    )
+    if not item_ids:
+        return []
     rows = list(
         db.scalars(
             select(KnowledgeItem).where(
+                KnowledgeItem.id.in_(item_ids),
                 KnowledgeItem.company_id == company_id,
                 KnowledgeItem.is_active.is_(True),
                 or_(
@@ -148,23 +228,23 @@ def search_knowledge_items(
     )
     scored = []
     for row in rows:
-        s = score_text(query, f"{row.title} {row.content}")
-        if s > 0:
-            scored.append((s, row))
-    scored.sort(key=lambda x: x[0], reverse=True)
-    results = []
-    for s, row in scored[:limit]:
-        results.append(
-            {
-                "id": row.id,
-                "content": row.content,
-                "title": row.title,
-                "score": round(s, 4),
-                "source": "item",
-                "search_mode": "keyword",
-            }
-        )
-    return results
+        score = score_text(query, f"{row.title} {row.content}")
+        if score > 0:
+            scored.append((score, row))
+    scored.sort(key=lambda value: value[0], reverse=True)
+    return [
+        {
+            "id": row.id,
+            "content": row.content,
+            "title": row.title,
+            "score": round(score, 4),
+            "source_type": "item",
+            "source_id": row.id,
+            "source": "item",
+            "search_mode": "keyword",
+        }
+        for score, row in scored[:limit]
+    ]
 
 
 def search_agent_memories(
