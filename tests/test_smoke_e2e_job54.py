@@ -28,7 +28,7 @@ def _fresh_company():
         "Authorization": f"Bearer {tok['access_token']}",
         "X-User-ID": tok["user_id"],
     }
-    return company_id, headers, body["owner_email"]
+    return company_id, headers, body
 
 
 def test_smoke_playbook_execute_knowledge_inventory():
