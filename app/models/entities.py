@@ -699,6 +699,7 @@ class KnowledgeSourceGrant(Base):
     owner_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     allowed_user_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    allowed_agent_instance_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     allowed_role_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     allowed_department_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     allowed_purposes: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
