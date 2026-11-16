@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
+from sqlalchemy import select
 
 import pytest
 from fastapi.testclient import TestClient
@@ -47,7 +49,38 @@ def _session_local():
         return None
 
 
-def _search(db, company_id, query, limit=5, agent_instance_id=None):
+
+def _admit_seeded_sources(db, company_id):
+    from app.models.entities import KnowledgeItem, KnowledgeSourcePolicy, Role, User
+    owner = db.scalar(
+        select(User).join(Role, User.role_id == Role.id).where(
+            User.company_id == company_id, Role.name == "owner"
+        )
+    )
+    if owner is None:
+        pytest.skip("owner identity unavailable for source-policy test")
+    items = db.scalars(select(KnowledgeItem).where(
+        KnowledgeItem.company_id == company_id, KnowledgeItem.is_active.is_(True)
+    )).all()
+    for item in items:
+        if db.scalar(select(KnowledgeSourcePolicy.id).where(
+            KnowledgeSourcePolicy.company_id == company_id,
+            KnowledgeSourcePolicy.source_type == "item",
+            KnowledgeSourcePolicy.source_id == item.id,
+        )):
+            continue
+        db.add(KnowledgeSourcePolicy(
+            company_id=company_id, source_type="item", source_id=item.id,
+            classification="B", is_approved=True, is_active=True,
+            allowed_user_ids=[owner.id], allowed_role_ids=[], allowed_department_ids=[],
+            allowed_purposes=["task_execution"], approval_ref="TEST-OWNER-APPROVAL",
+            owner_user_id=owner.id, reviewed_at=datetime.now(timezone.utc), policy_version=1,
+        ))
+    db.flush()
+    return owner.id
+
+
+def _search(db, company_id, query, limit=5, agent_instance_id=None, requester_user_id=None):
     from app.knowledge.retrieval import search_knowledge_chunks
     return search_knowledge_chunks(
         db,
@@ -55,6 +88,8 @@ def _search(db, company_id, query, limit=5, agent_instance_id=None):
         query=query,
         agent_instance_id=agent_instance_id,
         limit=limit,
+        requester_user_id=requester_user_id,
+        purpose="task_execution",
     )
 
 
@@ -67,11 +102,13 @@ def test_search_knowledge_finds_cancellation_policy(client):
 
     db = SessionLocal()
     try:
+        owner_id = _admit_seeded_sources(db, company_id)
         hits = _search(
             db,
             company_id,
             "cancellation policy free cancellation",
             agent_instance_id=agent_instance_id,
+            requester_user_id=owner_id,
         )
         assert hits, "expected at least one hit for cancellation policy"
         blob = str(hits).lower()
@@ -89,17 +126,20 @@ def test_search_knowledge_finds_pricing_and_tax(client):
 
     db = SessionLocal()
     try:
+        owner_id = _admit_seeded_sources(db, company_id)
         pricing = _search(
             db,
             company_id,
             "pricing weekend surcharge",
             agent_instance_id=agent_instance_id,
+            requester_user_id=owner_id,
         )
         tax = _search(
             db,
             company_id,
             "tax VAT PPN",
             agent_instance_id=agent_instance_id,
+            requester_user_id=owner_id,
         )
         assert pricing or tax, "expected hits for pricing or tax knowledge"
         combined = (str(pricing) + str(tax)).lower()
