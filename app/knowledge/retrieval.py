@@ -10,7 +10,7 @@ from sqlalchemy import and_, false, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.entities import AgentMemory, DocumentStatus, KnowledgeChunk, KnowledgeDocument, KnowledgeItem
-from app.security.knowledge_access import authorized_source_ids
+from app.security.knowledge_access import authorized_source_ids, source_version_token
 
 
 def _tokens(text: str) -> set[str]:
@@ -80,6 +80,31 @@ def search_knowledge_chunks(
     )
     if not item_ids and not document_ids:
         return []
+
+    # Fetch only metadata for already-authorized parent sources. This adds
+    # provenance without loading any unapproved source content.
+    source_metadata: dict[tuple[str, str], dict] = {}
+    if item_ids:
+        for source in db.scalars(select(KnowledgeItem).where(
+            KnowledgeItem.company_id == company_id,
+            KnowledgeItem.id.in_(item_ids),
+        )).all():
+            source_metadata[("item", source.id)] = {
+                "source_title": source.title,
+                "source_version": source_version_token(source.updated_at),
+                "source_status": "active" if source.is_active else "inactive",
+            }
+    if document_ids:
+        for source in db.scalars(select(KnowledgeDocument).where(
+            KnowledgeDocument.company_id == company_id,
+            KnowledgeDocument.id.in_(document_ids),
+            KnowledgeDocument.status == DocumentStatus.READY,
+        )).all():
+            source_metadata[("document", source.id)] = {
+                "source_title": source.original_filename,
+                "source_version": source_version_token(source.updated_at),
+                "source_status": "ready",
+            }
 
     source_filters = []
     if item_ids:
@@ -174,6 +199,7 @@ def search_knowledge_chunks(
     scored.sort(key=lambda value: value[0], reverse=True)
     ranked = []
     for score, kw, vec, row, source_type, source_id in scored:
+        metadata = source_metadata.get((source_type, source_id), {})
         hit = {
             "id": row.id,
             "content": row.content,
@@ -183,6 +209,11 @@ def search_knowledge_chunks(
             "knowledge_document_id": row.knowledge_document_id,
             "source_type": source_type,
             "source_id": source_id,
+            "source_title": metadata.get("source_title"),
+            "source_version": metadata.get("source_version"),
+            "source_status": metadata.get("source_status"),
+            "source_heading": None,
+            "source_locator": f"chunk:{row.chunk_index}",
             "source": "chunk",
         }
         if use_vector:
@@ -242,6 +273,11 @@ def search_knowledge_items(
             "score": round(score, 4),
             "source_type": "item",
             "source_id": row.id,
+            "source_title": row.title,
+            "source_version": source_version_token(row.updated_at),
+            "source_status": "active" if row.is_active else "inactive",
+            "source_heading": None,
+            "source_locator": "knowledge-item",
             "source": "item",
             "search_mode": "keyword",
         }
