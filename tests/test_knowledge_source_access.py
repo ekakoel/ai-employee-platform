@@ -12,6 +12,7 @@ def _grant(**overrides):
         "approved_by_user_id": "approver-1",
         "approved_at": object(),
         "allowed_user_ids": [],
+        "allowed_agent_instance_ids": ["agent-1"],
         "allowed_role_ids": ["role-ops"],
         "allowed_department_ids": [],
         "allowed_purposes": ["task_execution"],
@@ -27,12 +28,12 @@ def _user(**overrides):
 
 
 def test_internal_grant_requires_active_approval_audience_and_purpose():
-    assert grant_allows(_grant(), _user(), "task_execution")
-    assert not grant_allows(_grant(is_active=False), _user(), "task_execution")
-    assert not grant_allows(_grant(is_approved=False), _user(), "task_execution")
-    assert not grant_allows(_grant(approved_by_user_id=None), _user(), "task_execution")
-    assert not grant_allows(_grant(allowed_purposes=[]), _user(), "task_execution")
-    assert not grant_allows(_grant(allowed_role_ids=[]), _user(), "task_execution")
+    assert grant_allows(_grant(), _user(), "task_execution", "agent-1")
+    assert not grant_allows(_grant(is_active=False), _user(), "task_execution", "agent-1")
+    assert not grant_allows(_grant(is_approved=False), _user(), "task_execution", "agent-1")
+    assert not grant_allows(_grant(approved_by_user_id=None), _user(), "task_execution", "agent-1")
+    assert not grant_allows(_grant(allowed_purposes=[]), _user(), "task_execution", "agent-1")
+    assert not grant_allows(_grant(allowed_role_ids=[]), _user(), "task_execution", "agent-1")
 
 
 def test_restricted_grant_requires_explicit_user_and_purpose():
@@ -41,8 +42,8 @@ def test_restricted_grant_requires_explicit_user_and_purpose():
         allowed_user_ids=["user-1"],
         allowed_role_ids=["role-ops"],
     )
-    assert grant_allows(grant, _user(), "task_execution")
-    assert not grant_allows(grant, _user(id="user-2"), "task_execution")
+    assert grant_allows(grant, _user(), "task_execution", "agent-1")
+    assert not grant_allows(grant, _user(id="user-2"), "task_execution", "agent-1")
 
 
 def test_secret_and_unclassified_sources_are_never_allowed():
@@ -51,6 +52,7 @@ def test_secret_and_unclassified_sources_are_never_allowed():
             _grant(classification=classification, allowed_user_ids=["*"]),
             _user(),
             "task_execution",
+            "agent-1",
         )
 
 
@@ -59,11 +61,13 @@ def test_public_corpus_requires_explicit_wildcard_admission():
         _grant(classification="A", allowed_user_ids=["*"]),
         _user(),
         "task_execution",
+        "agent-1",
     )
     assert not grant_allows(
         _grant(classification="A", allowed_user_ids=["user-1"]),
         _user(),
         "task_execution",
+        "*",
     )
 
 
