@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.models.entities import AgentMemory, AuditLog, KnowledgeChunk, KnowledgeDocument, KnowledgeItem, KnowledgeSourcePolicy, User
+from app.models.entities import AgentMemory, AuditLog, KnowledgeChunk, KnowledgeDocument, KnowledgeItem, User
+from app.security.knowledge_access import authorized_source_ids
 
 
 def _tokens(text: str) -> set[str]:
