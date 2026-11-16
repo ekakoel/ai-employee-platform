@@ -408,6 +408,15 @@ class KnowledgeSearchHit(BaseModel):
     title: str | None = None
     category: str | None = None
     chunk_index: int | None = None
+    source_id: str | None = None
+    source_type: str | None = None
+    source_title: str | None = None
+    source_version: str | None = None
+    source_status: str | None = None
+    source_heading: str | None = None
+    source_locator: str | None = None
+    knowledge_item_id: str | None = None
+    knowledge_document_id: str | None = None
     # Job 26 hybrid search metadata
     search_mode: str | None = None
     keyword_score: float | None = None
