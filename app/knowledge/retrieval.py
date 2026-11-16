@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.entities import AgentMemory, DocumentStatus, KnowledgeChunk, KnowledgeDocument, KnowledgeItem
 from app.security.knowledge_access import authorized_source_ids, source_version_token
+from app.knowledge.chunking import estimate_tokens
 
 
 def _tokens(text: str) -> set[str]:
@@ -59,6 +60,18 @@ def deduplicate_source_hits(hits: list[dict]) -> list[dict]:
     return result
 
 
+def apply_token_budget(hits: list[dict], max_tokens: int) -> list[dict]:
+    """Keep highest-ranked source hits within a deterministic context token budget."""
+    remaining = max(0, int(max_tokens))
+    selected: list[dict] = []
+    for hit in hits:
+        cost = estimate_tokens(str(hit.get("content") or ""))
+        if cost <= remaining:
+            selected.append(hit)
+            remaining -= cost
+    return selected
+
+
 def search_knowledge_chunks(
     db: Session,
     *,
@@ -70,6 +83,7 @@ def search_knowledge_chunks(
     task_id: str | None = None,
     access_mode: str = "use",
     limit: int = 5,
+    max_tokens: int = 2500,
 ) -> list[dict]:
     item_ids, document_ids = authorized_source_ids(
         db,
@@ -226,7 +240,7 @@ def search_knowledge_chunks(
             hit["search_mode"] = "keyword"
         ranked.append(hit)
 
-    return deduplicate_source_hits(ranked)[:limit]
+    return apply_token_budget(deduplicate_source_hits(ranked), max_tokens)[:limit]
 
 
 def search_knowledge_items(
