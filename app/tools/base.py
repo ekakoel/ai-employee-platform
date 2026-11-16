@@ -15,6 +15,7 @@ class ToolContext:
     agent_instance_id: str
     task_id: str | None = None
     db: Any = None  # optional SQLAlchemy Session (Job 39 inventory)
+    requester_user_id: str | None = None
 
 
 @dataclass(frozen=True)

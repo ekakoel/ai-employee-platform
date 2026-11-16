@@ -255,6 +255,7 @@ def _step_create_task(
 
     task = Task(
         company_id=run.company_id,
+        requested_by_user_id=user_id,
         agent_instance_id=agent_id,
         title=title,
         instruction=instruction,

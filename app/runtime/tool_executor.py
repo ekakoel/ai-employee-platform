@@ -462,10 +462,13 @@ class ToolExecutor:
         tool_name: str,
         arguments: dict[str, Any],
     ) -> dict[str, Any]:
+        task = self.db.get(Task, task_id) if task_id else None
+        requester_id = task.requested_by_user_id if task is not None else None
         context = ToolContext(
             company_id=company_id,
             agent_instance_id=agent_instance_id,
             task_id=task_id,
+            requester_user_id=requester_id,
             db=self.db,
         )
 
@@ -491,9 +494,10 @@ class ToolExecutor:
                 status="success",
                 details={
                     "tool": tool_name,
-                    "arguments": arguments,
+                    # Do not persist raw tool arguments or returned passages in
+                    # audit logs; retrieval results may contain restricted data.
+                    "argument_keys": sorted(arguments.keys()),
                     "result_count": result.get("count"),
-                    "result": result,
                 },
             )
 
@@ -534,7 +538,15 @@ class ToolExecutor:
                     raise ValueError(f"Missing required tool argument: {key}")
             prepare = getattr(tool, "prepare_arguments", None)
             if prepare is not None:
-                return prepare(ToolContext(company_id=company_id, agent_instance_id=agent_id, task_id=task_id, db=self.db), arguments)
+                task = self.db.get(Task, task_id) if task_id else None
+                requester_id = task.requested_by_user_id if task is not None else None
+                return prepare(ToolContext(
+                    company_id=company_id,
+                    agent_instance_id=agent_id,
+                    task_id=task_id,
+                    requester_user_id=requester_id,
+                    db=self.db,
+                ), arguments)
             return dict(arguments)
         except (ValueError, TypeError, KeyError, ArithmeticError) as exc:
             self._audit_denied(company_id=company_id, agent_instance_id=agent_id, task_id=task_id,

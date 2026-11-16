@@ -110,6 +110,7 @@ def execute_run(
 
     task = Task(
         company_id=rule.company_id,
+        requested_by_user_id=user_id,
         agent_instance_id=rule.agent_instance_id,
         title=title[:300],
         instruction=instruction,

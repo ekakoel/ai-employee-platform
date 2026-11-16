@@ -237,8 +237,15 @@ def _agent_reply_text(db: Session, conv: Conversation, human_text: str) -> str:
         GROUNDING_INSTRUCTIONS, MISSING_INFORMATION, GroundingError,
         general_reply, render_answer, requires_action, source_message, sources, validated_answer,
     )
-    request = Task(company_id=conv.company_id, agent_instance_id=agent.id,
-                   title="Chat", instruction=human_text, mode="consult")
+    request = Task(
+        company_id=conv.company_id,
+        agent_instance_id=agent.id,
+        requested_by_user_id=conv.user_id,
+        title="Chat",
+        instruction=human_text,
+        mode="consult",
+    )
+    request.retrieval_purpose = "advisory_chat"
     try:
         grounded_context = load_agent_context(db, agent, request)
     except ValueError as exc:
@@ -371,6 +378,7 @@ def post_human_message(
         task = Task(
             company_id=company_id,
             agent_instance_id=conv.agent_instance_id,
+            requested_by_user_id=user_id,
             title=(conv.title or text)[:300],
             instruction=text,
             mode=task_mode if task_mode in ("consult", "execute") else "consult",

@@ -1,6 +1,7 @@
 """Phase 6 — Knowledge chunking, retrieval, and agent memory."""
 
 from datetime import datetime, timedelta, timezone
+import hashlib
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,7 +14,8 @@ from app.core.database import Base, get_db
 from app.knowledge.chunking import chunk_text
 from app.knowledge.retrieval import score_text, search_knowledge_chunks
 from app.main import app
-from app.models.entities import KnowledgeChunk
+from app.models.entities import KnowledgeChunk, KnowledgeItem, KnowledgeSourceGrant
+from app.security.knowledge_access import source_version_token
 from app.services.seed import seed_catalog
 
 engine = create_engine(
@@ -45,6 +47,35 @@ def client():
         app.dependency_overrides.pop(get_db, None)
     else:
         app.dependency_overrides[get_db] = prev
+
+
+def _approve_item_for_search(company_id, item_id, owner_id, purposes, agent_instance_id):
+    with SessionLocal() as db:
+        item = db.get(KnowledgeItem, item_id)
+        assert item is not None
+        grant = KnowledgeSourceGrant(
+            company_id=company_id,
+            source_type="item",
+            source_id=item.id,
+            classification="B",
+            owner_user_id=owner_id,
+            created_by_user_id=owner_id,
+            allowed_user_ids=[owner_id],
+            allowed_agent_instance_ids=[agent_instance_id],
+            allowed_purposes=purposes,
+            is_active=True,
+            is_approved=True,
+            policy_version=1,
+            source_version=source_version_token(item.updated_at),
+            source_hash=hashlib.sha256(item.content.encode("utf-8")).hexdigest(),
+            approved_by_user_id=owner_id,
+            approved_at=datetime.now(timezone.utc),
+        )
+        db.add(grant)
+        db.flush()
+        from app.knowledge.indexing import replace_chunks_for_item
+        replace_chunks_for_item(db, item)
+        db.commit()
 
 
 def setup(client):
@@ -88,6 +119,7 @@ def test_knowledge_create_indexes_chunks(client):
     )
     assert resp.status_code == 201, resp.text
     item_id = resp.json()["id"]
+    _approve_item_for_search(company_id, item_id, owner_id, ["knowledge_search"], agent_id)
 
     with SessionLocal() as db:
         chunks = list(
@@ -103,7 +135,7 @@ def test_knowledge_create_indexes_chunks(client):
 
 def test_search_finds_relevant_chunk(client):
     company_id, owner_id, agent_id, _hdrs = setup(client)
-    client.post(
+    created = client.post(
         f"/api/v1/companies/{company_id}/knowledge",
         headers=_hdrs,
         json={
@@ -112,9 +144,12 @@ def test_search_finds_relevant_chunk(client):
             "category": "policy",
         },
     )
+    assert created.status_code == 201, created.text
+    _approve_item_for_search(company_id, created.json()["id"], owner_id, ["knowledge_search"], agent_id)
     search = client.post(
         f"/api/v1/companies/{company_id}/knowledge/search",
         headers=_hdrs,
+        params={"agent_instance_id": agent_id},
         json={"query": "cancel fee", "limit": 5},
     )
     assert search.status_code == 200, search.text
@@ -192,7 +227,7 @@ def test_agent_memory_lifecycle(client):
         headers=_hdrs,
     )
     assert listed.status_code == 200
-    assert any(m["id"] == mem_id for m in listed.json())
+    assert listed.json() == [], "unclassified agent memories must remain unavailable to retrieval"
 
     deleted = client.delete(
         f"/api/v1/companies/{company_id}/agents/{agent_id}/memories/{mem_id}",
@@ -204,7 +239,7 @@ def test_agent_memory_lifecycle(client):
         f"/api/v1/companies/{company_id}/agents/{agent_id}/memories",
         headers=_hdrs,
     )
-    assert all(m["id"] != mem_id for m in listed2.json())
+    assert listed2.json() == []
 
 
 def test_expired_memory_not_listed(client):

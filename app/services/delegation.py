@@ -213,6 +213,7 @@ def execute_delegation(
     # Child task on TARGET agent
     child = Task(
         company_id=req.company_id,
+        requested_by_user_id=user_id,
         agent_instance_id=req.target_agent_instance_id,
         title=f"[Delegated] {req.title}",
         instruction=req.instruction,

@@ -129,7 +129,7 @@ def test_validate_and_search(client):
     )
     assert search1.status_code == 200
     hits = search1.json()
-    assert any(h["id"] == cand["id"] for h in hits)
+    assert hits == [], "unclassified experiences must remain unavailable to retrieval"
 
 
 def test_reject_experience(client):

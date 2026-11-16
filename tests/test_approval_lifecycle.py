@@ -16,6 +16,7 @@ from app.models.entities import (
     ApprovalStatus,
     Company,
     KnowledgeItem,
+    KnowledgeSourceGrant,
     Policy,
     Role,
     SubscriptionStatus,
@@ -26,6 +27,7 @@ from app.models.entities import (
 from app.core.passwords import hash_password
 from app.services.seed import seed_catalog
 from app.tools.contract import SearchContractTool
+from app.security.knowledge_access import source_version_token
 
 
 engine = create_engine(
@@ -178,6 +180,26 @@ def create_approval_case(
 
             db.add(knowledge)
             db.flush()
+            import hashlib
+            from datetime import datetime, timezone
+            db.add(KnowledgeSourceGrant(
+                company_id=company.id,
+                source_type="item",
+                source_id=knowledge.id,
+                classification="B",
+                owner_user_id=user.id,
+                created_by_user_id=user.id,
+                allowed_user_ids=[user.id],
+                allowed_agent_instance_ids=[agent.id],
+                allowed_purposes=["task_execution"],
+                is_active=True,
+                is_approved=True,
+                policy_version=1,
+                source_version=source_version_token(knowledge.updated_at),
+                source_hash=hashlib.sha256(knowledge.content.encode("utf-8")).hexdigest(),
+                approved_by_user_id=user.id,
+                approved_at=datetime.now(timezone.utc),
+            ))
 
         # ---------------------------------------------------------
         # APPROVAL POLICY
@@ -201,6 +223,7 @@ def create_approval_case(
         # ---------------------------------------------------------
         task = Task(
             company_id=company.id,
+            requested_by_user_id=user.id,
             agent_instance_id=agent.id,
             title="Search contract",
             instruction="Search contract",

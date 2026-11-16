@@ -99,7 +99,7 @@ def test_job10_matrix_candidate_validate_retrieve_confidence_feedback(client):
         json={"query": "refund late cancel manager", "limit": 5},
     )
     assert hits.status_code == 200
-    assert any(h["id"] == exp["id"] for h in hits.json())
+    assert hits.json() == [], "unclassified experiences must remain unavailable to retrieval"
 
     # helpful feedback raises confidence + success_count
     fb = client.post(
@@ -179,7 +179,7 @@ def test_archive_hides_from_search(client):
         headers=_hdrs,
         json={"query": "refund late cancel manager", "limit": 5},
     )
-    assert all(h["id"] != exp["id"] for h in hits.json())
+    assert hits.json() == []
 
 
 def test_get_experience(client):

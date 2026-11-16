@@ -106,15 +106,9 @@ def load_agent_context(
             if not match.in_scope:
                 raise ValueError("Request is outside the assigned employee scope.")
 
-    knowledge_query = db.query(KnowledgeItem).filter(
-        KnowledgeItem.company_id == agent.company_id,
-        KnowledgeItem.is_active.is_(True),
-    )
-
-    knowledge_items = knowledge_query.filter(
-        (KnowledgeItem.agent_instance_id.is_(None))
-        | (KnowledgeItem.agent_instance_id == agent.id)
-    ).all()
+    # Direct company-wide knowledge loading bypasses source grants. All knowledge
+    # is now supplied only by the authorization-filtered retrieval path below.
+    knowledge_items = []
 
     # AgentInstance defines the relationship as `catalog`.
     catalog = agent.catalog
@@ -180,21 +174,9 @@ def load_agent_context(
         search_knowledge_chunks,
     )
 
-    memory_rows = active_agent_memories(
-        db,
-        company_id=agent.company_id,
-        agent_instance_id=agent.id,
-        limit=10,
-    )
-    memories = [
-        {
-            "id": m.id,
-            "title": m.title,
-            "content": m.content,
-            "category": m.category,
-        }
-        for m in memory_rows
-    ]
+    # AgentMemory has no source-level read grants yet; fail closed instead of
+    # injecting unclassified memory into the model context.
+    memories = []
 
     retrieved_knowledge: list[dict[str, Any]] = []
     experiences: list[dict[str, Any]] = []
@@ -204,19 +186,16 @@ def load_agent_context(
             db,
             company_id=agent.company_id,
             agent_instance_id=agent.id,
+            requester_id=task.requested_by_user_id,
+            purpose=getattr(task, "retrieval_purpose", "task_execution"),
+            task_id=task.id,
+            access_mode="chat" if getattr(task, "retrieval_purpose", "") == "advisory_chat" else "use",
             query=query,
             limit=5,
         )
-        from app.services.experience import search_validated_experiences
-
-        experiences = search_validated_experiences(
-            db,
-            company_id=agent.company_id,
-            agent_instance_id=agent.id,
-            query=query,
-            limit=3,
-            min_confidence=0.3,
-        )
+        # Validated experiences also lack source-read grants. Keep them out of
+        # context until the same policy model is applied to that data family.
+        experiences = []
 
     return AgentContext(
         company_id=agent.company_id,

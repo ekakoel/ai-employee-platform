@@ -319,6 +319,7 @@ def run_reservation_playbook(
     )
     task = Task(
         company_id=company_id,
+        requested_by_user_id=user_id,
         agent_instance_id=agent.id,
         title="Demo: Alila availability 30–31 Oct 2026",
         instruction=instruction,

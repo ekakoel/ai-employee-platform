@@ -1,6 +1,7 @@
 """Job 26 — Vector / hybrid knowledge retrieval tests."""
 
 import pytest
+from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 
 from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
@@ -16,8 +17,38 @@ from app.knowledge.embeddings import (
 from app.knowledge.indexing import replace_chunks_for_item
 from app.knowledge.retrieval import search_knowledge_chunks
 from app.main import app
-from app.models.entities import KnowledgeChunk, KnowledgeItem
+from app.models.entities import KnowledgeChunk, KnowledgeItem, KnowledgeSourceGrant
+from app.security.knowledge_access import source_version_token
 from app.services.seed import seed_catalog
+
+def _approve_item_for_search(company_id, item_id, owner_id, purposes, agent_instance_id):
+    with SessionLocal() as db:
+        item = db.get(KnowledgeItem, item_id)
+        assert item is not None
+        grant = KnowledgeSourceGrant(
+            company_id=company_id,
+            source_type="item",
+            source_id=item.id,
+            classification="B",
+            owner_user_id=owner_id,
+            created_by_user_id=owner_id,
+            allowed_user_ids=[owner_id],
+            allowed_agent_instance_ids=[agent_instance_id],
+            allowed_purposes=purposes,
+            is_active=True,
+            is_approved=True,
+            policy_version=1,
+            source_version=source_version_token(item.updated_at),
+            source_hash=__import__("hashlib").sha256(item.content.encode("utf-8")).hexdigest(),
+            approved_by_user_id=owner_id,
+            approved_at=datetime.now(timezone.utc),
+        )
+        db.add(grant)
+        db.flush()
+        from app.knowledge.indexing import replace_chunks_for_item
+        replace_chunks_for_item(db, item)
+        db.commit()
+
 
 engine = create_engine(
     "sqlite:///./test_vector_knowledge_job26.db",
@@ -77,6 +108,8 @@ def test_indexing_stores_embedding(client, monkeypatch):
 
     # auth-hardened: demo bootstrap instead of public company create
     _cid, _oid, _hdrs, _demo = provision_company(client)
+    agent_instance_id = (_demo.get("agents") or [{}])[0].get("id")
+    assert agent_instance_id
     co = {"id": _cid}
     owner = {"id": _oid, "email": _demo.get("owner_email")}
     headers = _hdrs
@@ -90,6 +123,7 @@ def test_indexing_stores_embedding(client, monkeypatch):
         },
     )
     assert item.status_code in (200, 201), item.text
+    _approve_item_for_search(co["id"], item.json()["id"], _oid, ["knowledge_search"], agent_instance_id)
 
     with SessionLocal() as db:
         chunks = list(
@@ -113,10 +147,12 @@ def test_hybrid_search_returns_vector_scores(client, monkeypatch):
 
     # auth-hardened: demo bootstrap instead of public company create
     _cid, _oid, _hdrs, _demo = provision_company(client)
+    agent_instance_id = (_demo.get("agents") or [{}])[0].get("id")
+    assert agent_instance_id
     co = {"id": _cid}
     owner = {"id": _oid, "email": _demo.get("owner_email")}
     headers = _hdrs
-    client.post(
+    created = client.post(
         f"/api/v1/companies/{co['id']}/knowledge",
         headers=headers,
         json={
@@ -125,9 +161,12 @@ def test_hybrid_search_returns_vector_scores(client, monkeypatch):
             "category": "policy",
         },
     )
+    assert created.status_code == 201, created.text
+    _approve_item_for_search(co["id"], created.json()["id"], _oid, ["knowledge_search"], agent_instance_id)
     search = client.post(
         f"/api/v1/companies/{co['id']}/knowledge/search",
         headers=headers,
+        params={"agent_instance_id": agent_instance_id},
         json={"query": "cancel booking refund", "limit": 5},
     )
     assert search.status_code == 200, search.text
@@ -140,7 +179,7 @@ def test_hybrid_search_returns_vector_scores(client, monkeypatch):
         assert "keyword_score" in hits[0]
 
 
-def test_keyword_only_when_flag_off(monkeypatch):
+def test_unapproved_source_is_not_indexed_or_retrieved(monkeypatch):
     from app.core import config as cfg_mod
 
     monkeypatch.setenv("KNOWLEDGE_VECTOR", "false")
@@ -173,6 +212,8 @@ def test_keyword_only_when_flag_off(monkeypatch):
         )
         db.add(item)
         db.flush()
+        # No source grant exists: the indexing service must purge/skip all
+        # chunks, and retrieval must fail closed without a trusted requester.
         replace_chunks_for_item(db, item)
         db.commit()
         chunks = list(
@@ -180,13 +221,11 @@ def test_keyword_only_when_flag_off(monkeypatch):
                 select(KnowledgeChunk).where(KnowledgeChunk.company_id == co.id)
             ).all()
         )
-        assert chunks
-        assert chunks[0].embedding is None
+        assert chunks == []
         hits = search_knowledge_chunks(
             db, company_id=co.id, agent_instance_id=None, query="hotel reservation"
         )
-        assert hits
-        assert hits[0]["search_mode"] == "keyword"
+        assert hits == []
 
 
 def test_get_embedding_provider_default():
