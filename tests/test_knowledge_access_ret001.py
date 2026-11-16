@@ -1,5 +1,6 @@
 """RET-001: fail-closed source authorization and duplicate-chunk tests."""
 from datetime import datetime, timedelta, timezone
+import hashlib
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -44,6 +45,7 @@ def _policy(db, company, user, item, *, classification="B",
         company_id=company.id,
         source_type="item",
         source_id=item.id,
+        source_hash=hashlib.sha256(item.content.encode("utf-8")).hexdigest(),
         classification=classification,
         is_approved=True,
         is_active=active,
