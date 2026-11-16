@@ -706,6 +706,7 @@ class KnowledgeSourcePolicy(Base):
     allowed_purposes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     policy_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     source_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    source_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     approval_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)
     owner_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
