@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+import hashlib
 from sqlalchemy import select
 
 import pytest
@@ -71,6 +72,7 @@ def _admit_seeded_sources(db, company_id):
             continue
         db.add(KnowledgeSourcePolicy(
             company_id=company_id, source_type="item", source_id=item.id,
+            source_hash=hashlib.sha256(item.content.encode("utf-8")).hexdigest(),
             classification="B", is_approved=True, is_active=True,
             allowed_user_ids=[owner.id], allowed_role_ids=[], allowed_department_ids=[],
             allowed_purposes=["task_execution"], approval_ref="TEST-OWNER-APPROVAL",
