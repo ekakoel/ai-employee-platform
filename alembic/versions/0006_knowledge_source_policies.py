@@ -32,6 +32,7 @@ def upgrade():
         sa.Column("allowed_purposes", sa.JSON(), nullable=False, server_default="[]"),
         sa.Column("policy_version", sa.Integer(), nullable=False, server_default="1"),
         sa.Column("source_version", sa.String(length=100), nullable=True),
+        sa.Column("source_hash", sa.String(length=64), nullable=True),
         sa.Column("approval_ref", sa.String(length=200), nullable=True),
         sa.Column("owner_user_id", sa.String(length=36), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
         sa.Column("reviewed_at", sa.DateTime(timezone=True), nullable=True),
