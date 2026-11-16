@@ -39,6 +39,7 @@ from app.models import (
     KnowledgeItem,
     KnowledgeSourceGrant,
     Policy,
+    Role,
     Skill,
     Task,
     User,
@@ -1639,6 +1640,14 @@ def create_knowledge_source_grant(
     if source is None:
         raise HTTPException(status_code=404, detail="Knowledge source not found")
 
+    existing_grant = db.scalar(select(KnowledgeSourceGrant).where(
+        KnowledgeSourceGrant.company_id == company_id,
+        KnowledgeSourceGrant.source_type == payload.source_type,
+        KnowledgeSourceGrant.source_id == payload.source_id,
+    ))
+    if existing_grant is not None:
+        raise HTTPException(status_code=409, detail="A source grant already exists; revoke it before creating a replacement")
+
     owner = db.get(User, payload.owner_user_id)
     if owner is None or owner.company_id != company_id or owner.status != "active":
         raise HTTPException(status_code=400, detail="Source owner must be an active user in this company")
@@ -1665,6 +1674,18 @@ def create_knowledge_source_grant(
         )).all())
         if valid_users != allowed_users:
             raise HTTPException(status_code=400, detail="Audience contains an unknown or inactive company user")
+    if payload.allowed_role_ids:
+        valid_roles = set(db.scalars(select(Role.id).where(
+            Role.id.in_(payload.allowed_role_ids),
+        )).all())
+        if valid_roles != set(payload.allowed_role_ids):
+            raise HTTPException(status_code=400, detail="Audience contains an unknown role")
+
+    if payload.classification == "C" and (
+        payload.allowed_role_ids or payload.allowed_department_ids
+    ):
+        raise HTTPException(status_code=400, detail="C sources require explicit named-user grants only")
+
     if payload.allowed_department_ids:
         valid_departments = set(db.scalars(select(Department.id).where(
             Department.company_id == company_id,
@@ -2542,6 +2563,7 @@ def list_knowledge(
         purpose="knowledge_list",
     )
     if not item_ids:
+        db.commit()  # persist denial audit events
         return []
     query = select(KnowledgeItem).where(
         KnowledgeItem.company_id == company_id,
