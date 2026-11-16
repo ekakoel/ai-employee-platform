@@ -2,6 +2,7 @@
 
 import pytest
 from datetime import datetime, timezone
+import hashlib
 from fastapi.testclient import TestClient
 
 from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
@@ -130,6 +131,7 @@ def test_hybrid_search_returns_vector_scores(client, monkeypatch):
     with SessionLocal() as db:
         db.add(KnowledgeSourcePolicy(
             company_id=co["id"], source_type="item", source_id=created.json()["id"],
+            source_hash=hashlib.sha256("Free cancellation up to 24 hours before arrival. No refund after that.".encode("utf-8")).hexdigest(),
             classification="B", is_approved=True, is_active=True,
             allowed_user_ids=[_oid], allowed_role_ids=[], allowed_department_ids=[],
             allowed_purposes=["interactive_knowledge_search"], approval_ref="TEST-OWNER-APPROVAL",
@@ -192,6 +194,7 @@ def test_keyword_only_when_flag_off(monkeypatch):
         db.flush()
         db.add(KnowledgeSourcePolicy(
             company_id=co.id, source_type="item", source_id=item.id,
+            source_hash=hashlib.sha256(item.content.encode("utf-8")).hexdigest(),
             classification="B", is_approved=True, is_active=True,
             allowed_user_ids=[user.id], allowed_role_ids=[], allowed_department_ids=[],
             allowed_purposes=["task_execution"], approval_ref="TEST-OWNER-APPROVAL",
