@@ -41,7 +41,7 @@ from app.models import (
     Task,
     User,
 )
-from app.models.entities import TaskStatus, KnowledgeDocument, KnowledgeSourcePolicy
+from app.models.entities import TaskStatus, KnowledgeDocument, KnowledgeSourcePolicy, DocumentStatus
 from app.runtime.tool_executor import ToolExecutionError, ToolExecutor
 from app.schemas.domain import (
     ConversationCreate,
@@ -1683,7 +1683,7 @@ def upsert_knowledge_source_policy(
     policy.approval_ref = str(payload["approval_ref"])[:200]
     policy.source_version = str(payload.get("source_version") or "")[:100] or None
     source_text = source.content if source_type == "item" else (source.extracted_text or "")
-    if source_type == "document" and str(source.status).lower() not in {"ready", "documentstatus.ready"}:
+    if source_type == "document" and source.status != DocumentStatus.READY:
         raise HTTPException(status_code=409, detail="Document must be READY before retrieval admission.")
     policy.source_hash = hashlib.sha256((source_text or "").encode("utf-8")).hexdigest()
     policy.owner_user_id = user.id
