@@ -147,6 +147,8 @@ def test_hybrid_search_returns_vector_scores(client, monkeypatch):
 
     # auth-hardened: demo bootstrap instead of public company create
     _cid, _oid, _hdrs, _demo = provision_company(client)
+    agent_instance_id = (_demo.get("agents") or [{}])[0].get("id")
+    assert agent_instance_id
     co = {"id": _cid}
     owner = {"id": _oid, "email": _demo.get("owner_email")}
     headers = _hdrs
