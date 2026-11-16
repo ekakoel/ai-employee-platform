@@ -6,6 +6,7 @@ that matches the authenticated requester, agent, and declared purpose.
 from __future__ import annotations
 
 from datetime import timezone
+import hashlib
 from typing import Any
 
 from sqlalchemy import select
@@ -129,13 +130,21 @@ def authorized_source_ids(
         )
     ).all()
 
-    item_versions = {}
-    document_versions = {}
-    item_candidates = {g.source_id for g in grants if g.source_type == "item"}
-    document_candidates = {g.source_id for g in grants if g.source_type == "document"}
+    # Resolve parent metadata only for grants already matching requester,
+    # purpose, approval state, and classification. Unapproved source bodies
+    # are never loaded as part of the retrieval authorization path.
+    eligible_grants = [g for g in grants if grant_allows(g, user, purpose)]
+    item_candidates = {g.source_id for g in eligible_grants if g.source_type == "item"}
+    document_candidates = {g.source_id for g in eligible_grants if g.source_type == "document"}
+
+    item_versions: dict[str, tuple[str, str]] = {}
+    document_versions: dict[str, tuple[str, str]] = {}
     if item_candidates:
         item_versions = {
-            row.id: source_version_token(row.updated_at)
+            row.id: (
+                source_version_token(row.updated_at),
+                hashlib.sha256((row.content or "").encode("utf-8")).hexdigest(),
+            )
             for row in db.scalars(
                 select(KnowledgeItem).where(
                     KnowledgeItem.company_id == company_id,
@@ -146,7 +155,10 @@ def authorized_source_ids(
         }
     if document_candidates:
         document_versions = {
-            row.id: source_version_token(row.updated_at)
+            row.id: (
+                source_version_token(row.updated_at),
+                hashlib.sha256((row.extracted_text or "").encode("utf-8")).hexdigest(),
+            )
             for row in db.scalars(
                 select(KnowledgeDocument).where(
                     KnowledgeDocument.company_id == company_id,
@@ -162,13 +174,23 @@ def authorized_source_ids(
         reason = "audience_or_policy_denied"
         allowed = grant_allows(grant, user, purpose)
         if allowed and grant.source_type == "item":
-            allowed = item_versions.get(grant.source_id) == grant.source_version
-            reason = "source_version_changed_or_missing"
+            source_meta = item_versions.get(grant.source_id)
+            allowed = bool(
+                source_meta
+                and source_meta[0] == grant.source_version
+                and source_meta[1] == grant.source_hash
+            )
+            reason = "source_version_or_hash_changed_or_missing"
             if allowed:
                 item_ids.add(grant.source_id)
         elif allowed and grant.source_type == "document":
-            allowed = document_versions.get(grant.source_id) == grant.source_version
-            reason = "source_not_ready_or_version_changed"
+            source_meta = document_versions.get(grant.source_id)
+            allowed = bool(
+                source_meta
+                and source_meta[0] == grant.source_version
+                and source_meta[1] == grant.source_hash
+            )
+            reason = "source_not_ready_or_version_or_hash_changed"
             if allowed:
                 document_ids.add(grant.source_id)
         elif grant.source_type not in {"item", "document"}:
