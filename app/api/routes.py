@@ -1657,12 +1657,28 @@ def create_knowledge_source_grant(
         raise HTTPException(status_code=400, detail="Wildcard audience is only valid for classification A")
     if payload.classification == "C" and not allowed_users:
         raise HTTPException(status_code=400, detail="Restricted C sources require named user grants")
-    if payload.classification == "A" and allowed_users != {"*"}:
-        raise HTTPException(status_code=400, detail="A sources require an explicit wildcard audience")
+    allowed_agents = set(payload.allowed_agent_instance_ids)
+    if payload.classification == "A":
+        if allowed_users != {"*"} or allowed_agents != {"*"}:
+            raise HTTPException(status_code=400, detail="A sources require explicit wildcard user and agent audiences")
+    elif not allowed_agents or "*" in allowed_agents:
+        raise HTTPException(status_code=400, detail="B/C sources require explicit agent-instance audiences")
     if payload.classification == "B" and not (
         allowed_users or payload.allowed_role_ids or payload.allowed_department_ids
     ):
-        raise HTTPException(status_code=400, detail="B sources require an explicit audience")
+        raise HTTPException(status_code=400, detail="B sources require an explicit user, role, or department audience")
+    if payload.classification == "C" and (
+        payload.allowed_role_ids or payload.allowed_department_ids
+    ):
+        raise HTTPException(status_code=400, detail="C sources require explicit named-user grants only")
+    if allowed_agents != {"*"}:
+        valid_agents = set(db.scalars(select(AgentInstance.id).where(
+            AgentInstance.company_id == company_id,
+            AgentInstance.status == "active",
+            AgentInstance.id.in_(allowed_agents),
+        )).all())
+        if valid_agents != allowed_agents:
+            raise HTTPException(status_code=400, detail="Audience contains an unknown or inactive company agent")
     if not payload.allowed_purposes:
         raise HTTPException(status_code=400, detail="At least one permitted purpose is required")
 
@@ -1714,6 +1730,7 @@ def create_knowledge_source_grant(
     grant.owner_user_id = payload.owner_user_id
     grant.created_by_user_id = user.id
     grant.allowed_user_ids = payload.allowed_user_ids
+    grant.allowed_agent_instance_ids = payload.allowed_agent_instance_ids
     grant.allowed_role_ids = payload.allowed_role_ids
     grant.allowed_department_ids = payload.allowed_department_ids
     grant.allowed_purposes = list(dict.fromkeys(payload.allowed_purposes))
