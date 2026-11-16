@@ -32,7 +32,7 @@ def source_version_token(value: Any) -> str:
     return str(int(value.timestamp() * 1_000_000))
 
 
-def grant_allows(grant: Any, user: Any, purpose: str) -> bool:
+def grant_allows(grant: Any, user: Any, purpose: str, agent_instance_id: str | None = None) -> bool:
     """Pure policy predicate. Missing or malformed metadata always denies."""
     classification = str(getattr(grant, "classification", "") or "").upper()
     if classification not in {"A", "B", "C"}:
@@ -50,13 +50,16 @@ def grant_allows(grant: Any, user: Any, purpose: str) -> bool:
     role_id = getattr(user, "role_id", None)
     department_id = getattr(user, "department_id", None)
     users = getattr(grant, "allowed_user_ids", None) or []
+    agents = getattr(grant, "allowed_agent_instance_ids", None) or []
     roles = getattr(grant, "allowed_role_ids", None) or []
     departments = getattr(grant, "allowed_department_ids", None) or []
 
     if classification == "A":
         # A is public-corpus content, but still requires explicit wildcard
         # admission, approval, and purpose restriction.
-        return "*" in users
+        return "*" in users and "*" in agents
+    if not agent_instance_id or agent_instance_id not in agents:
+        return False
     if classification == "C":
         # Restricted data requires a named-user grant; role-wide access is
         # intentionally insufficient.
@@ -133,7 +136,7 @@ def authorized_source_ids(
     # Resolve parent metadata only for grants already matching requester,
     # purpose, approval state, and classification. Unapproved source bodies
     # are never loaded as part of the retrieval authorization path.
-    eligible_grants = [g for g in grants if grant_allows(g, user, purpose)]
+    eligible_grants = [g for g in grants if grant_allows(g, user, purpose, agent_instance_id)]
     item_candidates = {g.source_id for g in eligible_grants if g.source_type == "item"}
     document_candidates = {g.source_id for g in eligible_grants if g.source_type == "document"}
 
@@ -172,7 +175,7 @@ def authorized_source_ids(
     document_ids: set[str] = set()
     for grant in grants:
         reason = "audience_or_policy_denied"
-        allowed = grant_allows(grant, user, purpose)
+        allowed = grant_allows(grant, user, purpose, agent_instance_id)
         if allowed and grant.source_type == "item":
             source_meta = item_versions.get(grant.source_id)
             allowed = bool(
