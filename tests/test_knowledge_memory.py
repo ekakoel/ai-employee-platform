@@ -118,6 +118,7 @@ def test_knowledge_create_indexes_chunks(client):
     )
     assert resp.status_code == 201, resp.text
     item_id = resp.json()["id"]
+    _approve_item_for_search(company_id, item_id, owner_id, ["knowledge_search"])
 
     with SessionLocal() as db:
         chunks = list(
