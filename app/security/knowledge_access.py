@@ -77,7 +77,20 @@ def authorized_source_ids(
     task_id: str | None = None,
 ) -> tuple[set[str], set[str]]:
     """Return (knowledge_item_ids, knowledge_document_ids); fail closed."""
-    if not requester_id or not agent_instance_id or not purpose:
+    if not agent_instance_id or not purpose:
+        return set(), set()
+    if not requester_id:
+        db.add(AuditLog(
+            company_id=company_id,
+            user_id=None,
+            agent_instance_id=agent_instance_id,
+            task_id=task_id,
+            action="knowledge.retrieval.authorization",
+            resource_type="knowledge_retrieval",
+            resource_id=None,
+            status="denied",
+            details={"purpose": purpose, "reason": "requester_identity_missing"},
+        ))
         return set(), set()
 
     user = db.get(User, requester_id)
