@@ -1645,8 +1645,8 @@ def create_knowledge_source_grant(
         KnowledgeSourceGrant.source_type == payload.source_type,
         KnowledgeSourceGrant.source_id == payload.source_id,
     ))
-    if existing_grant is not None:
-        raise HTTPException(status_code=409, detail="A source grant already exists; revoke it before creating a replacement")
+    if existing_grant is not None and (existing_grant.is_active or existing_grant.is_approved):
+        raise HTTPException(status_code=409, detail="An active source grant already exists; revoke it before changing the policy")
 
     owner = db.get(User, payload.owner_user_id)
     if owner is None or owner.company_id != company_id or owner.status != "active":
@@ -1699,24 +1699,31 @@ def create_knowledge_source_grant(
     if payload.source_hash and payload.source_hash.lower() != current_hash:
         raise HTTPException(status_code=409, detail="Source content changed; refresh the source before creating its grant")
 
-    grant = KnowledgeSourceGrant(
-        company_id=company_id,
-        source_type=payload.source_type,
-        source_id=payload.source_id,
-        classification=payload.classification,
-        owner_user_id=payload.owner_user_id,
-        created_by_user_id=user.id,
-        allowed_user_ids=payload.allowed_user_ids,
-        allowed_role_ids=payload.allowed_role_ids,
-        allowed_department_ids=payload.allowed_department_ids,
-        allowed_purposes=list(dict.fromkeys(payload.allowed_purposes)),
-        is_active=False,
-        is_approved=False,
-        policy_version=1,
-        source_version=source_version_token(source.updated_at),
-        source_hash=current_hash,
-    )
-    db.add(grant)
+    if existing_grant is None:
+        grant = KnowledgeSourceGrant(
+            company_id=company_id,
+            source_type=payload.source_type,
+            source_id=payload.source_id,
+            policy_version=1,
+        )
+        db.add(grant)
+    else:
+        grant = existing_grant
+        grant.policy_version += 1
+    grant.classification = payload.classification
+    grant.owner_user_id = payload.owner_user_id
+    grant.created_by_user_id = user.id
+    grant.allowed_user_ids = payload.allowed_user_ids
+    grant.allowed_role_ids = payload.allowed_role_ids
+    grant.allowed_department_ids = payload.allowed_department_ids
+    grant.allowed_purposes = list(dict.fromkeys(payload.allowed_purposes))
+    grant.is_active = False
+    grant.is_approved = False
+    grant.approved_by_user_id = None
+    grant.approved_at = None
+    grant.source_version = source_version_token(source.updated_at)
+    grant.source_hash = current_hash
+    grant.updated_at = datetime.now(timezone.utc)
     db.flush()
     record_audit(
         db, company_id=company_id, user_id=user.id,
