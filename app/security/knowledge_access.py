@@ -58,6 +58,9 @@ def authorized_source_ids(
         ).all()
     }
     for policy in policies:
+        owner = db.get(User, policy.owner_user_id) if policy.owner_user_id else None
+        if owner is None or owner.company_id != company_id or owner.status != "active":
+            continue
         if policy.classification not in {"A", "B", "C"}:
             continue
         if not policy.approval_ref or not policy.source_hash or purpose not in (policy.allowed_purposes or []):
