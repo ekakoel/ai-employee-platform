@@ -45,9 +45,16 @@ def sources(context: AgentContext) -> list[dict]:
     for kind, rows in (("knowledge", context.knowledge), ("chunk", context.retrieved_knowledge)):
         for row in rows:
             content = row.get("content") or ""
-            tokens = set(re.findall(r"[a-z0-9]+", (row.get("title", "") + " " + content).lower()))
-            if row.get("id") and content and query & tokens:
-                found.append({"source_id": f"{kind}:{row['id']}", "title": row.get("title", kind), "content": content})
+            title = row.get("source_title") or row.get("title") or kind
+            if kind == "chunk":
+                parent_id = row.get("knowledge_item_id") or row.get("knowledge_document_id")
+                source_kind = "knowledge" if row.get("knowledge_item_id") else "document"
+                source_id = f"{source_kind}:{parent_id}" if parent_id else None
+            else:
+                source_id = f"knowledge:{row['id']}" if row.get("id") else None
+            tokens = set(re.findall(r"[a-z0-9]+", (title + " " + content).lower()))
+            if source_id and content and query & tokens:
+                found.append({"source_id": source_id, "title": title, "content": content})
     return found[:10]
 
 
