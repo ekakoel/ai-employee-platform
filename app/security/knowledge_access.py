@@ -5,6 +5,7 @@ that matches the authenticated requester, agent, and declared purpose.
 """
 from __future__ import annotations
 
+from datetime import timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -12,9 +13,21 @@ from sqlalchemy.orm import Session
 
 from app.models.entities import (
     AgentInstance,
+    DocumentStatus,
+    KnowledgeDocument,
+    KnowledgeItem,
     KnowledgeSourceGrant,
     User,
 )
+
+
+def source_version_token(value: Any) -> str:
+    """Stable timestamp token invalidating grants after a source edit."""
+    if value is None:
+        return ""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return str(int(value.timestamp() * 1_000_000))
 
 
 def grant_allows(grant: Any, user: Any, purpose: str) -> bool:
@@ -103,13 +116,42 @@ def authorized_source_ids(
         )
     ).all()
 
+    item_versions = {}
+    document_versions = {}
+    item_candidates = {g.source_id for g in grants if g.source_type == "item"}
+    document_candidates = {g.source_id for g in grants if g.source_type == "document"}
+    if item_candidates:
+        item_versions = {
+            row.id: source_version_token(row.updated_at)
+            for row in db.scalars(
+                select(KnowledgeItem).where(
+                    KnowledgeItem.company_id == company_id,
+                    KnowledgeItem.id.in_(item_candidates),
+                    KnowledgeItem.is_active.is_(True),
+                )
+            ).all()
+        }
+    if document_candidates:
+        document_versions = {
+            row.id: source_version_token(row.updated_at)
+            for row in db.scalars(
+                select(KnowledgeDocument).where(
+                    KnowledgeDocument.company_id == company_id,
+                    KnowledgeDocument.id.in_(document_candidates),
+                    KnowledgeDocument.status == DocumentStatus.READY,
+                )
+            ).all()
+        }
+
     item_ids: set[str] = set()
     document_ids: set[str] = set()
     for grant in grants:
         if not grant_allows(grant, user, purpose):
             continue
         if grant.source_type == "item":
-            item_ids.add(grant.source_id)
+            if item_versions.get(grant.source_id) == grant.source_version:
+                item_ids.add(grant.source_id)
         elif grant.source_type == "document":
-            document_ids.add(grant.source_id)
+            if document_versions.get(grant.source_id) == grant.source_version:
+                document_ids.add(grant.source_id)
     return item_ids, document_ids
