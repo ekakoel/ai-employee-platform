@@ -46,7 +46,7 @@ def _session_local():
         return None
 
 
-def _approve_demo_sources(company_id, owner_id, agent_instance_id):
+def _approve_demo_sources(company_id, owner_id, agent_id):
     from app.models.entities import KnowledgeItem, KnowledgeSourceGrant
     from app.security.knowledge_access import source_version_token
 
