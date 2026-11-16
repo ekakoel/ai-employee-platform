@@ -1,6 +1,7 @@
 """Job 26 — Vector / hybrid knowledge retrieval tests."""
 
 import pytest
+from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 
 from tests.helpers import owner_setup, provision_company, bootstrap_demo, login_headers
@@ -16,8 +17,33 @@ from app.knowledge.embeddings import (
 from app.knowledge.indexing import replace_chunks_for_item
 from app.knowledge.retrieval import search_knowledge_chunks
 from app.main import app
-from app.models.entities import KnowledgeChunk, KnowledgeItem
+from app.models.entities import KnowledgeChunk, KnowledgeItem, KnowledgeSourceGrant
+from app.security.knowledge_access import source_version_token
 from app.services.seed import seed_catalog
+
+def _approve_item_for_search(company_id, item_id, owner_id, purposes):
+    with SessionLocal() as db:
+        item = db.get(KnowledgeItem, item_id)
+        assert item is not None
+        db.add(KnowledgeSourceGrant(
+            company_id=company_id,
+            source_type="item",
+            source_id=item.id,
+            classification="B",
+            owner_user_id=owner_id,
+            created_by_user_id=owner_id,
+            allowed_user_ids=[owner_id],
+            allowed_purposes=purposes,
+            is_active=True,
+            is_approved=True,
+            policy_version=1,
+            source_version=source_version_token(item.updated_at),
+            source_hash=__import__("hashlib").sha256(item.content.encode("utf-8")).hexdigest(),
+            approved_by_user_id=owner_id,
+            approved_at=datetime.now(timezone.utc),
+        ))
+        db.commit()
+
 
 engine = create_engine(
     "sqlite:///./test_vector_knowledge_job26.db",
@@ -116,7 +142,7 @@ def test_hybrid_search_returns_vector_scores(client, monkeypatch):
     co = {"id": _cid}
     owner = {"id": _oid, "email": _demo.get("owner_email")}
     headers = _hdrs
-    client.post(
+    created = client.post(
         f"/api/v1/companies/{co['id']}/knowledge",
         headers=headers,
         json={
@@ -125,9 +151,12 @@ def test_hybrid_search_returns_vector_scores(client, monkeypatch):
             "category": "policy",
         },
     )
+    assert created.status_code == 201, created.text
+    _approve_item_for_search(co["id"], created.json()["id"], _oid, ["knowledge_search"])
     search = client.post(
         f"/api/v1/companies/{co['id']}/knowledge/search",
         headers=headers,
+        params={"agent_instance_id": _demo.get("agent_instance_id") or ""},
         json={"query": "cancel booking refund", "limit": 5},
     )
     assert search.status_code == 200, search.text
@@ -140,7 +169,7 @@ def test_hybrid_search_returns_vector_scores(client, monkeypatch):
         assert "keyword_score" in hits[0]
 
 
-def test_keyword_only_when_flag_off(monkeypatch):
+def test_keyword_search_denies_unclassified_source_without_requester(monkeypatch):
     from app.core import config as cfg_mod
 
     monkeypatch.setenv("KNOWLEDGE_VECTOR", "false")
@@ -185,8 +214,7 @@ def test_keyword_only_when_flag_off(monkeypatch):
         hits = search_knowledge_chunks(
             db, company_id=co.id, agent_instance_id=None, query="hotel reservation"
         )
-        assert hits
-        assert hits[0]["search_mode"] == "keyword"
+        assert hits == []
 
 
 def test_get_embedding_provider_default():
