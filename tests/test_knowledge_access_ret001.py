@@ -147,3 +147,20 @@ def test_exact_duplicate_chunks_removed_but_distinct_source_provenance_preserved
     finally:
         db.close()
         engine.dispose()
+
+
+def test_source_content_change_invalidates_previous_approval():
+    engine, db = _session()
+    try:
+        company, user = _identity(db)
+        item = KnowledgeItem(company_id=company.id, title="Versioned source", content="approved version one")
+        db.add(item)
+        db.flush()
+        _policy(db, company, user, item, users=[user.id])
+        assert authorized_source_ids(db, requester=user, company_id=company.id, purpose="task_execution") == ([item.id], [])
+        item.content = "changed content requiring re-review"
+        db.flush()
+        assert authorized_source_ids(db, requester=user, company_id=company.id, purpose="task_execution") == ([], [])
+    finally:
+        db.close()
+        engine.dispose()
