@@ -688,6 +688,8 @@ class KnowledgeSourcePolicy(Base):
     __tablename__ = "knowledge_source_policies"
     __table_args__ = (
         UniqueConstraint("company_id", "source_type", "source_id", name="uq_knowledge_source_policy"),
+        CheckConstraint("classification IN ('A', 'B', 'C', 'D', 'U')", name="ck_knowledge_source_classification"),
+        CheckConstraint("source_type IN ('item', 'document')", name="ck_knowledge_source_type"),
         Index("ix_knowledge_source_policy_company", "company_id", "source_type", "is_active"),
     )
 
