@@ -79,6 +79,7 @@ def authorized_source_ids(
     agent_instance_id: str | None,
     purpose: str,
     task_id: str | None = None,
+    access_mode: str = "use",
 ) -> tuple[set[str], set[str]]:
     """Return (knowledge_item_ids, knowledge_document_ids); fail closed."""
     if not agent_instance_id or not purpose:
@@ -114,16 +115,24 @@ def authorized_source_ids(
 
     # Reuse the platform's trusted agent-access decision. Revoked agent access
     # therefore takes effect on the next retrieval.
-    from app.services.access import require_agent_use
+    from app.services.access import require_agent_chat, require_agent_use
     from fastapi import HTTPException
 
     try:
-        require_agent_use(
-            db,
-            user,
-            company_id=company_id,
-            agent_instance_id=agent_instance_id,
-        )
+        if access_mode == "chat":
+            require_agent_chat(
+                db,
+                user,
+                company_id=company_id,
+                agent_instance_id=agent_instance_id,
+            )
+        else:
+            require_agent_use(
+                db,
+                user,
+                company_id=company_id,
+                agent_instance_id=agent_instance_id,
+            )
     except HTTPException:
         return set(), set()
 
