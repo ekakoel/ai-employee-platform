@@ -24,7 +24,7 @@ def _maybe_embed(content: str) -> tuple[list[float] | None, str | None]:
     return provider.embed(content), provider.model_name
 
 
-def _source_is_indexable(db: Session, *, company_id: str, source_type: str, source_id: str, updated_at) -> bool:
+def _source_is_indexable(db: Session, *, company_id: str, source_type: str, source_id: str, updated_at, content: str) -> bool:
     grant = db.scalar(
         select(KnowledgeSourceGrant).where(
             KnowledgeSourceGrant.company_id == company_id,
