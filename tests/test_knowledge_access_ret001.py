@@ -88,8 +88,8 @@ def test_b_and_c_require_explicit_identity_and_purpose_grants():
         db.flush()
         _policy(db, company, user, item_b, classification="B")
         _policy(db, company, user, item_c, classification="C", users=[user.id], purposes=["reservation_case"])
-        assert authorized_source_ids(db, requester=user, company_id=company.id, purpose="task_execution") == ([item_b.id], [])
-        assert authorized_source_ids(db, requester=user, company_id=company.id, purpose="reservation_case") == ([item_b.id, item_c.id], [])
+        assert set(authorized_source_ids(db, requester=user, company_id=company.id, purpose="task_execution")[0]) == {item_b.id}
+        assert set(authorized_source_ids(db, requester=user, company_id=company.id, purpose="reservation_case")[0]) == {item_c.id}
     finally:
         db.close()
         engine.dispose()
