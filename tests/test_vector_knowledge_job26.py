@@ -153,10 +153,12 @@ def test_hybrid_search_returns_vector_scores(client, monkeypatch):
     )
     assert created.status_code == 201, created.text
     _approve_item_for_search(co["id"], created.json()["id"], _oid, ["knowledge_search"])
+    agent_instance_id = (_demo.get("agents") or [{}])[0].get("id")
+    assert agent_instance_id
     search = client.post(
         f"/api/v1/companies/{co['id']}/knowledge/search",
         headers=headers,
-        params={"agent_instance_id": _demo.get("agent_instance_id") or ""},
+        params={"agent_instance_id": agent_instance_id},
         json={"query": "cancel booking refund", "limit": 5},
     )
     assert search.status_code == 200, search.text
