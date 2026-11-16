@@ -69,9 +69,9 @@ def test_public_corpus_requires_explicit_wildcard_admission():
 
 def test_duplicate_passages_deduplicate_within_source_but_keep_provenance():
     hits = [
-        {"id": "c1", "content": "Same   passage.", "source_id": "item-1", "score": 0.9},
-        {"id": "c2", "content": " same passage. ", "source_id": "item-1", "score": 0.8},
-        {"id": "c3", "content": "Same passage.", "source_id": "item-2", "score": 0.7},
+        {"id": "c1", "content": "Same   passage.", "source_type": "item", "source_id": "item-1", "score": 0.9},
+        {"id": "c2", "content": " same passage. ", "source_type": "item", "source_id": "item-1", "score": 0.8},
+        {"id": "c3", "content": "Same passage.", "source_type": "item", "source_id": "item-2", "score": 0.7},
     ]
     result = deduplicate_source_hits(hits)
     assert [row["id"] for row in result] == ["c1", "c3"]
