@@ -137,6 +137,36 @@ def test_smoke_playbook_execute_knowledge_inventory():
     assert listed.status_code == 200
     assert any(k["id"] == know["id"] for k in listed.json())
 
+    search = client.post(
+        f"/api/v1/companies/{company_id}/knowledge/search",
+        headers=headers,
+        params={"agent_instance_id": agent_id},
+        json={"query": "Alila partnership contract breakfast rate", "limit": 5},
+    )
+    assert search.status_code == 200, search.text
+    assert any(hit.get("source_id") == know["id"] for hit in search.json())
+
+    revoked = client.delete(
+        f"/api/v1/companies/{company_id}/knowledge/source-grants/{created_grant.json()['id']}",
+        headers=headers,
+    )
+    assert revoked.status_code == 204, revoked.text
+    after_revoke = client.get(
+        f"/api/v1/companies/{company_id}/knowledge",
+        headers=headers,
+        params={"agent_instance_id": agent_id},
+    )
+    assert after_revoke.status_code == 200
+    assert not any(k["id"] == know["id"] for k in after_revoke.json())
+    search_after_revoke = client.post(
+        f"/api/v1/companies/{company_id}/knowledge/search",
+        headers=headers,
+        params={"agent_instance_id": agent_id},
+        json={"query": "Alila partnership contract breakfast rate", "limit": 5},
+    )
+    assert search_after_revoke.status_code == 200
+    assert not any(hit.get("source_id") == know["id"] for hit in search_after_revoke.json())
+
     ws = client.get("/workspace")
     assert ws.status_code == 200
 
