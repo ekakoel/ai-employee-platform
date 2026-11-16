@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import hashlib
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile, status, Request
 from sqlalchemy import or_, select
@@ -40,7 +41,7 @@ from app.models import (
     Task,
     User,
 )
-from app.models.entities import TaskStatus
+from app.models.entities import TaskStatus, KnowledgeDocument, KnowledgeSourcePolicy, DocumentStatus
 from app.runtime.tool_executor import ToolExecutionError, ToolExecutor
 from app.schemas.domain import (
     ConversationCreate,
@@ -1603,6 +1604,144 @@ def delete_company_policy(
 
 
 
+
+
+@router.put(
+    "/companies/{company_id}/knowledge/sources/{source_type}/{source_id}/policy",
+)
+def upsert_knowledge_source_policy(
+    company_id: str,
+    source_type: str,
+    source_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    x_user_id: str = Depends(get_authenticated_user_id),
+):
+    """Owner-only source admission; retrieval itself never trusts request-supplied grants."""
+    user = require_company_user(db, company_id, x_user_id)
+    company = get_company_or_404(db, company_id)
+    role_name = (user.role.name if user.role else "").strip().lower()
+    if role_name != "owner" and company.owner_user_id != user.id:
+        raise HTTPException(status_code=403, detail="Only the company owner may approve knowledge retrieval sources.")
+
+    if source_type not in {"item", "document"}:
+        raise HTTPException(status_code=422, detail="source_type must be item or document.")
+    source_model = KnowledgeItem if source_type == "item" else KnowledgeDocument
+    source = db.get(source_model, source_id)
+    if source is None or source.company_id != company_id:
+        raise HTTPException(status_code=404, detail="Knowledge source not found for this company.")
+
+    classification = str(payload.get("classification", "U")).upper()
+    if classification not in {"A", "B", "C", "D", "U"}:
+        raise HTTPException(status_code=422, detail="Invalid source classification.")
+    purposes = payload.get("allowed_purposes") or []
+    user_ids = payload.get("allowed_user_ids") or []
+    role_ids = payload.get("allowed_role_ids") or []
+    department_ids = payload.get("allowed_department_ids") or []
+    if not all(isinstance(v, list) for v in (purposes, user_ids, role_ids, department_ids)):
+        raise HTTPException(status_code=422, detail="Grant fields must be arrays.")
+    if classification in {"B", "C"} and not (user_ids or role_ids or department_ids):
+        raise HTTPException(status_code=422, detail="B/C sources require an explicit user, role or department grant.")
+    if classification in {"A", "B", "C"} and not purposes:
+        raise HTTPException(status_code=422, detail="Approved sources require at least one permitted purpose.")
+    if not payload.get("approval_ref"):
+        raise HTTPException(status_code=422, detail="approval_ref is required for source admission.")
+
+    if user_ids:
+        valid_users = set(db.scalars(select(User.id).where(User.company_id == company_id, User.id.in_(user_ids))).all())
+        if valid_users != set(user_ids):
+            raise HTTPException(status_code=422, detail="One or more user grants are outside this company.")
+    if department_ids:
+        valid_departments = set(db.scalars(select(Department.id).where(Department.company_id == company_id, Department.id.in_(department_ids))).all())
+        if valid_departments != set(department_ids):
+            raise HTTPException(status_code=422, detail="One or more department grants are outside this company.")
+    if role_ids:
+        from app.models import Role
+        valid_roles = set(db.scalars(select(Role.id).where(Role.id.in_(role_ids))).all())
+        if valid_roles != set(role_ids):
+            raise HTTPException(status_code=422, detail="One or more role grants are invalid.")
+
+    policy = db.scalar(select(KnowledgeSourcePolicy).where(
+        KnowledgeSourcePolicy.company_id == company_id,
+        KnowledgeSourcePolicy.source_type == source_type,
+        KnowledgeSourcePolicy.source_id == source_id,
+    ))
+    if policy is None:
+        policy = KnowledgeSourcePolicy(
+            company_id=company_id, source_type=source_type, source_id=source_id,
+        )
+        db.add(policy)
+        db.flush()
+
+    policy.classification = classification
+    policy.is_approved = classification in {"A", "B", "C"}
+    policy.is_active = bool(payload.get("is_active", True))
+    policy.allowed_user_ids = user_ids
+    policy.allowed_role_ids = role_ids
+    policy.allowed_department_ids = department_ids
+    policy.allowed_purposes = purposes if policy.is_approved else []
+    policy.approval_ref = str(payload["approval_ref"])[:200]
+    policy.source_version = str(payload.get("source_version") or "")[:100] or None
+    source_text = source.content if source_type == "item" else (source.extracted_text or "")
+    if source_type == "document" and source.status != DocumentStatus.READY:
+        raise HTTPException(status_code=409, detail="Document must be READY before retrieval admission.")
+    policy.source_hash = hashlib.sha256((source_text or "").encode("utf-8")).hexdigest()
+    policy.owner_user_id = user.id
+    policy.reviewed_at = datetime.now(timezone.utc)
+    policy.policy_version = (policy.policy_version or 0) + 1
+
+    record_audit(
+        db, company_id=company_id, user_id=user.id,
+        action="knowledge.source_policy.approve" if policy.is_approved else "knowledge.source_policy.deny",
+        resource_type="knowledge_source_policy", resource_id=policy.id,
+        status="success",
+        details={"source_type": source_type, "source_id": source_id,
+                 "classification": classification, "policy_version": policy.policy_version},
+    )
+    db.commit()
+    db.refresh(policy)
+    return {
+        "id": policy.id, "source_type": policy.source_type, "source_id": policy.source_id,
+        "classification": policy.classification, "is_approved": policy.is_approved,
+        "is_active": policy.is_active, "policy_version": policy.policy_version,
+    }
+
+
+@router.delete(
+    "/companies/{company_id}/knowledge/sources/{source_type}/{source_id}/policy",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def revoke_knowledge_source_policy(
+    company_id: str,
+    source_type: str,
+    source_id: str,
+    db: Session = Depends(get_db),
+    x_user_id: str = Depends(get_authenticated_user_id),
+):
+    user = require_company_user(db, company_id, x_user_id)
+    company = get_company_or_404(db, company_id)
+    role_name = (user.role.name if user.role else "").strip().lower()
+    if role_name != "owner" and company.owner_user_id != user.id:
+        raise HTTPException(status_code=403, detail="Only the company owner may revoke knowledge source access.")
+    policy = db.scalar(select(KnowledgeSourcePolicy).where(
+        KnowledgeSourcePolicy.company_id == company_id,
+        KnowledgeSourcePolicy.source_type == source_type,
+        KnowledgeSourcePolicy.source_id == source_id,
+    ))
+    if policy is not None:
+        policy.is_active = False
+        policy.policy_version = (policy.policy_version or 0) + 1
+        record_audit(
+            db, company_id=company_id, user_id=user.id,
+            action="knowledge.source_policy.revoke",
+            resource_type="knowledge_source_policy", resource_id=policy.id,
+            status="success",
+            details={"source_type": source_type, "source_id": source_id,
+                     "policy_version": policy.policy_version},
+        )
+        db.commit()
+    return None
+
 @router.post(
     "/companies/{company_id}/knowledge/search",
     response_model=list[KnowledgeSearchHit],
@@ -1623,6 +1762,8 @@ def search_company_knowledge(
         agent_instance_id=agent_instance_id,
         query=payload.query,
         limit=payload.limit,
+        requester_user_id=user.id,
+        purpose="interactive_knowledge_search",
     )
     if len(hits) < payload.limit:
         items = search_knowledge_items(
@@ -1631,8 +1772,12 @@ def search_company_knowledge(
             agent_instance_id=agent_instance_id,
             query=payload.query,
             limit=payload.limit - len(hits),
+            requester_user_id=user.id,
+            purpose="interactive_knowledge_search",
         )
         hits.extend(items)
+    # Persist metadata-only retrieval audit decisions for interactive searches.
+    db.commit()
     return hits
 
 
@@ -3490,6 +3635,7 @@ def create_task(
 
     task = Task(
         company_id=company_id,
+        requested_by_user_id=user.id,
         **data,
         status=TaskStatus.PENDING.value,
     )

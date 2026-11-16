@@ -681,6 +681,40 @@ class KnowledgeChunk(Base):
     )
 
 
+
+class KnowledgeSourcePolicy(Base):
+    """Explicit fail-closed read policy for a canonical knowledge source."""
+
+    __tablename__ = "knowledge_source_policies"
+    __table_args__ = (
+        UniqueConstraint("company_id", "source_type", "source_id", name="uq_knowledge_source_policy"),
+        CheckConstraint("classification IN ('A', 'B', 'C', 'D', 'U')", name="ck_knowledge_source_classification"),
+        CheckConstraint("source_type IN ('item', 'document')", name="ck_knowledge_source_type"),
+        Index("ix_knowledge_source_policy_company", "company_id", "source_type", "is_active"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_type: Mapped[str] = mapped_column(String(20), nullable=False)  # item | document
+    source_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    classification: Mapped[str] = mapped_column(String(1), nullable=False, default="U", server_default="U")
+    is_approved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    allowed_user_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    allowed_role_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    allowed_department_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    allowed_purposes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    policy_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    source_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    source_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    approval_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    owner_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
 class AgentMemory(Base):
     """
     Agent-scoped contextual memory with lifecycle controls.
@@ -946,9 +980,11 @@ class Task(Base):
     mode: Mapped[str] = mapped_column(String(20), default="execute", nullable=False)
     status: Mapped[str] = mapped_column(String(30), default=TaskStatus.PENDING.value, nullable=False)
     result: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requested_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     company: Mapped[Company] = relationship(back_populates="tasks")
+    requested_by: Mapped["User | None"] = relationship(foreign_keys=[requested_by_user_id])
     agent_instance: Mapped[AgentInstance] = relationship(back_populates="tasks")
 
 

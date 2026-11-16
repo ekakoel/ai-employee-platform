@@ -1,6 +1,7 @@
 """Phase 6 — Knowledge chunking, retrieval, and agent memory."""
 
 from datetime import datetime, timedelta, timezone
+import hashlib
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,7 +14,7 @@ from app.core.database import Base, get_db
 from app.knowledge.chunking import chunk_text
 from app.knowledge.retrieval import score_text, search_knowledge_chunks
 from app.main import app
-from app.models.entities import KnowledgeChunk
+from app.models.entities import KnowledgeChunk, KnowledgeSourcePolicy
 from app.services.seed import seed_catalog
 
 engine = create_engine(
@@ -103,7 +104,7 @@ def test_knowledge_create_indexes_chunks(client):
 
 def test_search_finds_relevant_chunk(client):
     company_id, owner_id, agent_id, _hdrs = setup(client)
-    client.post(
+    created = client.post(
         f"/api/v1/companies/{company_id}/knowledge",
         headers=_hdrs,
         json={
@@ -112,6 +113,21 @@ def test_search_finds_relevant_chunk(client):
             "category": "policy",
         },
     )
+    assert created.status_code == 201, created.text
+    admitted = client.put(
+        f"/api/v1/companies/{company_id}/knowledge/sources/item/{created.json()['id']}/policy",
+        headers=_hdrs,
+        json={
+            "classification": "B",
+            "allowed_user_ids": [owner_id],
+            "allowed_role_ids": [],
+            "allowed_department_ids": [],
+            "allowed_purposes": ["interactive_knowledge_search"],
+            "approval_ref": "TEST-OWNER-APPROVAL",
+            "source_version": "1.0",
+        },
+    )
+    assert admitted.status_code == 200, admitted.text
     search = client.post(
         f"/api/v1/companies/{company_id}/knowledge/search",
         headers=_hdrs,
@@ -121,6 +137,19 @@ def test_search_finds_relevant_chunk(client):
     hits = search.json()
     assert len(hits) >= 1
     assert hits[0]["score"] > 0
+
+    revoked = client.delete(
+        f"/api/v1/companies/{company_id}/knowledge/sources/item/{created.json()['id']}/policy",
+        headers=_hdrs,
+    )
+    assert revoked.status_code == 204
+    after_revoke = client.post(
+        f"/api/v1/companies/{company_id}/knowledge/search",
+        headers=_hdrs,
+        json={"query": "cancel fee", "limit": 5},
+    )
+    assert after_revoke.status_code == 200
+    assert after_revoke.json() == []
 
 
 def test_tenant_isolation_search(client):
