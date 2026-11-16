@@ -1821,7 +1821,7 @@ def search_company_knowledge(
     require_permission(user, "knowledge.read")
 
     if agent_instance_id is None:
-        raise HTTPException(status_code=400, detail="agent_instance_id is required for authorized knowledge retrieval")
+        return []
     get_owned_agent_or_404(db, company_id, agent_instance_id)
     require_agent_use(
         db,
@@ -1850,6 +1850,7 @@ def search_company_knowledge(
             limit=payload.limit - len(hits),
         )
         hits.extend(items)
+    db.commit()  # persist allow/deny authorization audit events
     return hits
 
 
@@ -2519,7 +2520,7 @@ def list_knowledge(
     )
 
     if agent_instance_id is None:
-        raise HTTPException(status_code=400, detail="agent_instance_id is required for authorized knowledge listing")
+        return []
     get_owned_agent_or_404(db, company_id, agent_instance_id)
     require_agent_use(db, user, company_id=company_id, agent_instance_id=agent_instance_id)
     item_ids, _ = authorized_source_ids(
@@ -2538,7 +2539,9 @@ def list_knowledge(
         (KnowledgeItem.agent_instance_id.is_(None))
         | (KnowledgeItem.agent_instance_id == agent_instance_id),
     )
-    return list(db.scalars(query).all())
+    rows = list(db.scalars(query).all())
+    db.commit()  # persist allow/deny authorization audit events
+    return rows
 
 
 @router.patch(
