@@ -2636,6 +2636,17 @@ def update_knowledge(
             detail="Knowledge item not found",
         )
 
+    source_grant = db.scalar(select(KnowledgeSourceGrant).where(
+        KnowledgeSourceGrant.company_id == company_id,
+        KnowledgeSourceGrant.source_type == "item",
+        KnowledgeSourceGrant.source_id == item.id,
+    ))
+    if source_grant is None:
+        if not is_company_admin(user):
+            raise HTTPException(status_code=403, detail="Unclassified knowledge can only be changed by a company administrator")
+    elif source_grant.owner_user_id != user.id and not is_company_admin(user):
+        raise HTTPException(status_code=403, detail="Only the source owner or a company administrator may change this knowledge")
+
     changed_fields = payload.model_dump(exclude_unset=True)
     for key, value in changed_fields.items():
         setattr(item, key, value)
@@ -2703,6 +2714,17 @@ def delete_knowledge(
             status_code=404,
             detail="Knowledge item not found",
         )
+
+    source_grant = db.scalar(select(KnowledgeSourceGrant).where(
+        KnowledgeSourceGrant.company_id == company_id,
+        KnowledgeSourceGrant.source_type == "item",
+        KnowledgeSourceGrant.source_id == item.id,
+    ))
+    if source_grant is None:
+        if not is_company_admin(user):
+            raise HTTPException(status_code=403, detail="Unclassified knowledge can only be deleted by a company administrator")
+    elif source_grant.owner_user_id != user.id and not is_company_admin(user):
+        raise HTTPException(status_code=403, detail="Only the source owner or a company administrator may delete this knowledge")
 
     grants = db.scalars(select(KnowledgeSourceGrant).where(
         KnowledgeSourceGrant.company_id == company_id,
