@@ -15,14 +15,22 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.knowledge.retrieval import search_knowledge_chunks
-from app.models.entities import KnowledgeItem, Task
+from app.security.knowledge_access import authorized_source_ids
+from app.models.entities import KnowledgeItem, Task, User
 from app.tools.base import AgentTool, ToolContext
 from app.tools.connectors import get_external_client
 
 
 def company_prices(db: Session, context: ToolContext) -> dict[str, dict]:
     """Structured pricing records are authoritative; prose is not a price table."""
+    requester = db.get(User, context.requester_user_id) if context.requester_user_id else None
+    item_ids, _ = authorized_source_ids(
+        db, requester=requester, company_id=context.company_id, purpose="task_execution"
+    )
+    if not item_ids:
+        return {}
     rows = db.scalars(select(KnowledgeItem).where(
+        KnowledgeItem.id.in_(item_ids),
         KnowledgeItem.company_id == context.company_id, KnowledgeItem.is_active.is_(True),
         or_(KnowledgeItem.agent_instance_id.is_(None), KnowledgeItem.agent_instance_id == context.agent_instance_id),
         KnowledgeItem.category == "pricing",
@@ -409,6 +417,8 @@ class SearchKnowledgeTool(AgentTool):
             query=query,
             agent_instance_id=context.agent_instance_id,
             limit=limit,
+            requester_user_id=context.requester_user_id,
+            purpose="task_execution",
         )
         return {
             "tool": self.name,
@@ -457,10 +467,17 @@ class SearchContractTool(AgentTool):
         if not query:
             raise ValueError("search_contract requires a non-empty 'query'.")
         search_pattern = f"%{query}%"
+        requester = self.db.get(User, context.requester_user_id) if context.requester_user_id else None
+        item_ids, _ = authorized_source_ids(
+            self.db, requester=requester, company_id=context.company_id, purpose="task_execution"
+        )
+        if not item_ids:
+            return {"tool": self.name, "query": query, "count": 0, "results": []}
         items = list(
             self.db.scalars(
                 select(KnowledgeItem)
                 .where(
+                    KnowledgeItem.id.in_(item_ids),
                     KnowledgeItem.company_id == context.company_id,
                     KnowledgeItem.agent_instance_id == context.agent_instance_id,
                     KnowledgeItem.is_active.is_(True),
@@ -515,6 +532,12 @@ class ReadDocumentTool(AgentTool):
 
     def execute(self, context: ToolContext, arguments: dict[str, Any]) -> dict[str, Any]:
         kid = str(arguments.get("knowledge_item_id", "")).strip()
+        requester = self.db.get(User, context.requester_user_id) if context.requester_user_id else None
+        item_ids, _ = authorized_source_ids(
+            self.db, requester=requester, company_id=context.company_id, purpose="task_execution"
+        )
+        if kid not in item_ids:
+            return {"tool": self.name, "found": False, "knowledge_item_id": kid}
         item = self.db.get(KnowledgeItem, kid)
         if (
             not item
