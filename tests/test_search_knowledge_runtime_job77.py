@@ -130,7 +130,7 @@ def test_search_knowledge_finds_pricing_and_tax(client):
     """pricing_rules and tax_policy content are searchable."""
     data, company_id, agent_instance_id = _bootstrap(client)
     owner_id = data.get("owner_user_id") or data.get("user_id")
-    _approve_demo_sources(company_id, owner_id)
+    _approve_demo_sources(company_id, owner_id, agent_instance_id)
     SessionLocal = _session_local()
     if SessionLocal is None:
         pytest.skip("SessionLocal not found")
