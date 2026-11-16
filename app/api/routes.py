@@ -1679,8 +1679,9 @@ def create_knowledge_source_grant(
         )).all())
         if valid_agents != allowed_agents:
             raise HTTPException(status_code=400, detail="Audience contains an unknown or inactive company agent")
-    if not payload.allowed_purposes:
-        raise HTTPException(status_code=400, detail="At least one permitted purpose is required")
+    permitted_purposes = {"task_execution", "knowledge_search", "knowledge_list", "advisory_chat"}
+    if not payload.allowed_purposes or set(payload.allowed_purposes) - permitted_purposes:
+        raise HTTPException(status_code=400, detail="Source grant contains an unsupported retrieval purpose")
 
     if allowed_users - {"*"}:
         valid_users = set(db.scalars(select(User.id).where(
