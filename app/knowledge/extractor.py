@@ -133,6 +133,31 @@ def extract_pdf_with_pypdf(data: bytes) -> str:
     )
 
 
+
+def extract_pdf_with_pymupdf(data: bytes) -> str:
+    """Text layer extraction via PyMuPDF (no OCR / no Tesseract)."""
+    pdf = fitz.open(stream=data, filetype="pdf")
+    try:
+        if pdf.page_count == 0:
+            raise ValueError("PDF contains no pages")
+        pages: list[str] = []
+        for page_number in range(pdf.page_count):
+            page = pdf.load_page(page_number)
+            text = normalize_text(page.get_text("text") or "")
+            if text:
+                pages.append(f"[Page {page_number + 1}]\n{text}")
+        return normalize_text("\n\n".join(pages))
+    finally:
+        pdf.close()
+
+
+def tesseract_available() -> bool:
+    try:
+        import shutil
+        return bool(shutil.which("tesseract"))
+    except Exception:
+        return False
+
 def extract_pdf_with_ocr(data: bytes) -> str:
     """
     Render PDF pages as images and run OCR.
@@ -198,17 +223,27 @@ def extract_pdf_with_ocr(data: bytes) -> str:
 def extract_pdf(data: bytes) -> str:
     """
     PDF extraction strategy:
-
-    1. Try normal PDF text extraction.
-    2. If insufficient, fallback to OCR.
-    3. Fail only if both approaches produce
-       insufficient meaningful text.
+    1. pypdf text layer
+    2. PyMuPDF text layer (no Tesseract)
+    3. OCR only if Tesseract is installed
     """
-
     text = extract_pdf_with_pypdf(data)
-
     if has_meaningful_text(text):
         return text
+
+    try:
+        text = extract_pdf_with_pymupdf(data)
+        if has_meaningful_text(text):
+            return text
+    except Exception:
+        pass
+
+    if not tesseract_available():
+        raise ValueError(
+            "This PDF has little selectable text (likely a scan/image). "
+            "Tesseract OCR is not installed on the server. "
+            "Upload a text-based PDF, DOCX, or TXT — or paste the contract text via Add knowledge."
+        )
 
     try:
         ocr_text = extract_pdf_with_ocr(data)

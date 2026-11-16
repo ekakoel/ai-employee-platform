@@ -38,12 +38,12 @@
     const date = new Date(raw && !/(Z|[+-]\d{2}:\d{2})$/i.test(raw) ? `${raw}Z` : raw);
     const time = !Number.isNaN(date.getTime()) ? `<time datetime="${esc(date.toISOString())}">${esc(new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' }).format(date))}</time>` : '';
     const sender = message.sender_name || (role === 'agent' ? agentName || 'Unknown sender' : role === 'system' ? 'System' : 'Unknown sender');
-    const work = role === 'agent' && typeof message.work_result?.result === 'string' && message.work_result.result.trim() && message.work_result.status === 'completed' ? message.work_result : null;
+    const workResult = role === 'agent' && typeof message.work_result?.result === 'string' && message.work_result.result.trim() && message.work_result.status === 'completed' ? message.work_result : null;
     const content = role === 'agent' ? cleanReply(message.content) : message.content || '';
     const body = role === 'agent' ? cleanReply(message.content) : message.content || '';
     const textHtml = esc(body).split("\n").join("<br>");
     const chips = role === 'agent' && isConciergeMessage(message.content) ? conciergeActionsMarkup() : '';
-    return `<article class="bubble ${role}"><div class="who"><span>${esc(sender)}</span>${time}</div><div class="bubble-text">${textHtml}</div>${work}${chips}</article>`;
+    return `<article class="bubble ${role}"><div class="who"><span>${esc(sender)}</span>${time}</div><div class="bubble-text">${textHtml}</div>${workHtml}${chips}</article>`;
   }
 
   function create({ api, getSession, escapeHtml: esc, onAgentChanged, onTaskCreated, openTask, openResult, onConciergeAction }) {
@@ -72,7 +72,7 @@
         markTourEngaged();
         if (action === "ask") {
           if ($("chatInput")) {
-            $("chatInput").value = "What should I do first as company owner?";
+            $("chatInput").value = "I am the company owner just getting started. In your role, what should I prepare first so you can help me effectively (knowledge, examples of questions you can answer, and limits of chat vs tasks)?";
             $("chatInput").focus();
             controls();
           }
@@ -94,7 +94,7 @@
           else if (action === 'agents' && typeof onConciergeAction === 'function') onConciergeAction('agents');
           else if (action === 'ask') {
             if ($('chatInput')) {
-              $('chatInput').value = 'What should I do first as company owner?';
+              $('chatInput').value = 'I am the company owner just getting started. In your role, what should I prepare first so you can help me effectively (knowledge, examples of questions you can answer, and limits of chat vs tasks)?';
               $('chatInput').focus();
               controls();
             }

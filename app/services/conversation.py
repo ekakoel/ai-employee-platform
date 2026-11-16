@@ -244,7 +244,22 @@ def _agent_reply_text(db: Session, conv: Conversation, human_text: str) -> str:
     except ValueError as exc:
         if agent.status != "active":
             raise
-        return str(exc) + " No action was completed."
+        msg = str(exc)
+        # Job 101 — advisory chat must not dead-end new owners on scope
+        if "outside the assigned" in msg.lower() or "out of scope" in msg.lower():
+            scope_bits = list(agent.scope or []) or list((agent.configuration or {}).get("skills") or [])
+            scope_txt = ", ".join(str(s) for s in scope_bits[:8]) if scope_bits else "my assigned specialty"
+            name = agent.name or "your AI Employee"
+            return (
+                f"I am {name}. My role is focused on: {scope_txt}. "
+                "Chat is advisory only within that focus — I will not claim to act outside it. "
+                "As Owner, useful next steps are: "
+                "(1) add company Knowledge (policies/FAQ) so answers can cite your documents, "
+                "(2) ask a question in my domain, or "
+                "(3) hire another AI Employee for a different specialty. "
+                "Try asking what kinds of questions I can answer, or open Knowledge to upload a policy."
+            )
+        return msg + " No action was completed."
     social = general_reply(human_text)
     if social:
         return social
