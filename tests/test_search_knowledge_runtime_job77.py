@@ -122,7 +122,9 @@ def test_search_knowledge_finds_cancellation_policy(client):
 
 def test_search_knowledge_finds_pricing_and_tax(client):
     """pricing_rules and tax_policy content are searchable."""
-    _, company_id, agent_instance_id = _bootstrap(client)
+    data, company_id, agent_instance_id = _bootstrap(client)
+    owner_id = data.get("owner_user_id") or data.get("user_id")
+    _approve_demo_sources(company_id, owner_id)
     SessionLocal = _session_local()
     if SessionLocal is None:
         pytest.skip("SessionLocal not found")
@@ -134,12 +136,14 @@ def test_search_knowledge_finds_pricing_and_tax(client):
             company_id,
             "pricing weekend surcharge",
             agent_instance_id=agent_instance_id,
+            requester_id=owner_id,
         )
         tax = _search(
             db,
             company_id,
             "tax VAT PPN",
             agent_instance_id=agent_instance_id,
+            requester_id=owner_id,
         )
         assert pricing or tax, "expected hits for pricing or tax knowledge"
         combined = (str(pricing) + str(tax)).lower()
