@@ -68,6 +68,7 @@ def workspace():
             owner_user_id="owner",
             created_by_user_id="owner",
             allowed_user_ids=["owner"],
+            allowed_agent_instance_ids=["agent"],
             allowed_purposes=["task_execution", "knowledge_search", "knowledge_list"],
             is_active=True,
             is_approved=True,
