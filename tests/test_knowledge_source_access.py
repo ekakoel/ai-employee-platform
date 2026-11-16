@@ -29,6 +29,7 @@ def _user(**overrides):
 
 def test_internal_grant_requires_active_approval_audience_and_purpose():
     assert grant_allows(_grant(), _user(), "task_execution", "agent-1")
+    assert not grant_allows(_grant(), _user(), "task_execution", "agent-2")
     assert not grant_allows(_grant(is_active=False), _user(), "task_execution", "agent-1")
     assert not grant_allows(_grant(is_approved=False), _user(), "task_execution", "agent-1")
     assert not grant_allows(_grant(approved_by_user_id=None), _user(), "task_execution", "agent-1")
