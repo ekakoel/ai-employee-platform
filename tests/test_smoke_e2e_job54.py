@@ -118,6 +118,7 @@ def test_smoke_playbook_execute_knowledge_inventory():
             "classification": "B",
             "owner_user_id": manager_token["user_id"],
             "allowed_user_ids": [headers["X-User-ID"]],
+            "allowed_agent_instance_ids": [agent_id],
             "allowed_purposes": ["knowledge_list", "knowledge_search", "task_execution"],
         },
     )
