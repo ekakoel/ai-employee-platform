@@ -1623,6 +1623,8 @@ def search_company_knowledge(
         agent_instance_id=agent_instance_id,
         query=payload.query,
         limit=payload.limit,
+        requester_user_id=user.id,
+        purpose="interactive_knowledge_search",
     )
     if len(hits) < payload.limit:
         items = search_knowledge_items(
@@ -1631,6 +1633,8 @@ def search_company_knowledge(
             agent_instance_id=agent_instance_id,
             query=payload.query,
             limit=payload.limit - len(hits),
+            requester_user_id=user.id,
+            purpose="interactive_knowledge_search",
         )
         hits.extend(items)
     return hits
@@ -3490,6 +3494,7 @@ def create_task(
 
     task = Task(
         company_id=company_id,
+        requested_by_user_id=user.id,
         **data,
         status=TaskStatus.PENDING.value,
     )
