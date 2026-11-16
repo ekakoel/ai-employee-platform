@@ -187,8 +187,9 @@ def load_agent_context(
             company_id=agent.company_id,
             agent_instance_id=agent.id,
             requester_id=task.requested_by_user_id,
-            purpose="task_execution",
+            purpose=getattr(task, "retrieval_purpose", "task_execution"),
             task_id=task.id,
+            access_mode="chat" if getattr(task, "retrieval_purpose", "") == "advisory_chat" else "use",
             query=query,
             limit=5,
         )
