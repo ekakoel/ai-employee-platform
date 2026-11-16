@@ -1,6 +1,7 @@
 """Phase 6 — Knowledge chunking, retrieval, and agent memory."""
 
 from datetime import datetime, timedelta, timezone
+import hashlib
 
 import pytest
 from fastapi.testclient import TestClient
@@ -116,6 +117,7 @@ def test_search_finds_relevant_chunk(client):
     with SessionLocal() as db:
         db.add(KnowledgeSourcePolicy(
             company_id=company_id, source_type="item", source_id=created.json()["id"],
+            source_hash=hashlib.sha256("Customers may cancel free within 24 hours. Late cancel incurs fee.".encode("utf-8")).hexdigest(),
             classification="B", is_approved=True, is_active=True,
             allowed_user_ids=[owner_id], allowed_role_ids=[], allowed_department_ids=[],
             allowed_purposes=["interactive_knowledge_search"], approval_ref="TEST-OWNER-APPROVAL",
