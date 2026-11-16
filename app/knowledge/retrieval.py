@@ -67,6 +67,7 @@ def search_knowledge_chunks(
     query: str,
     requester_id: str | None = None,
     purpose: str = "task_execution",
+    task_id: str | None = None,
     limit: int = 5,
 ) -> list[dict]:
     item_ids, document_ids = authorized_source_ids(
@@ -75,6 +76,7 @@ def search_knowledge_chunks(
         requester_id=requester_id,
         agent_instance_id=agent_instance_id,
         purpose=purpose,
+        task_id=task_id,
     )
     if not item_ids and not document_ids:
         return []
