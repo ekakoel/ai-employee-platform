@@ -176,7 +176,7 @@ def test_hybrid_search_returns_vector_scores(client, monkeypatch):
         assert "keyword_score" in hits[0]
 
 
-def test_keyword_search_denies_unclassified_source_without_requester(monkeypatch):
+def test_unapproved_source_is_not_indexed_or_retrieved(monkeypatch):
     from app.core import config as cfg_mod
 
     monkeypatch.setenv("KNOWLEDGE_VECTOR", "false")
@@ -209,6 +209,8 @@ def test_keyword_search_denies_unclassified_source_without_requester(monkeypatch
         )
         db.add(item)
         db.flush()
+        # No source grant exists: the indexing service must purge/skip all
+        # chunks, and retrieval must fail closed without a trusted requester.
         replace_chunks_for_item(db, item)
         db.commit()
         chunks = list(
@@ -216,8 +218,7 @@ def test_keyword_search_denies_unclassified_source_without_requester(monkeypatch
                 select(KnowledgeChunk).where(KnowledgeChunk.company_id == co.id)
             ).all()
         )
-        assert chunks
-        assert chunks[0].embedding is None
+        assert chunks == []
         hits = search_knowledge_chunks(
             db, company_id=co.id, agent_instance_id=None, query="hotel reservation"
         )
